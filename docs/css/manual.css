@@ -30,8 +30,9 @@ button:active { background: #dcece1; }
 .skip-link:focus { top: 1rem; }
 .topbar { position: sticky; top: 0; z-index: 2; background: var(--paper); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 1.5rem; min-height: 76px; padding: .7rem 2rem; }
 .topbar > a:not(.brand) { margin-left: auto; font-size: .85rem; }
-.brand { font-size: 1.25rem; font-weight: 750; text-decoration: none; letter-spacing: -.025em; color: var(--ink); }
-.brand span { font-size: .85rem; font-weight: 450; color: var(--muted); margin-left: .75rem; letter-spacing: 0; }
+.brand { display: inline-flex; align-items: center; gap: .65rem; font-size: 1.25rem; font-weight: 750; text-decoration: none; letter-spacing: -.025em; color: var(--ink); }
+.brand .brand-mark { width: 36px; height: 36px; flex: none; color: var(--green); }
+.brand span { font-size: .85rem; font-weight: 450; color: var(--muted); letter-spacing: 0; }
 .layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); max-width: 1440px; margin-inline: auto; }
 .sidebar { position: sticky; top: 76px; height: calc(100dvh - 76px); overflow-y: auto; padding: 1.6rem 1.5rem 3rem 2rem; border-right: 1px solid var(--line); scrollbar-color: #9bb9a8 transparent; scrollbar-width: thin; }
 .contents > summary { font-weight: 700; }

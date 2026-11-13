@@ -295,13 +295,17 @@ foreach ($functions as $name) {
 $api .= '</section>';
 
 $tutorial = require __DIR__ . '/walkthrough.php';
+$logo = file_get_contents($root . '/artwork/logo.svg');
+if ($logo === false) {
+    throw new RuntimeException('Cannot read the documentation logo.');
+}
 $html = '<!doctype html><html lang="en-US"><head><meta charset="utf-8">'
     . '<meta name="viewport" content="width=device-width, initial-scale=1">'
     . '<meta name="description" content="The complete PBreeze user manual: beginner tutorials, every public function, CLI commands, configuration, and deployment.">'
     . '<title>PBreeze User Manual</title><link rel="stylesheet" href="css/manual.css">'
     . '<script src="js/manual.js" defer></script></head><body>'
     . '<a class="skip-link" href="#main">Skip to manual</a>'
-    . '<header class="topbar"><a class="brand" href="#start">PBreeze <span>User manual</span></a>'
+    . '<header class="topbar"><a class="brand" href="#start">' . $logo . 'PBreeze <span>User manual</span></a>'
     . '<a href="../README.md">Project README</a><button type="button" id="print" hidden>Print manual</button></header>'
     . '<div class="layout"><aside class="sidebar"><details class="contents" open><summary>Contents</summary>'
     . '<nav aria-label="Manual chapters">' . $navigation

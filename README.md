@@ -1,5 +1,7 @@
 # PBreeze
 
+<img src="artwork/logo.svg" alt="PBreeze logo" width="64" height="64">
+
 An approachable, learnable MVC foundation in native PHP 8.3+. No Composer,
 external PHP packages, PSR autoloading, container, or hidden file discovery.
 Only explicit `require_once` statements and PHP extensions.
@@ -35,8 +37,10 @@ Application styles and scripts live in `public/assets/css/` and
 subfolders under `public/assets/swagger-ui/`, alongside its license metadata.
 The offline manual uses `docs/css/` and `docs/js/`; keep these folders with
 `docs/index.html` when copying the manual.
-The root `artwork/` folder is a standalone collection of image and logo files.
-It is not used by the application or served publicly.
+The root `artwork/` folder contains image and logo source files.
+The README references its logo, and the manual builder embeds that logo so
+the HTML manual remains usable offline without copying the artwork folder.
+Artwork is not used by the application or served publicly.
 
 ## License
 
