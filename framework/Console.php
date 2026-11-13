@@ -18,6 +18,7 @@ Gebruik: php breeze <commando> [naam] [--force]
   serve [poort]              Start op http://127.0.0.1:8000
   routes                     Toon alle routes
   make:controller Naam       Maak een controller in app/controllers
+  make:model Naam            Maak een model in app/models
   make:view map.naam         Maak een PHP-view in app/views
   make:migration naam        Maak een up/down-migratie
   make:seeder Naam           Maak een seeder
@@ -46,7 +47,7 @@ TEXT;
                 throw new InvalidArgumentException("Onbekende optie: $argument");
             }
         }
-        $allowsName = in_array($command, ['serve', 'make:controller', 'make:view', 'make:migration', 'make:seeder', 'db:seed'], true);
+        $allowsName = in_array($command, ['serve', 'make:controller', 'make:model', 'make:view', 'make:migration', 'make:seeder', 'db:seed'], true);
         if (count($arguments) > ($allowsName ? 1 : 0)) {
             throw new InvalidArgumentException('Te veel argumenten. Gebruik php breeze help.');
         }
@@ -88,6 +89,7 @@ TEXT;
                 }
                 break;
             case 'make:controller':
+            case 'make:model':
             case 'make:view':
             case 'make:migration':
             case 'make:seeder':
@@ -152,7 +154,7 @@ PHP;
             if (!preg_match('/^[a-z][a-z0-9_]{0,100}$/D', $name)) {
                 throw new InvalidArgumentException('Gebruik snake_case voor migraties (maximaal 101 tekens).');
             }
-            $stamp = gmdate('YmdHis') . sprintf('%06d', (int) ((microtime(true) * 1000000) % 1000000));
+            $stamp = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('YmdHisu');
             $path = "/database/migrations/{$stamp}_$name.php";
             $content = <<<'PHP'
 <?php
@@ -175,6 +177,7 @@ return new class extends Migration {
 PHP;
         } else {
             if (!preg_match('/^[A-Z][a-zA-Z0-9]{0,100}$/D', $name)
+                || token_get_all('<?php ' . $name)[1][0] !== T_STRING
                 || in_array(strtolower($name), ['class', 'trait', 'interface', 'enum', 'match', 'function', 'parent', 'self', 'static', 'readonly', 'namespace', 'use', 'new', 'default', 'return', 'abstract', 'final', 'extends', 'implements', 'echo', 'print', 'list', 'array', 'string', 'int', 'float', 'bool', 'true', 'false', 'null', 'object', 'mixed', 'never', 'void', 'iterable', 'callable', 'resource'], true)) {
                 throw new InvalidArgumentException('Gebruik een geldige PascalCase-naam zonder gereserveerde woorden.');
             }
@@ -206,6 +209,22 @@ final class {{name}}
 }
 
 PHP);
+            } elseif ($command === 'make:model') {
+                $path = "/app/models/$name.php";
+                $content = str_replace('{{name}}', $name, <<<'PHP'
+<?php
+declare(strict_types=1);
+
+namespace App\Models;
+
+final class {{name}}
+{
+    public function __construct(private readonly \PBreeze\Database $db)
+    {
+    }
+}
+
+PHP);
             } else {
                 $path = "/database/seeders/$name.php";
                 $content = <<<'PHP'
@@ -222,6 +241,8 @@ PHP;
         $this->write($this->app->root . $path, $content);
         if ($command === 'make:controller') {
             echo "Laad de controller expliciet met require_once in routes/web.php en registreer de route.\n";
+        } elseif ($command === 'make:model') {
+            echo "Laad het model expliciet met require_once waar je het gebruikt.\n";
         }
     }
 
@@ -244,6 +265,9 @@ PHP;
 
     private function write(string $path, string $content, int $mode = 0644): void
     {
+        if (file_exists($path) || is_link($path)) {
+            throw new RuntimeException("Bestand bestaat al: $path");
+        }
         $directory = dirname($path);
         if (!is_dir($directory) && !mkdir($directory, 0755, true) && !is_dir($directory)) {
             throw new RuntimeException('Kan directory niet aanmaken.');

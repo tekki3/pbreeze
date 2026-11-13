@@ -32,12 +32,14 @@ declare(strict_types=1);
         </form>
         <h2>Bouw verder</h2>
         <p>Registreer je routes in <code>routes/web.php</code> en gebruik <code>php breeze help</code> voor de CLI.</p>
-        <pre><code>php breeze make:controller BerichtController
-php breeze make:view berichten.index
-php breeze make:migration create_berichten
-php breeze migrate
-php breeze db:seed
-php breeze test</code></pre>
+        <ul>
+            <li><code>php breeze make:controller BerichtController</code></li>
+            <li><code>php breeze make:view berichten.index</code></li>
+            <li><code>php breeze make:migration create_berichten</code></li>
+            <li><code>php breeze migrate</code></li>
+            <li><code>php breeze db:seed</code></li>
+            <li><code>php breeze test</code></li>
+        </ul>
         <p><a href="/health">Controleer de health-endpoint</a></p>
     </main>
 </body>

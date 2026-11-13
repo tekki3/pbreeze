@@ -3,9 +3,14 @@ declare(strict_types=1);
 
 use PBreeze\Env;
 
+$environment = Env::get('APP_ENV', 'production');
+if (!in_array($environment, ['local', 'testing', 'production'], true)) {
+    throw new RuntimeException('APP_ENV moet local, testing of production zijn.');
+}
+
 return [
     'name' => Env::get('APP_NAME', 'PBreeze'),
-    'environment' => Env::get('APP_ENV', 'production'),
+    'environment' => $environment,
     'debug' => Env::bool('APP_DEBUG'),
     'secure_cookie' => Env::bool('SESSION_SECURE_COOKIE'),
     'database' => [

@@ -28,6 +28,19 @@ final class Database
             if ($path !== ':memory:' && !is_dir(dirname($path))) {
                 throw new RuntimeException('De databasedirectory bestaat niet.');
             }
+            if ($path !== ':memory:' && !file_exists($path)) {
+                $handle = fopen($path, 'c');
+                if ($handle === false) {
+                    throw new RuntimeException('Kan SQLite-database niet aanmaken.');
+                }
+                try {
+                    if (!chmod($path, 0600)) {
+                        throw new RuntimeException('Kan SQLite-bestandsrechten niet instellen.');
+                    }
+                } finally {
+                    fclose($handle);
+                }
+            }
             $dsn = 'sqlite:' . $path;
         } elseif ($driver === 'mysql') {
             foreach (['database', 'host', 'port'] as $key) {

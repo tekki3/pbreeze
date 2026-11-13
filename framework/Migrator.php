@@ -24,9 +24,15 @@ final class Migrator
         return $this->locked(function (): array {
             $this->repository();
             $applied = $this->applied();
+            $files = $this->files();
+            foreach ($applied as $name => $batchNumber) {
+                if (!isset($files[$name])) {
+                    throw new RuntimeException("Toegepast migratiebestand ontbreekt: $name");
+                }
+            }
             $batch = (int) $this->db->execute('SELECT COALESCE(MAX(batch), 0) FROM migrations')->fetchColumn() + 1;
             $done = [];
-            foreach ($this->files() as $name => $file) {
+            foreach ($files as $name => $file) {
                 if (isset($applied[$name])) {
                     continue;
                 }

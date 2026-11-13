@@ -53,7 +53,7 @@ final class Application
     public static function errorResponse(Throwable $error, bool $debug = false): Response
     {
         if ($error instanceof HttpException) {
-            return new Response(e($error->getMessage()), $error->status, $error->headers + ['Content-Type' => 'text/plain; charset=UTF-8']);
+            return new Response($error->getMessage(), $error->status, $error->headers + ['Content-Type' => 'text/plain; charset=UTF-8']);
         }
         error_log((string) $error);
         return new Response($debug ? (string) $error : 'Er ging iets mis. Probeer het later opnieuw.', 500, [
