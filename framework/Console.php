@@ -26,6 +26,13 @@ Gebruik: php breeze <commando> [naam] [--force]
   migrate:status             Toon migraties en batchnummers
   migrate:rollback           Draai de laatste batch terug
   db:seed [Naam]             Voer een seeder uit (standaard DatabaseSeeder)
+  mail:queue bestand.json    Bewaar een uitgaande e-mail in de wachtrij
+  mail:list [limiet]          Toon de laatste e-mails (standaard 50)
+  mail:show ID                Toon een opgeslagen e-mail als JSON
+  mail:send ID                Verzend een queued e-mail via SMTP
+  mail:work [limiet]          Verzend queued e-mails, stopt bij eerste fout
+  mail:retry ID [--force]     Zet failed opnieuw klaar; force herstelt uncertain/sending
+  mail:fetch [limiet]         Lees IMAP zonder Seen-vlag of mailboxwijzigingen
   test                       Voer de native tests uit
   help                       Toon deze hulp
 
@@ -47,11 +54,16 @@ TEXT;
                 throw new InvalidArgumentException("Onbekende optie: $argument");
             }
         }
-        $allowsName = in_array($command, ['serve', 'make:controller', 'make:model', 'make:view', 'make:migration', 'make:seeder', 'db:seed'], true);
+        $mailCommands = ['mail:queue', 'mail:list', 'mail:show', 'mail:send', 'mail:work', 'mail:retry', 'mail:fetch'];
+        $allowsName = in_array($command, ['serve', 'make:controller', 'make:model', 'make:view', 'make:migration', 'make:seeder', 'db:seed', ...$mailCommands], true);
         if (count($arguments) > ($allowsName ? 1 : 0)) {
             throw new InvalidArgumentException('Te veel argumenten. Gebruik php breeze help.');
         }
         $name = $arguments[0] ?? null;
+        if (in_array($command, $mailCommands, true)) {
+            (new \PBreeze\Mail\MailConsole($this->app->mail))->run($command, $name, $force);
+            return 0;
+        }
         if (in_array($command, ['migrate', 'migrate:rollback', 'db:seed'], true)
             && $this->app->config['environment'] === 'production' && !$force) {
             throw new RuntimeException('Productie is beschermd. Gebruik bewust --force na een back-up.');

@@ -11,14 +11,16 @@ final class Application
     public readonly View $views;
     public readonly Session $session;
     public readonly Database $db;
+    public readonly \PBreeze\Mail\Mailer $mail;
 
-    /** @param array{name: string, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>} $config */
+    /** @param array{name: string, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}} $config */
     public function __construct(public readonly string $root, public readonly array $config)
     {
         $this->router = new Router();
         $this->views = new View($root . '/app/views');
         $this->session = new Session();
         $this->db = new Database($root, $config['database']);
+        $this->mail = new \PBreeze\Mail\Mailer($this->db, $config['mail'] ?? []);
     }
 
     public function routes(): void
