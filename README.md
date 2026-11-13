@@ -22,6 +22,8 @@ Provides localized date/time, money, decimal, and percentage formatting through
 native Intl, with exact decimal-string rounding.
 Supports validated multipart uploads with explicit allowed types, a 2 MiB
 default file limit, random storage keys, and private storage.
+Includes UTF-8 string manipulation, grapheme-safe slicing/truncation,
+slug and naming helpers, and cryptographic random strings.
 
 Read the complete [HTML user manual](docs/index.html) for beginner walkthroughs,
 every public function, CLI commands, and environment settings. Open it directly
@@ -527,6 +529,117 @@ behavior. The separate `/api/*` router remains JSON-only and rejects multipart
 bodies with HTTP 415 (or 413 when its request-size limit is exceeded).
 Native PHP does not populate this API for raw PUT/PATCH uploads, chunked
 upload protocols, remote URLs, or base64 JSON file payloads.
+
+## String Manipulation
+
+Use the native `$app->strings` service, or instantiate `PBreeze\Strings`
+after bootstrap. It accepts UTF-8 strings and throws `InvalidArgumentException`
+for malformed encoding instead of silently replacing bytes. No Composer
+dependencies are used. Case conversion requires `mbstring`; grapheme operations,
+naming helpers, and slug transliteration require `intl`.
+The service is stateless and construction does not require either extension.
+
+```php
+$strings = $app->strings;
+echo $strings->upper('Straße');                   // STRASSE
+echo $strings->lower('ÉLÈVE');                    // élève
+echo $strings->title('hello WORLD');              // Hello World
+echo $strings->trim("\u{00a0} Ada \u{2003}");      // Ada
+echo $strings->length("e\u{0301}");               // 1 visible character
+echo $strings->slice('Hello world', 6);           // world
+echo $strings->slice('Hello world', -5);          // world
+```
+
+`length()`, `slice()`, and `truncate()` use Unicode grapheme clusters: combining
+accents and joined emoji are not split into individual code points.
+Offsets are zero-based; negative offsets count from the end. A null slice
+length includes the remainder; a negative length omits that many characters
+from the end. Out-of-range offsets return an empty string.
+Case conversion follows Unicode mappings, not locale-specific Turkish/Dutch
+rules, and can expand characters (`ß` becomes `SS`). No method changes global
+locale, encoding, or input data.
+
+### Matching, Extraction, and Replacement
+
+```php
+$strings->contains('Hello café', 'café');         // true
+$strings->startsWith('report.csv', 'report');     // true
+$strings->endsWith('report.csv', '.csv');          // true
+$strings->before('one/two/three', '/');            // one
+$strings->after('one/two/three', '/');             // two/three
+$strings->replace('Hello Ada, Ada!', 'Ada', 'Lin'); // Hello Lin, Lin!
+```
+
+Matching is literal and case-sensitive, without regex interpretation or
+automatic Unicode normalization. Visually identical composed/decomposed
+characters may therefore differ. Empty needles match in `contains()`,
+`startsWith()`, and `endsWith()`, including against an empty string.
+`before()` and `after()` use the first occurrence and return the original
+text when absent. Empty extraction delimiters and replacement searches throw;
+an empty replacement deletes each occurrence. `replace()` changes all
+nonoverlapping occurrences. Unicode whitespace trimming removes leading and
+trailing whitespace/separators, not internal whitespace or zero-width marks.
+
+### Truncation, Slugs, and Naming
+
+```php
+$strings->truncate('Hello world', 8);             // Hello...
+$strings->truncate('Hello world', 5, '');         // Hello
+$strings->truncate('Hello world', 2);             // ..
+$strings->slug(' Crème brûlée! ');                // creme-brulee
+$strings->slug('Hello World', '_');               // hello_world
+$strings->snake('HTTPServerID');                  // http_server_id
+$strings->camel('HTTP_server_ID');                // httpServerId
+$strings->studly('hello-world');                  // HelloWorld
+```
+
+The truncation limit includes the suffix (default `...`), measured in visible
+characters. A zero limit produces empty text when truncation is needed;
+negative limits throw. An oversized suffix is itself cut to fit. Short text
+is returned unchanged, with no added suffix.
+
+Slugs transliterate through ICU into lowercase ASCII letters/digits, collapse
+other characters into a hyphen or underscore, and trim outer separators.
+Punctuation-only or untransliterable input can yield an empty slug.
+ICU versions can change transliteration results. Slugs are not guaranteed
+unique: validate the result and enforce application/database uniqueness.
+They are not file-path validation or authorization.
+
+Naming helpers split separator runs, lowercase-to-uppercase boundaries,
+and acronym-to-word boundaries (`HTTPServer` becomes `HTTP`, `Server`).
+They retain Unicode letters/marks/numbers, normalize word casing, and do
+not transliterate. Separator-only input becomes empty. Digits remain with
+their preceding word unless followed by an uppercase letter.
+
+### Cryptographic Random Strings
+
+```php
+$token = $strings->random();                      // 32 alphanumeric characters
+$hex = $strings->random(64, '0123456789abcdef');   // 64 hex characters
+```
+
+`random()` uses native `random_bytes()` and rejection sampling to avoid
+alphabet-selection bias, not `rand()` or `mt_rand()`. Length must be 1..65536;
+the alphabet must contain 2..94 distinct printable non-space ASCII characters.
+Duplicate characters, Unicode alphabets, whitespace, and invalid lengths throw.
+Random-source failures propagate. Choose sufficient length/alphabet entropy
+for your use case; this does not add expiry, hashing, uniqueness guarantees,
+or authorization. Continue using the built-in authentication/API token services
+for those flows, and do not log secrets.
+
+### Using Strings in Views
+
+`$strings` is reserved and available automatically in both PHP and Breeze views,
+including layouts and partials. Render data cannot override it.
+
+```html
+<h1>{{ $strings->title($title) }}</h1>
+<p>{{ $strings->truncate($description, 160) }}</p>
+```
+
+Plain PHP views should use `e($strings->upper($title))`. String operations do
+not escape HTML, sanitize rich text, or make SQL/URLs safe; keep normal
+context-appropriate output escaping and parameter binding.
 
 ## Date, Time, Money, and Decimal Formatting
 

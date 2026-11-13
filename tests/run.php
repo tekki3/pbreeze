@@ -134,6 +134,7 @@ try {
     require __DIR__ . '/english.php';
     require __DIR__ . '/documents.php';
     require __DIR__ . '/formatting.php';
+    require __DIR__ . '/strings.php';
     require __DIR__ . '/uploads.php';
     require __DIR__ . '/logging.php';
 

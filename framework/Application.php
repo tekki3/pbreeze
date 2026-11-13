@@ -10,6 +10,7 @@ final class Application
     public readonly Router $router;
     public readonly View $views;
     public readonly Formatter $format;
+    public readonly Strings $strings;
     public readonly Session $session;
     public readonly Database $db;
     public readonly \PBreeze\Mail\Mailer $mail;
@@ -27,7 +28,8 @@ final class Application
         $this->log = new Logger($root, $config['log_retention_days'] ?? 5, $config['log_level'] ?? 'debug');
         $this->uploads = new Uploads($root, $config['upload_max_bytes'] ?? 2097152);
         $this->format = new Formatter($config['locale'] ?? 'en-US', $config['timezone'] ?? 'UTC');
-        $this->views = new View($root . '/app/views', formatter: $this->format);
+        $this->strings = new Strings();
+        $this->views = new View($root . '/app/views', formatter: $this->format, strings: $this->strings);
         $this->session = new Session();
         $this->botProtection = new BotProtection($this->session);
         $this->encryption = new Encryption($config['key'] ?? '');
