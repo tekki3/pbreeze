@@ -219,6 +219,86 @@ return \PBreeze\Response::redirect('/berichten');
 
 Redirects accept only local paths that start with a single `/`.
 
+## Application Logging
+
+Use the native `$app->log` service for structured application logs. No Composer,
+PSR interface, database migration, or external logging package is required.
+
+```php
+$app->log->info('Report created.', ['report_id' => 42]);
+$app->log->warning('Delivery delayed.', ['attempt' => 2]);
+$app->log->error('Processing failed.', ['exception' => $exception]);
+$app->log->log('notice', 'Import completed.', ['rows' => 120]);
+```
+
+Available methods/levels, from lowest to highest severity, are `debug`, `info`,
+`notice`, `warning`, `error`, `critical`, `alert`, and `emergency`.
+Configure the minimum level and retention in `.env`:
+
+```dotenv
+LOG_LEVEL=debug
+LOG_RETENTION_DAYS=5
+```
+
+The corresponding application configuration keys are `log_level` and
+`log_retention_days`. Retention must be an integer from 1 through 3650.
+Levels are lowercase and validated when the application is constructed.
+Standalone usage is also supported:
+
+```php
+$logger = new \PBreeze\Logger($app->root, retentionDays: 5, minimumLevel: 'info');
+$logger->notice('Maintenance completed.');
+```
+
+Logs are newline-delimited JSON in `storage/logs/app-YYYY-MM-DD.jsonl`.
+Each entry contains a UTC ISO-style `timestamp` with microseconds, `level`,
+`message`, and `context`. Embedded line breaks are JSON-escaped; a message
+cannot inject a second log record. Directories are created lazily with `0700`
+and files/locks use `0600` on Linux. On Windows, restrict inherited NTFS ACLs
+to the administrator and PHP service user. Storage stays outside `public/`,
+rejects symlinked directories/files, and is ignored by the existing Git rules.
+Never expose the storage directory through a web-server alias.
+
+Concurrent writers serialize through a private file lock. After each written
+entry, retention removes only matching daily log files older than the retained
+UTC calendar window: five days means today plus the previous four dates.
+Unrelated files and symlinks are not removed. Cleanup runs on writes, not on a
+background schedule; filtered entries do not trigger cleanup. Files are daily,
+not size-rotated: provision disk space, choose an appropriate minimum level,
+and monitor write failures.
+
+Context supports nested arrays, scalars, null, and exceptions. Sensitive keys
+containing password, secret, token, authorization, cookie, credential, or API/
+private-key names are recursively replaced with `[REDACTED]`. Exceptions are
+reduced to class, source file, and line; exception messages, traces, previous
+exceptions, and arguments are deliberately omitted because they may contain
+credentials or request data. Context is limited to eight nested levels and
+each serialized entry to 64 KiB. Unsupported objects/resources, invalid UTF-8,
+nonfinite numbers, recursive/deep context, or oversized entries throw explicitly.
+Messages are plain text; there is no placeholder interpolation.
+
+**Redaction is not a general secret detector.** It does not inspect arbitrary
+message text or values under unrelated keys. Do not log passwords, tokens,
+connection strings, full request objects, uploaded contents, or personal data.
+Choose safe, minimal context fields explicitly.
+
+Unexpected web/API errors are logged automatically through the configured
+application logger while existing public error responses remain unchanged.
+Server-side HTTP exceptions (5xx) are also logged; ordinary validation,
+authentication, and other 4xx responses are not. API errors caught inside the
+API router use the same logger. CLI command failures after application startup
+are logged except invalid-argument/usage errors. There is no automatic access
+log or request-body/header/query logging.
+
+Direct logger writes throw on failure. Automatic exception reporting catches
+logging failures and explicitly reports a safe diagnostic to PHP's server log
+without recursively invoking the file logger. Errors before application
+initialization also use the PHP server log; the CLI still prints its error and
+exits with a failure status. This service does not install global error/exception
+handlers or capture engine fatal errors/shutdown events: keep PHP's
+`log_errors` and server monitoring configured. A minimum level above `error`
+also filters automatic application-error entries.
+
 ## File Uploads
 
 Web routes accept native PHP `multipart/form-data` uploads through `Request`.

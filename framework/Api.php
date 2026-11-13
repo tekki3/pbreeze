@@ -31,6 +31,7 @@ final class Api
         private readonly View $views,
         private readonly string $name,
         private readonly bool $docsEnabled,
+        private readonly ?Logger $logger = null,
     ) {
         $this->tokens = new ApiTokens($db);
         $this->router = new Router();
@@ -142,11 +143,11 @@ final class Api
             $this->limit($request->clientIp());
             return $this->router->dispatch($request);
         } catch (Throwable $error) {
-            return self::errorResponse($error);
+            return self::errorResponse($error, $this->logger);
         }
     }
 
-    public static function errorResponse(Throwable $error): Response
+    public static function errorResponse(Throwable $error, ?Logger $logger = null): Response
     {
         $status = match (true) {
             $error instanceof HttpException => $error->status,
@@ -155,8 +156,8 @@ final class Api
             $error instanceof RecordNotFoundException => 404,
             default => 500,
         };
-        if ($status === 500) {
-            error_log((string) $error);
+        if ($status >= 500) {
+            Logger::report($error, $logger);
         }
         $message = match (true) {
             $status === 500 => 'Something went wrong. Please try again later.',

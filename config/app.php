@@ -13,6 +13,12 @@ $uploadMaxBytes = filter_var(Env::get('UPLOAD_MAX_BYTES', '2097152'), FILTER_VAL
 if ($uploadMaxBytes === false) {
     throw new RuntimeException('UPLOAD_MAX_BYTES must be a positive integer byte size.');
 }
+$logRetention = filter_var(Env::get('LOG_RETENTION_DAYS', '5'), FILTER_VALIDATE_INT, [
+    'options' => ['min_range' => 1, 'max_range' => 3650],
+]);
+if ($logRetention === false) {
+    throw new RuntimeException('LOG_RETENTION_DAYS must be between 1 and 3650.');
+}
 
 return [
     'name' => Env::get('APP_NAME', 'PBreeze'),
@@ -25,6 +31,8 @@ return [
     'secure_cookie' => Env::bool('SESSION_SECURE_COOKIE'),
     'api_docs' => Env::bool('API_DOCS_ENABLED', $environment !== 'production'),
     'upload_max_bytes' => $uploadMaxBytes,
+    'log_retention_days' => $logRetention,
+    'log_level' => Env::get('LOG_LEVEL', 'debug'),
     'database' => [
         'driver' => Env::get('DB_CONNECTION', 'sqlite'),
         'database' => Env::get('DB_DATABASE', 'database/app.sqlite'),

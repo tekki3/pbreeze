@@ -9,10 +9,10 @@ use PBreeze\Migrator;
 use PBreeze\Request;
 use PBreeze\Response;
 
-function apiApplication(): Application
+function apiApplication(?string $applicationRoot = null): Application
 {
     global $root, $config;
-    $application = new Application($root, $config);
+    $application = new Application($applicationRoot ?? $root, $config);
     (new Migrator($application->db, $root))->migrate();
     $application->db->execute(
         'INSERT INTO users (name, email, password_hash, email_verified_at, created_at) VALUES (?, ?, ?, ?, ?)',
@@ -103,9 +103,9 @@ test('API validation returns 422 details and only validated fields', static func
 });
 
 test('API hides unexpected errors, logs the cause, and rejects non-JSON actions', static function () use ($temp): void {
-    $application = apiApplication();
-    $log = $temp . '/api-errors.log';
-    $previous = ini_set('error_log', $log);
+    $application = apiApplication($temp);
+    $log = $temp . '/storage/logs/app-' . gmdate('Y-m-d') . '.jsonl';
+    $previous = ini_set('error_log', $temp . '/api-errors.log');
     try {
         $operation = ['summary' => 'Broken action', 'operationId' => 'brokenAction', 'responses' => ['200' => ['description' => 'Example']]];
         $application->api->add('GET', '/api/broken', static function (): never {
@@ -114,7 +114,11 @@ test('API hides unexpected errors, logs the cause, and rejects non-JSON actions'
         $response = $application->handle(new Request('GET', '/api/broken'));
         same(500, $response->status);
         check(!str_contains($response->body, 'private-diagnostic-example'));
-        check(str_contains(file_get_contents($log), 'private-diagnostic-example'));
+        $entries = array_map(static fn (string $line): array => json_decode($line, true, 32, JSON_THROW_ON_ERROR), file($log));
+        $entry = $entries[array_key_last($entries)];
+        same('RuntimeException', $entry['context']['exception']['class']);
+        same(__FILE__, $entry['context']['exception']['file']);
+        check(!str_contains(file_get_contents($log), 'private-diagnostic-example'));
         $operation['operationId'] = 'wrongResponseType';
         $application->api->add('GET', '/api/wrong-response', static fn (): Response => new Response('<h1>wrong</h1>'), $operation, false);
         same(500, $application->handle(new Request('GET', '/api/wrong-response'))->status);

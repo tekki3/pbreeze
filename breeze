@@ -7,6 +7,9 @@ try {
     require_once __DIR__ . '/framework/Console.php';
     exit((new \PBreeze\Console($app))->run(array_slice($argv, 1)));
 } catch (Throwable $error) {
+    if (isset($app) && !$error instanceof InvalidArgumentException) {
+        \PBreeze\Logger::report($error, $app->log);
+    }
     fwrite(STDERR, 'Error: ' . $error->getMessage() . PHP_EOL);
     exit(1);
 }

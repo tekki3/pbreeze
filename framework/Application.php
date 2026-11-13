@@ -18,11 +18,13 @@ final class Application
     public readonly BotProtection $botProtection;
     public readonly Api $api;
     public readonly Uploads $uploads;
+    public readonly Logger $log;
 
-    /** @param array{name: string, locale?: string, timezone?: string, url?: string, key?: string, api_docs?: bool, upload_max_bytes?: int, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}} $config */
+    /** @param array{name: string, locale?: string, timezone?: string, url?: string, key?: string, api_docs?: bool, upload_max_bytes?: int, log_retention_days?: int, log_level?: string, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}} $config */
     public function __construct(public readonly string $root, #[\SensitiveParameter] public readonly array $config)
     {
         $this->router = new Router();
+        $this->log = new Logger($root, $config['log_retention_days'] ?? 5, $config['log_level'] ?? 'debug');
         $this->uploads = new Uploads($root, $config['upload_max_bytes'] ?? 2097152);
         $this->format = new Formatter($config['locale'] ?? 'en-US', $config['timezone'] ?? 'UTC');
         $this->views = new View($root . '/app/views', formatter: $this->format);
@@ -32,7 +34,7 @@ final class Application
         $this->db = new Database($root, $config['database'], $this->encryption);
         $this->mail = new \PBreeze\Mail\Mailer($this->db, $config['mail'] ?? []);
         $this->auth = new Auth($this->db, $this->session, $this->mail, $config['url'] ?? 'http://127.0.0.1:8000', $config['environment'] === 'production');
-        $this->api = new Api($this->db, $this->views, $config['name'], $config['api_docs'] ?? $config['environment'] !== 'production');
+        $this->api = new Api($this->db, $this->views, $config['name'], $config['api_docs'] ?? $config['environment'] !== 'production', $this->log);
     }
 
     public function routes(): void
@@ -69,17 +71,21 @@ final class Application
             $this->routes();
             $response = $this->handle(Request::capture());
         } catch (Throwable $error) {
-            $response = $apiRequest ? Api::errorResponse($error) : self::errorResponse($error, $this->config['debug'] && $this->config['environment'] === 'local');
+            $response = $apiRequest ? Api::errorResponse($error, $this->log)
+                : self::errorResponse($error, $this->config['debug'] && $this->config['environment'] === 'local', $this->log);
         }
         $response->send(($_SERVER['REQUEST_METHOD'] ?? '') === 'HEAD');
     }
 
-    public static function errorResponse(Throwable $error, bool $debug = false): Response
+    public static function errorResponse(Throwable $error, bool $debug = false, ?Logger $logger = null): Response
     {
         if ($error instanceof HttpException) {
+            if ($error->status >= 500) {
+                Logger::report($error, $logger);
+            }
             return new Response($error->getMessage(), $error->status, $error->headers + ['Content-Type' => 'text/plain; charset=UTF-8']);
         }
-        error_log((string) $error);
+        Logger::report($error, $logger);
         return new Response($debug ? (string) $error : 'Something went wrong. Please try again later.', 500, [
             'Content-Type' => 'text/plain; charset=UTF-8',
         ]);

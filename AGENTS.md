@@ -29,6 +29,7 @@
 - When changing CLI generators, update and test their generated output as well as the generator.
 - Use `$app->format` (or `$format` in views) for localized display values. Money uses decimal strings or integer minor units, never floats; keep stored/API numeric data locale-independent.
 - Handle multipart uploads through `Request::file()`/`files()` and `$app->uploads`, with explicit allowed types and private storage. Authorize ownership before downloads/deletions; storage keys are not credentials.
+- Use `$app->log` for structured application diagnostics. Keep messages/context free of secrets; exception logging records source metadata only. Log retention is configured through `LOG_RETENTION_DAYS`.
 
 ## Validation
 
