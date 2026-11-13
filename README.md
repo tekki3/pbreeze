@@ -23,6 +23,12 @@ native Intl, with exact decimal-string rounding.
 Supports validated multipart uploads with explicit allowed types, a 2 MiB
 default file limit, random storage keys, and private storage.
 
+Read the complete [HTML user manual](docs/index.html) for beginner walkthroughs,
+every public function, CLI commands, and environment settings. Open it directly
+in a browser; its local search, styles, and print layout work offline.
+After changing framework APIs or documentation, run `php docs/build.php` to
+regenerate it and `php docs/build.php --check` to verify it is current.
+
 ## Language Convention
 
 All framework-maintained UI, CLI output, diagnostics, emails, generated code,
@@ -353,11 +359,12 @@ $router->post('/documents', $app->auth->protect(
 ));
 ```
 
-In a Breeze template, submit a multipart form with the normal CSRF field:
+In a Breeze template, submit a multipart form with the normal CSRF field.
+Pass `'session' => $app->session` in the view's render data:
 
 ```html
 <form action="/documents" method="post" enctype="multipart/form-data">
-    @csrf
+    @csrf($session)
     <label for="document">Document</label>
     <input id="document" name="document" type="file" accept=".pdf,.docx,.xlsx" required>
     <button type="submit">Upload document</button>
