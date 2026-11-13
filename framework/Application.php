@@ -24,7 +24,7 @@ final class Application
     public readonly Logger $log;
     public readonly string $storagePath;
 
-    /** @param array{name: string, storage_path?: string, locale?: string, timezone?: string, url?: string, key?: string, api_docs?: bool, upload_max_bytes?: int, log_retention_days?: int, log_level?: string, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}, cache?: array<string, mixed>, ai?: array{provider?: string, timeout?: int, max_tokens?: int, ca_file?: string, openai?: array{key?: string, model?: string}, anthropic?: array{key?: string, model?: string}}} $config */
+    /** @param array{name: string, storage_path?: string, locale?: string, timezone?: string, url?: string, key?: string, api_docs?: bool, upload_max_bytes?: int, log_retention_days?: int, log_level?: string, environment: string, debug: bool, secure_cookie: bool, session?: array{driver?: 'native'|'database', lifetime?: int, lock_timeout?: int}, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}, cache?: array<string, mixed>, ai?: array{provider?: string, timeout?: int, max_tokens?: int, ca_file?: string, openai?: array{key?: string, model?: string}, anthropic?: array{key?: string, model?: string}}} $config */
     public function __construct(public readonly string $root, #[\SensitiveParameter] public readonly array $config)
     {
         $this->storagePath = Filesystem::databasePath($root, ($config['storage_path'] ?? '') !== '' ? $config['storage_path'] : 'storage');
@@ -37,7 +37,14 @@ final class Application
         $this->cache = new Cache($config['cache'] ?? []);
         $this->views = new View($root . '/app/views', $this->storagePath . '/views', formatter: $this->format, strings: $this->strings,
             storageRoot: $root, storagePath: $this->storagePath);
-        $this->session = new Session();
+        $session = $config['session'] ?? [];
+        if (!in_array($session['driver'] ?? 'native', ['native', 'database'], true)) {
+            throw new \InvalidArgumentException('SESSION_DRIVER must be native or database.');
+        }
+        $this->session = new Session(($session['driver'] ?? 'native') === 'database'
+            ? new DatabaseSessionHandler(new Database($root, $config['database'], production: $config['environment'] === 'production'),
+                $root, $this->storagePath, $session['lifetime'] ?? 7200, $session['lock_timeout'] ?? 10)
+            : null);
         $this->botProtection = new BotProtection($this->session);
         $this->encryption = new Encryption($config['key'] ?? '');
         $this->db = new Database($root, $config['database'], $this->encryption, $config['environment'] === 'production');
@@ -93,6 +100,15 @@ final class Application
             $this->routes();
             $response = $this->handle(Request::capture());
         } catch (Throwable $error) {
+            $response = $apiRequest ? Api::errorResponse($error, $this->log)
+                : self::errorResponse($error, $this->config['debug'] && $this->config['environment'] === 'local', $this->log);
+        }
+        try {
+            $this->session->close();
+        } catch (Throwable $error) {
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                session_abort();
+            }
             $response = $apiRequest ? Api::errorResponse($error, $this->log)
                 : self::errorResponse($error, $this->config['debug'] && $this->config['environment'] === 'local', $this->log);
         }

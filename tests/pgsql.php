@@ -60,9 +60,10 @@ test('PostgreSQL migrations use overrides, identity columns, transactions and ad
     [$db, $pdo] = pgsqlRecordingDatabase();
     $migrator = new \PBreeze\Migrator($db, $root);
     $files = (new ReflectionMethod($migrator, 'files'))->invoke($migrator);
-    same(4, count($files));
+    same(5, count($files));
     foreach ($files as $file) {
-        check(str_contains($file, '/pgsql/'), 'PostgreSQL override not selected.');
+        check(str_contains($file, '/pgsql/') || basename($file) === '20261113220000_create_sessions.php',
+            'PostgreSQL override not selected.');
         (require $file)->up($pdo);
     }
     $schema = implode("\n", $pdo->sql);

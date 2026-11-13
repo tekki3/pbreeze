@@ -19,6 +19,19 @@ $logRetention = filter_var(Env::get('LOG_RETENTION_DAYS', '5'), FILTER_VALIDATE_
 if ($logRetention === false) {
     throw new RuntimeException('LOG_RETENTION_DAYS must be between 1 and 3650.');
 }
+$sessionDriver = Env::get('SESSION_DRIVER', 'native');
+if (!in_array($sessionDriver, ['native', 'database'], true)) {
+    throw new RuntimeException('SESSION_DRIVER must be native or database.');
+}
+$sessionLifetime = filter_var(Env::get('SESSION_LIFETIME', '7200'), FILTER_VALIDATE_INT, [
+    'options' => ['min_range' => 1, 'max_range' => 31536000],
+]);
+$sessionLockTimeout = filter_var(Env::get('SESSION_LOCK_TIMEOUT', '10'), FILTER_VALIDATE_INT, [
+    'options' => ['min_range' => 1, 'max_range' => 60],
+]);
+if ($sessionLifetime === false || $sessionLockTimeout === false) {
+    throw new RuntimeException('SESSION_LIFETIME must be 1..31536000 seconds; SESSION_LOCK_TIMEOUT must be 1..60 seconds.');
+}
 
 return [
     'name' => Env::get('APP_NAME', 'PBreeze'),
@@ -29,6 +42,7 @@ return [
     'environment' => $environment,
     'debug' => Env::bool('APP_DEBUG'),
     'secure_cookie' => Env::bool('SESSION_SECURE_COOKIE'),
+    'session' => ['driver' => $sessionDriver, 'lifetime' => $sessionLifetime, 'lock_timeout' => $sessionLockTimeout],
     'storage_path' => Env::get('STORAGE_PATH', 'storage'),
     'api_docs' => Env::bool('API_DOCS_ENABLED', $environment !== 'production'),
     'upload_max_bytes' => $uploadMaxBytes,

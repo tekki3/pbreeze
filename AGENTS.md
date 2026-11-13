@@ -33,6 +33,7 @@
 - Use `$app->log` for structured application diagnostics. Keep messages/context free of secrets; exception logging records source metadata only. Log retention is configured through `LOG_RETENTION_DAYS`.
 - Use `$app->ai` for server-side OpenAI/Claude text requests. Keep keys/prompts out of logs, validate and authorize application inputs, and treat generated text as untrusted. Streaming may emit partial text before an error.
 - Use `$app->cache` for optional Redis/Memcached shared caching. Preserve explicit failures, JSON-only values, namespaced keys, and TTL semantics; do not silently replace sessions or database-backed rate limits.
+- `SESSION_DRIVER=native` preserves PHP session storage; `database` uses the migrated sessions table, a dedicated connection, strict-ID validation, idle expiry, and request-duration locks. Preserve session mutations on error responses (including consumed CAPTCHA challenges), and persist before sending output. Never fall back to another driver on failure.
 
 ## Validation
 

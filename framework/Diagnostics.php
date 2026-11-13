@@ -23,7 +23,11 @@ final class Diagnostics
             }
         }
         $db->execute('SELECT 1')->closeCursor();
-        foreach (['users', 'auth_tokens', 'auth_limits', 'api_tokens', 'api_limits', 'emails'] as $table) {
+        $tables = ['users', 'auth_tokens', 'auth_limits', 'api_tokens', 'api_limits', 'emails'];
+        if (($this->app->config['session']['driver'] ?? 'native') === 'database') {
+            $tables[] = 'sessions';
+        }
+        foreach ($tables as $table) {
             $db->execute($db->limit('SELECT 1 FROM ' . Query::identifier($table, $db->driver()), 1))->closeCursor();
         }
         $files = glob($this->app->root . '/database/migrations/*.php');
@@ -97,8 +101,10 @@ final class Diagnostics
         $add('mail', $mailReady ? 'warn' : 'fail', $mailReady
             ? 'SMTP is configured but untested. Verify delivery and supervise scheduled mail:work runs.'
             : 'Bundled authentication requires a real sender and encrypted SMTP configuration.');
-        $add('sessions', ini_get('session.save_handler') === 'files' ? 'warn' : 'pass',
-            'Verify the web SAPI session handler/path, expiry, permissions, and multi-node sharing or sticky routing.');
+        $databaseSessions = ($config['session']['driver'] ?? 'native') === 'database';
+        $add('sessions', $databaseSessions ? 'pass' : (ini_get('session.save_handler') === 'files' ? 'warn' : 'pass'),
+            $databaseSessions ? 'Database sessions selected; readiness checks the sessions table. Verify expiry, lock permissions, and concurrency on the deployed database.'
+                : 'Native PHP sessions selected. Verify the web SAPI handler/path, expiry, permissions, and multi-node sharing or sticky routing.');
         $add('logging', in_array($this->app->log->minimumLevel, ['critical', 'alert', 'emergency'], true) ? 'warn' : 'pass',
             'Log levels above error suppress automatic exception records; monitor PHP and application logs.');
         $add('operations', 'warn', 'Manually verify TLS/HSTS, public-only document root, client-IP restoration, backups/restores, worker alerts, and load tests.');

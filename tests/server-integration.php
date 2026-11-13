@@ -62,19 +62,20 @@ try {
     foreach (glob(dirname(__DIR__) . '/database/migrations/*.php') as $file) {
         sqlsrvCheck(copy($file, $temporary . '/database/migrations/' . basename($file)), 'Cannot copy migration.');
         $override = dirname($file) . '/' . $integrationDriver . '/' . basename($file);
-        if ($integrationDriver !== 'mysql') {
+        if ($integrationDriver !== 'mysql' && is_file($override)) {
             sqlsrvCheck(copy($override, $temporary . '/database/migrations/' . $integrationDriver . '/' . basename($file)), 'Cannot copy driver migration.');
         }
     }
     $app = new Application($temporary, [
         'name' => $label . ' integration', 'environment' => 'testing', 'debug' => false,
         'secure_cookie' => false, 'database' => $config,
+        'session' => ['driver' => 'database', 'lifetime' => 60, 'lock_timeout' => 1],
         'mail' => ['from' => 'noreply@example.test'],
     ]);
     $db = $app->db;
     $migrator = new Migrator($db, $temporary);
     $ownsSchema = true;
-    sqlsrvCheck(count($migrator->migrate()) === 4, 'Expected all four migrations.');
+    sqlsrvCheck(count($migrator->migrate()) === 5, 'Expected all five migrations.');
     sqlsrvCheck($migrator->migrate() === [], 'Repeated migration must be a no-op.');
     sqlsrvCheck(!in_array(null, $migrator->status(), true), 'Pending migration after migrate.');
     $bucket = hash('sha256', 'integration-limiter');
@@ -179,19 +180,33 @@ try {
     sqlsrvCheck($db->transaction(static fn () => $app->mail->store->receive($incoming)) === $incomingId,
         'Duplicate IMAP import must preserve the row and allow the transaction to commit.');
 
-    sqlsrvCheck(count($migrator->rollback()) === 4, 'Rollback did not revert all migrations.');
-    sqlsrvCheck(count($migrator->migrate()) === 4, 'Schema could not be migrated after rollback.');
-    echo "$label integration passed: schema, seed, Unicode CRUD, ORM, pagination, transactions, auth/reset, API tokens, rate limits, and mail queue. No SMTP was sent.\n";
+    $app->session->put('integration', 'session round trip');
+    $sessionId = session_id();
+    $app->session->close();
+    $sessionHandler = new \PBreeze\DatabaseSessionHandler(new Database($temporary, $config),
+        $temporary, $temporary . '/storage', 60, 1);
+    try {
+        sqlsrvCheck($sessionHandler->validateId($sessionId), 'Stored session ID was rejected.');
+        sqlsrvCheck(str_contains($sessionHandler->read($sessionId), 'session round trip'), 'Session payload did not persist.');
+        $sessionHandler->destroy($sessionId);
+        sqlsrvCheck(!$sessionHandler->validateId($sessionId), 'Destroyed session remained valid.');
+    } finally {
+        $sessionHandler->close();
+    }
+
+    sqlsrvCheck(count($migrator->rollback()) === 5, 'Rollback did not revert all migrations.');
+    sqlsrvCheck(count($migrator->migrate()) === 5, 'Schema could not be migrated after rollback.');
+    echo "$label integration passed: schema, seed, Unicode CRUD, ORM, pagination, transactions, database sessions, auth/reset, API tokens, rate limits, and mail queue. No SMTP was sent.\n";
 } finally {
     try {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_destroy();
+        }
         if ($ownsSchema && $migrator !== null) {
             $migrator->rollback();
             $db->execute('DROP TABLE migrations');
         }
     } finally {
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            session_destroy();
-        }
         $paths = new RecursiveIteratorIterator(
             new RecursiveDirectoryIterator($temporary, FilesystemIterator::SKIP_DOTS),
             RecursiveIteratorIterator::CHILD_FIRST,

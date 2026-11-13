@@ -2616,7 +2616,75 @@ or a JSON response with status 422.
 
 ## Sessions and CSRF
 
-All POST, PUT, PATCH, and DELETE requests require a session token.
+For browser routes, a session remembers data between visits, such as the
+logged-in user and form security tokens. By default, PBreeze uses PHP's
+configured session handler, normally local files. The browser stores only
+a session-ID cookie, not the session's contents.
+
+### Store sessions in the database
+
+Use this when multiple application servers need to share login sessions,
+or when you prefer database-managed storage. No extra PHP packages are needed;
+the driver uses the same database configured by `DB_*`.
+
+1. Keep `SESSION_DRIVER=native` while preparing the database.
+2. Run `php breeze migrate` to create the `sessions` table. For production,
+   back up first and use the reviewed `php breeze migrate --force` command.
+3. Add these settings to your private `.env`, or edit their existing entries:
+
+```ini
+SESSION_DRIVER=database
+SESSION_LIFETIME=7200
+SESSION_LOCK_TIMEOUT=10
+```
+
+`SESSION_LIFETIME` is the idle timeout in **seconds**: 7200 is two hours.
+Each successful session save refreshes it, even if the data did not change.
+`SESSION_LOCK_TIMEOUT` is how many seconds a request waits for another
+request using the same session to finish (1 to 60; default 10).
+Native storage continues to use PHP's own expiry settings.
+
+Restart/reload your web service if its deployment requires configuration
+reloads. Sign in again and check that a row appears in `sessions`.
+Changing storage drivers does not transfer sessions; existing users must
+sign in again. To switch back, set `SESSION_DRIVER=native`. Do not roll back
+the sessions migration while the database driver is active.
+
+The table stores a SHA-256 hash of the session ID, a base64-encoded PHP
+session payload, and `last_activity`/`expires_at` Unix timestamps.
+**Base64 is not encryption.** Restrict database access and backups just as
+you would for login data. Do not print payloads in admin pages or logs.
+Session cookies remain HttpOnly, SameSite=Lax, and browser-session cookies;
+the idle timeout does not turn them into persistent "remember me" cookies.
+Keep `SESSION_SECURE_COOKIE=true` for production HTTPS.
+
+SQLite, MySQL, PostgreSQL, and SQL Server are supported. Requests sharing
+a session are locked to avoid lost updates during simultaneous form or
+login requests. MySQL/PostgreSQL/SQL Server use connection-scoped advisory
+locks on a dedicated connection; use direct or session-affine connections,
+not transaction-pooled PostgreSQL connections. SQL Server accounts need
+permission to use `sp_getapplock`/`sp_releaseapplock`.
+SQLite uses up to 256 private lock files in `STORAGE_PATH/sessions`;
+all processes using the same SQLite database must share that storage path.
+Use a server database for multi-node deployments, not SQLite on a network share.
+Do not delete lock files while requests are running.
+
+Expired sessions are rejected immediately on access. PHP's
+`session.gc_probability` / `session.gc_divisor` schedule removal of expired
+rows. If your PHP installation disables automatic cleanup, schedule a trusted
+CLI script that loads `bootstrap.php`, calls `$app->session->start()`,
+then `session_gc()`, and finally `$app->session->close()`.
+This removes expired rows only; it is not a command for logging everyone out.
+
+The framework saves sessions before sending responses, so a failed database
+write returns an error instead of appearing successful. Database outages
+and lock timeouts do not silently fall back to local files. Stateless API
+requests and health/readiness probes still do not start sessions; readiness
+checks the sessions table when database storage is selected.
+
+### Protect browser forms with CSRF
+
+All browser-route POST, PUT, PATCH, and DELETE requests require a session token.
 Only GET, HEAD, and OPTIONS are exempt; do not modify data with them.
 
 ```php
@@ -2629,7 +2697,8 @@ Only GET, HEAD, and OPTIONS are exempt; do not modify data with them.
 Pass `$this->app->session` to the view as `session`.
 A JSON client can send the same token as `X-CSRF-Token`, along with
 the session cookie. An incorrect or missing token returns 419. There are
-intentionally no default CSRF exceptions or unprotected API routes.
+intentionally no default browser-route CSRF exceptions. Stateless API routes
+use bearer tokens rather than browser sessions or CSRF tokens.
 For a form with bot protection, also send the CAPTCHA fields and empty
 honeypot; a CSRF token alone is not sufficient.
 

@@ -140,6 +140,7 @@ try {
     require __DIR__ . '/uploads.php';
     require __DIR__ . '/logging.php';
     require __DIR__ . '/production.php';
+    require __DIR__ . '/database-sessions.php';
     require __DIR__ . '/cache.php';
     require __DIR__ . '/console-utilities.php';
 

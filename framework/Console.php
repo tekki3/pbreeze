@@ -246,7 +246,8 @@ TEXT;
                     'Environment' => $this->app->config['environment'],
                     'Database driver' => $this->app->config['database']['driver'],
                     'Cache driver' => $this->app->config['cache']['driver'] ?? 'none',
-                    'Session handler' => (string) ini_get('session.save_handler'),
+                    'Session handler' => ($this->app->config['session']['driver'] ?? 'native') === 'database'
+                        ? 'database' : (string) ini_get('session.save_handler'),
                 ] as $label => $value) {
                     echo $label . ': ' . $safe($value) . "\n";
                 }

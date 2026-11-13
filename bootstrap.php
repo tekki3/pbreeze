@@ -22,6 +22,7 @@ require_once __DIR__ . '/framework/documents/PdfDocument.php';
 require_once __DIR__ . '/framework/documents/Spreadsheet.php';
 require_once __DIR__ . '/framework/documents/WordDocument.php';
 require_once __DIR__ . '/framework/Session.php';
+require_once __DIR__ . '/framework/DatabaseSessionHandler.php';
 require_once __DIR__ . '/framework/BotProtection.php';
 require_once __DIR__ . '/framework/TemplateCompiler.php';
 require_once __DIR__ . '/framework/TemplateContext.php';

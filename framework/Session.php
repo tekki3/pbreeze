@@ -7,10 +7,17 @@ use RuntimeException;
 
 final class Session
 {
+    public function __construct(private readonly ?DatabaseSessionHandler $handler = null)
+    {
+    }
+
     public function start(bool $secure = false): void
     {
         if (session_status() === PHP_SESSION_ACTIVE) {
             return;
+        }
+        if ($this->handler !== null && !session_set_save_handler($this->handler, true)) {
+            throw new RuntimeException('Cannot register the database session handler.');
         }
         ini_set('session.use_strict_mode', '1');
         ini_set('session.use_only_cookies', '1');
@@ -25,6 +32,13 @@ final class Session
         ]);
         if (!session_start()) {
             throw new RuntimeException('Cannot start the session.');
+        }
+    }
+
+    public function close(): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE && !session_write_close()) {
+            throw new RuntimeException('Cannot persist the session.');
         }
     }
 
