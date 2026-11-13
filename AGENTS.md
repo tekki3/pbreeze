@@ -31,6 +31,7 @@
 - Handle multipart uploads through `Request::file()`/`files()` and `$app->uploads`, with explicit allowed types and private storage. Authorize ownership before downloads/deletions; storage keys are not credentials.
 - Use `$app->log` for structured application diagnostics. Keep messages/context free of secrets; exception logging records source metadata only. Log retention is configured through `LOG_RETENTION_DAYS`.
 - Use `$app->ai` for server-side OpenAI/Claude text requests. Keep keys/prompts out of logs, validate and authorize application inputs, and treat generated text as untrusted. Streaming may emit partial text before an error.
+- Use `$app->cache` for optional Redis/Memcached shared caching. Preserve explicit failures, JSON-only values, namespaced keys, and TTL semantics; do not silently replace sessions or database-backed rate limits.
 
 ## Validation
 

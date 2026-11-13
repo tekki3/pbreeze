@@ -24,6 +24,38 @@ jobs:
       - name: Run native tests
         run: php breeze test
 
+  cache:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.3', '8.5']
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+      memcached:
+        image: memcached:1.6-alpine
+        ports:
+          - 11211:11211
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: redis, memcached, intl
+          coverage: none
+          tools: none
+      - name: Test Redis cache
+        run: php tests/cache-integration.php
+        env:
+          CACHE_TEST_DRIVER: redis
+      - name: Test Memcached cache
+        run: php tests/cache-integration.php
+        env:
+          CACHE_TEST_DRIVER: memcached
+
   mysql:
     runs-on: ubuntu-latest
     strategy:

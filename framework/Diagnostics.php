@@ -60,6 +60,10 @@ final class Diagnostics
             ? 'pass' : 'fail', 'Bundled services require PDO, session, JSON, filter, OpenSSL, Intl, mbstring, and fileinfo.');
         $add('optional-extensions', extension_loaded('curl') && extension_loaded('zip') && extension_loaded('iconv') ? 'pass' : 'warn',
             'AI needs curl; Office files need zip; PDF/email need iconv.');
+        $cacheDriver = $config['cache']['driver'] ?? 'none';
+        $add('cache', $cacheDriver === 'none' ? 'pass' : (extension_loaded($cacheDriver) ? 'warn' : 'fail'),
+            $cacheDriver === 'none' ? 'Shared cache is disabled; sessions and rate limits are unchanged.'
+                : 'Selected cache needs its native PHP extension. Manually verify connectivity, isolation, credentials, and network protection; no cache connection is attempted here.');
         try {
             $this->storage();
             $add('storage', 'pass', 'Configured private storage and required subdirectories exist and are writable.');

@@ -68,7 +68,8 @@ Localized formatting requires the native `intl` extension and its ICU data.
 Upload validation requires native `fileinfo`; DOCX/XLSX upload checks also
 require native `zip`. PHP file uploads must be enabled.
 AI requests require native `curl` with HTTPS support and a trusted CA store.
-No package installation is required.
+Optional shared caching requires native `redis` (PhpRedis 6+) or `memcached`
+(3+) and a running server. No Composer packages are required.
 
 ```sh
 php breeze init
@@ -184,6 +185,146 @@ tests/run.php        Native tests, including real HTTP requests
 bootstrap.php        Explicit framework registration
 breeze               CLI, run with php breeze
 ```
+
+## Redis and Memcached Cache
+
+The shared `$app->cache` service supports Redis and Memcached using native PHP
+extensions, without Composer. It is optional and disabled by default.
+It does **not** replace PHP sessions, database-backed rate limits, the mail
+queue, or the compiled-template cache.
+
+Enable the matching extension in both CLI and web PHP. For example, on Linux
+install your PHP distribution's `redis` or `memcached` extension package. On
+Windows, use a compatible extension build matching your PHP version,
+architecture, and thread-safety mode; enable it in the appropriate `php.ini`.
+The modern **memcached** extension is used, not the legacy **memcache** extension.
+Verify with `php --ri redis` or `php --ri memcached`. A separate Redis or
+Memcached server is required; it may run on another private host.
+
+### Cache configuration
+
+Choose one backend in your private `.env`:
+
+```ini
+CACHE_DRIVER=redis
+CACHE_PREFIX=myapp-production:
+CACHE_TIMEOUT=2
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_DATABASE=0
+REDIS_TLS=false
+```
+
+For Memcached, use `CACHE_DRIVER=memcached`, `MEMCACHED_HOST=127.0.0.1`, and
+`MEMCACHED_PORT=11211`. Set `CACHE_DRIVER=none` to disable caching explicitly.
+Disabled or unavailable caching throws when used: it never pretends that a
+failed operation is a miss or silently switches to local memory.
+Construction and normal bootstrap do not connect to either server.
+There is no application-level automatic retry.
+
+Use a unique `CACHE_PREFIX` per application and environment (1..64 ASCII
+letters, digits, `:`, `_`, or `-`). Keys are stored as the prefix plus a SHA-256
+hash, keeping backend keys bounded and separating namespaces. Prefixes and
+hashes are not authorization or encryption. Never share cache write access
+with untrusted applications.
+
+Redis supports password-only authentication with `REDIS_PASSWORD`, or ACL
+authentication with both `REDIS_USERNAME` and `REDIS_PASSWORD`. Set
+`REDIS_TLS=true` for verified TLS; `REDIS_CA_FILE` optionally selects a trusted
+CA bundle, otherwise system trust applies. The certificate must match
+`REDIS_HOST`; certificate and hostname verification cannot be disabled.
+Redis ACLs must permit GET, SET, SETEX, DEL, SELECT, EVAL, INCRBY, and EXPIRE.
+This is a single-server adapter, not a Redis Cluster/Sentinel client.
+
+Memcached supports optional SASL through `MEMCACHED_USERNAME` and
+`MEMCACHED_PASSWORD` (both required together), with a SASL-capable extension
+and server. It uses binary protocol. SASL is authentication, not encryption:
+this adapter does not provide Memcached TLS. Use a protected private network
+or a separately secured tunnel; never expose Memcached publicly.
+Plaintext Redis is likewise appropriate only on a trusted network.
+Do not put credentials in controllers, logs, or version control.
+
+### Cache values, expiration, and remembered results
+
+```php
+$app->cache->set('catalog:featured', ['id' => 42, 'name' => 'Notebook'], 600);
+$featured = $app->cache->get('catalog:featured', []); // Default only on a miss.
+$removed = $app->cache->delete('catalog:featured');  // false if already absent.
+
+$app->cache->set('feature:enabled', false, 60);
+$enabled = $app->cache->get('feature:enabled', true); // false, not the default.
+$app->cache->set('optional:value', null, 60);        // null is cacheable too.
+
+$notes = $app->cache->remember('notes:recent', function () use ($app): array {
+    return $app->db->table('notes')->orderBy('id', 'desc')->limit(10)->get();
+}, 120);
+```
+
+`set()`, `remember()`, and `increment()` default to 300 seconds. TTL is a
+relative integer number of seconds, 0..31536000 (one year); `0` means no
+expiration, **not** deletion. Values may still be evicted by the server.
+Memcached's special absolute-timestamp behavior above 30 days is normalized
+automatically. `get()` defaults to `null` on a genuine missing/expired key.
+`delete()` returns whether an entry was removed and never flushes the server.
+There is intentionally no whole-server clear operation.
+
+Values support null, booleans, integers, finite floats, valid UTF-8 strings,
+and nested arrays. PHP objects (including models and dates), resources,
+recursive arrays, and invalid UTF-8 are rejected. Convert models to arrays
+before caching them. JSON encoding is limited to 512 KiB per value and 60
+nested array levels; no PHP object serialization is written by this service.
+Only use trusted cache servers; data retrieved from a cache is not an
+authorization decision and must still be escaped for HTML output.
+
+`remember()` runs the callback only on a miss, including when a previously
+cached value is `null` or `false`. Callback exceptions propagate unchanged
+and are not cached. Concurrent misses may run the producer more than once:
+this helper is not a distributed lock or stampede-prevention mechanism.
+Backend/extension/protocol failures throw `RuntimeException`, rather than
+returning a default or calling the producer. Invalid API inputs throw
+`InvalidArgumentException`. Native errors are redacted; uncaught exceptions
+use the framework's existing web/CLI error handling and logging.
+
+### Atomic cache counters
+
+```php
+$views = $app->cache->increment('article:42:views', 1, 3600);
+$views = $app->cache->increment('article:42:views', 5); // Add five.
+```
+
+A missing counter starts at the positive `amount` (default 1). Existing
+counters must contain nonnegative integers; integer values written by `set()`
+can be incremented, but numeric strings cannot. Creation/expiration and
+increments are atomic. TTL applies only when creating the counter; increments
+preserve the existing expiry. Redis requires Lua/EVAL permission for this.
+Keep counters within `PHP_INT_MAX`. Redis rejects signed-64-bit overflow;
+Memcached uses native unsigned-64-bit arithmetic, which can wrap at its limit.
+Values outside PHP's integer range cause an exception, potentially after
+Memcached has changed the counter. These evictable counters are not durable
+financial records, distributed locks, or a replacement for the framework's
+existing authentication/API rate limits.
+
+### Cache deployment checks and tests
+
+`php breeze doctor` checks whether the selected native extension is loaded
+and reminds you to verify server/network settings. It does not connect to or
+write to cache servers; `/ready` remains a database/storage/schema check.
+Test real cache connectivity and application behavior separately in staging.
+
+The native suite tests validation and optional-extension behavior without
+requiring servers. Live integration tests use random isolated prefixes and
+delete only their own keys; they never flush shared servers:
+
+```sh
+CACHE_TEST_DRIVER=redis php tests/cache-integration.php
+CACHE_TEST_DRIVER=memcached php tests/cache-integration.php
+```
+
+In PowerShell, set `$env:CACHE_TEST_DRIVER = "redis"` before running the PHP
+command. Optional test variables are `CACHE_TEST_HOST`, `CACHE_TEST_PORT`,
+`CACHE_TEST_USERNAME`, `CACHE_TEST_PASSWORD`, `CACHE_TEST_TLS`, and
+`CACHE_TEST_CA_FILE`. Use disposable test servers. CI runs both integrations
+with PHP 8.3 and 8.5.
 
 ## AI: Claude and OpenAI
 
