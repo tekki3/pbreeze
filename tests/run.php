@@ -130,6 +130,7 @@ try {
     require __DIR__ . '/bot-protection.php';
     require __DIR__ . '/api.php';
     require __DIR__ . '/english.php';
+    require __DIR__ . '/documents.php';
 
     test('HTML escaping handles quotes and invalid UTF-8', static function (): void {
         same('&lt;script&gt;&quot;&#039;&amp;', e('<script>"\'&'));
@@ -448,7 +449,9 @@ PHP);
             copy($root . '/public/assets/' . $asset, $public . '/assets/' . $asset);
         }
         $environment['API_DOCS_ENABLED'] = 'true';
-        file_put_contents($public . '/index.php', '<?php require ' . var_export($root . '/public/index.php', true) . ';');
+        file_put_contents($public . '/index.php', '<?php if (str_starts_with($_SERVER["REQUEST_URI"], "/__documents/")) { require '
+            . var_export(__DIR__ . '/fixtures/documents.php', true) . '; return; } require '
+            . var_export($root . '/public/index.php', true) . ';');
         file_put_contents($public . '/fixture.css', 'body { color: black; }');
         file_put_contents($public . '/.private.css', 'not-public');
         mkdir($temp . '/http-sessions', 0700);
@@ -542,6 +545,7 @@ PHP);
         require __DIR__ . '/bot-http.php';
         require __DIR__ . '/api-http.php';
         englishHttp($base);
+        documentHttp($base);
     }
 } finally {
     if (is_resource($server)) {

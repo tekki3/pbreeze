@@ -16,6 +16,8 @@ Registration, login, password-reset requests, verification-email resends,
 and the example form have a native SVG CAPTCHA and honeypot.
 The application, CLI, and tests are set up for both Windows and Linux.
 Includes a stateless JSON API with bearer tokens, OpenAPI 3, and CLI scaffolding.
+Creates PDF, Excel (`.xlsx`), Word (`.docx`), JSON, CSV, and XML files through
+a native PHP API, with local saving and HTTP downloads.
 
 ## Language Convention
 
@@ -37,6 +39,8 @@ and the standard session, json, and filter extensions. The tests also use
 native process and socket functions. The CLI uses `proc_open` for the
 development server and tests; this function must be available for those tasks.
 Encryption requires the native `openssl` extension with AES-256-GCM support.
+Excel and Word creation require the native `zip` extension; PDF creation
+requires `iconv`. The document tests also use the native `dom` extension.
 No package installation is required.
 
 ```sh
@@ -68,6 +72,7 @@ PHP for your web server may use a different configuration file.
 
 On Windows, enable the required extensions in `php.ini`: `pdo_sqlite` for SQLite,
 `pdo_mysql` for MySQL, and also `openssl` and `iconv` for email.
+Enable `zip` for Excel/Word creation and `dom` for the document tests.
 Use the correct DLLs for your PHP distribution. OpenSSL requires a valid
 CA bundle; set `openssl.cafile` if needed or use the separate
 `SMTP_CA_FILE`/`IMAP_CA_FILE` settings. Do not disable certificate verification.
@@ -200,6 +205,208 @@ return \PBreeze\Response::redirect('/berichten');
 ```
 
 Redirects accept only local paths that start with a single `/`.
+
+## Native File Creation
+
+Use `PBreeze\Documents\Documents` after loading `bootstrap.php`; its classes
+are explicitly registered, with no Composer, autoloading, external programs,
+or PHP packages. This feature is a PHP API, not a set of CLI commands.
+
+| Factory | Output | Supported content |
+|---|---|---|
+| `Documents::json($data)` | `.json` | JSON-serializable values, pretty-printed UTF-8 |
+| `Documents::csv($rows)` | `.csv` | Iterable lists of scalar cells, configurable delimiter |
+| `Documents::xml($data, 'report')` | `.xml` | Nested arrays mapped to elements |
+| `Documents::pdf()` | `.pdf` | Headings, paragraphs, fixed-width tables, automatic pagination |
+| `Documents::excel()` | `.xlsx` | Multiple named worksheets and typed cells |
+| `Documents::word()` | `.docx` | Headings, paragraphs, and bordered tables |
+
+JSON, CSV, and XML factories return a `DocumentFile` immediately. PDF, Excel,
+and Word factories return builders; call `build()` to obtain a `DocumentFile`.
+Builders are mutable and chainable. Calling `build()` does not reset them.
+Every file exposes read-only `contents`, `mimeType`, and `extension` properties.
+
+### Saving and Downloading
+
+```php
+use PBreeze\Documents\Documents;
+
+$file = Documents::json(['name' => 'Ada', 'active' => true]);
+$file->save($app->root . '/storage/people.json');
+
+// Return this from a web controller action.
+return $file->download('people.json');
+```
+
+`save()` creates a new local file exclusively: existing files and symlinks are
+never overwritten. The parent directory must already exist. Relative paths
+use PHP's current working directory; use an application-root-based path for
+predictable behavior. Both path separators are accepted. Stream-wrapper URLs,
+drive-relative Windows paths, control characters, and nonportable basenames
+are rejected. Files receive `0600` permissions on Linux; restrict inherited
+ACLs on Windows. Incomplete writes are removed, and failures throw exceptions.
+
+`download()` returns a normal `PBreeze\Response` with an attachment disposition,
+the correct media type and byte length, `nosniff`, and `no-store`.
+UTF-8 filenames use `filename*` with an ASCII fallback; filenames cannot contain
+paths or control characters. Give the filename the matching extension.
+Return the response rather than printing file bytes yourself, so normal HEAD
+handling and response headers remain intact.
+
+Register downloads on ordinary web routes, for example:
+
+```php
+$router->get('/reports/people.csv', $app->auth->protect(static function (\PBreeze\Request $request): \PBreeze\Response {
+    return \PBreeze\Documents\Documents::csv([
+        ['Name', 'Active'],
+        ['Ada', true],
+    ])->download('people.csv');
+}));
+```
+
+Apply the appropriate authentication and record-level authorization before
+exporting private data. The separate `/api/*` router still requires JSON
+responses; it is not a binary-download router.
+
+### JSON, CSV, and XML
+
+```php
+use PBreeze\Documents\Documents;
+
+Documents::json(['total' => 12.5, 'active' => true, 'notes' => null])
+    ->save($app->root . '/storage/report.json');
+
+$rows = [
+    ['Name', 'Total', 'Active'],
+    ['Ada', 12.5, true],
+    ['Lin', null, false],
+];
+Documents::csv($rows)->save($app->root . '/storage/report.csv');
+Documents::csv($rows, delimiter: ';')->save($app->root . '/storage/report-semicolon.csv');
+
+Documents::xml([
+    'title' => 'Sales & totals',
+    'people' => [
+        ['name' => 'Ada', 'total' => 12.5],
+        ['name' => 'Lin', 'total' => null],
+    ],
+], 'report')->save($app->root . '/storage/report.xml');
+```
+
+CSV uses UTF-8 without a BOM, CRLF record endings, doubled double quotes, and
+no proprietary backslash escape. Delimiters may be comma, semicolon, tab, or
+pipe. Rows must be lists, not associative arrays; generators are accepted.
+Cells accept strings, finite integers/floats, booleans (`true`/`false`), and
+null (an empty cell). CSV has no native type metadata.
+
+CSV spreadsheet-formula protection is enabled by default. String cells
+beginning with `=`, `+`, `-`, or `@`, including after whitespace, or beginning
+with a tab or line break, receive a leading apostrophe. This intentionally
+changes those text values; numeric cells remain numeric text. Use
+`protectFormulas: false` only for trusted data when an exact raw export is
+necessary. Importer behavior varies: retain protection when opening untrusted
+CSV in spreadsheet software.
+
+XML string keys become element names and integer keys become `<item>`:
+the `people` list above becomes `<people><item><name>Ada</name>...</item>...</people>`.
+Null produces an empty element. Element names must be unprefixed ASCII XML
+names and must not start with `xml` (case-insensitive). Nesting is limited
+to 64 levels. Attributes, namespace declarations, raw markup, DTDs, and
+entities are not accepted as data features. Text is escaped, not interpreted.
+
+JSON preserves native JSON value types and throws on invalid UTF-8, recursive
+data, unsupported values, or nonfinite numbers. CSV, XML, and office-document
+text must be valid UTF-8 containing only XML 1.0 characters; unsupported cell
+types and nonfinite numbers throw instead of being silently converted.
+
+### Excel Workbooks
+
+```php
+use PBreeze\Documents\Documents;
+
+$file = Documents::excel()
+    ->sheet('People', [
+        ['Name', 'Total', 'Active', 'Identifier'],
+        ['Ada', 12.5, true, '00123'],
+        ['Lin', null, false, '98765432109876543210'],
+    ])
+    ->sheet('Summary', [['Count', 2]])
+    ->build();
+
+$file->save($app->root . '/storage/people.xlsx');
+// Or: return $file->download('people.xlsx');
+```
+
+Requires native `zip`. Output is a real Office Open XML ZIP package, not HTML
+renamed to `.xls`. At least one worksheet is required. Names must be unique
+without case differences and contain 1 to 31 UTF-16 code units; Excel-reserved
+characters and leading/trailing apostrophes are rejected. Each worksheet
+accepts iterable list rows, up to 1,048,576 rows and 16,384 columns; text cells
+are limited to 32,767 UTF-16 code units.
+
+Integers/floats become numeric cells, booleans become boolean cells, null becomes
+a blank cell, and strings always remain literal text, even when starting with
+`=`. Leading zeros are retained in string identifiers. Excel numeric precision
+is approximately 15 significant digits: pass long identifiers as strings.
+Dates should be formatted as strings. This baseline does not provide formulas,
+charts, styling, date-number formats, macros, or reading existing workbooks.
+
+### Word Documents
+
+```php
+use PBreeze\Documents\Documents;
+
+$file = Documents::word()
+    ->heading('Sales report')
+    ->paragraph("Prepared by the sales team.\nAll totals are in USD.")
+    ->heading('People', 2)
+    ->table(['Name', 'Total'], [['Ada', 12.5], ['Lin', null]])
+    ->build();
+
+return $file->download('report.docx');
+```
+
+Requires native `zip`. Output is a real `.docx` Office Open XML package.
+Headings support levels 1 through 6; paragraphs preserve line breaks and tabs.
+Tables have equal-width columns, borders, a bold repeating header row,
+and 1 to 63 columns. Every row must match the number of headers.
+Word handles page layout and pagination. Unicode text is supported, subject
+to the reader's available fonts. Images, rich inline formatting, page
+headers/footers, and editing existing documents are outside this baseline.
+
+### PDF Documents
+
+```php
+use PBreeze\Documents\Documents;
+
+$file = Documents::pdf()
+    ->heading('Sales report')
+    ->paragraph('Prepared by the sales team. All totals are in USD.')
+    ->heading('People', 2)
+    ->table(['Name', 'Total'], [['Ada', 12.5], ['Lin', null]])
+    ->build();
+
+return $file->download('report.pdf');
+```
+
+Requires native `iconv`. The writer produces PDF 1.4 with A4 pages, standard
+Courier/Courier-Bold fonts, wrapped text, and automatic page breaks.
+Headings support levels 1 through 3. Tables use fixed-width text columns
+with separators, support 1 to 10 columns, and wrap long cell values.
+Table rows may span pages; PDF table headers are not repeated automatically.
+
+The built-in font supports Windows-1252 text, including common Western
+European accents and the euro symbol. Other characters throw explicitly
+rather than producing broken or substituted text; use Word for full Unicode
+content. This is not an HTML-to-PDF renderer and does not provide embedded
+fonts, images, complex layouts, encryption, digital signatures, or PDF/A.
+
+All six formats are assembled in memory; iterable input does not make the
+result a streaming export. Office packages also use private temporary files,
+which are removed after creation. Bound export sizes, keep saved files
+outside `public/`, and do not pass arbitrary user-selected filesystem paths.
+Do not treat document creation as permission to expose ORM-hidden fields:
+select export fields explicitly.
 
 ## API and Swagger / OpenAPI
 

@@ -11,6 +11,7 @@
 ## Architecture
 
 - `framework/`: framework services, HTTP handling, ORM, templates, mail, authentication, and CLI.
+- `framework/documents/`: native PDF/Office/JSON/CSV/XML creation; `Documents` factories return files or builders with `build()`.
 - `app/controllers/` and `app/views/`: application controllers and compiled Breeze templates.
 - `routes/`: explicit web and API registration.
 - `config/`: configuration; `database/`: migrations and seeders.
@@ -31,7 +32,7 @@
 
 - Run commands from the project root. Use `php breeze help` to inspect available commands.
 - Run `php breeze test` for the native regression suite; add coverage for changed behavior.
-- CI runs that suite on Ubuntu and Windows with PHP 8.3 and 8.5, using `pdo_sqlite`, `openssl`, `iconv`, and `mbstring`.
+- CI runs that suite on Ubuntu and Windows with PHP 8.3 and 8.5, using `pdo_sqlite`, `openssl`, `iconv`, `mbstring`, `zip`, and `dom`.
 - Validate changed PHP syntax with `php -l path/to/file.php`. Breeze templates must be exercised through the template engine, not linted as ordinary PHP.
 - For UI changes, check rendered desktop/mobile layouts and relevant form states.
 - Do not run migrations, seeds, email sending, or other data-changing commands against a real application merely to validate code. Prefer the isolated test fixtures.
