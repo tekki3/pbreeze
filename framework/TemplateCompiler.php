@@ -38,13 +38,19 @@ final class TemplateCompiler
                 $output .= '<?php echo \PBreeze\View::' . ($raw ? 'text' : 'escape') . '(' . $expression . '); ?>';
                 continue;
             }
-            if ($source[$offset] !== '@'
-                || ($offset > 0 && preg_match('/[a-zA-Z0-9_.]/', $source[$offset - 1]))
-                || !preg_match('/\G@([a-zA-Z]+)/', $source, $match, 0, $offset)) {
+            if ($source[$offset] !== '@' || !preg_match('/\G@([a-zA-Z]+)/', $source, $match, 0, $offset)) {
                 $output .= $source[$offset++];
                 continue;
             }
             $directive = $match[1];
+            if ($offset > 0 && preg_match('/[a-zA-Z0-9_.]/', $source[$offset - 1])
+                && !in_array($directive, [
+                    'if', 'elseif', 'else', 'endif', 'foreach', 'endforeach', 'for', 'endfor',
+                    'extends', 'section', 'endsection', 'yield', 'include', 'component', 'endcomponent', 'slot', 'endslot', 'csrf',
+                ], true)) {
+                $output .= $source[$offset++];
+                continue;
+            }
             $offset += strlen($match[0]);
             $noArguments = ['else', 'endif', 'endforeach', 'endfor', 'endsection', 'endcomponent', 'endslot'];
             $arguments = '';

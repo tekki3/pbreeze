@@ -4,13 +4,12 @@ declare(strict_types=1);
 namespace PBreeze;
 
 use LogicException;
-use Throwable;
 
 final class TemplateContext
 {
     /** @var array<string, string> */
     private array $sections = [];
-    /** @var list<array{layout: ?string, captures: list<array<string, mixed>>}> */
+    /** @var list<array{layout: ?string, sections: list<string>, captures: list<array<string, mixed>>}> */
     private array $frames = [];
     /** @var list<string> */
     private array $chain;
@@ -28,7 +27,7 @@ final class TemplateContext
             throw new LogicException("Cyclische of te diep geneste view: $name");
         }
         $this->chain[] = $name;
-        $this->frames[] = ['layout' => null, 'captures' => []];
+        $this->frames[] = ['layout' => null, 'sections' => [], 'captures' => []];
         $level = ob_get_level();
         try {
             $output = $this->views->evaluate($name, $data, $this);
@@ -63,6 +62,14 @@ final class TemplateContext
 
     public function startSection(string $name): void
     {
+        if (!preg_match('/^[a-zA-Z][a-zA-Z0-9_.-]*$/D', $name)) {
+            throw new LogicException('Ongeldige sectienaam.');
+        }
+        $frame = array_key_last($this->frames);
+        if (in_array($name, $this->frames[$frame]['sections'], true)) {
+            throw new LogicException("Dubbele sectie in dezelfde template: $name");
+        }
+        $this->frames[$frame]['sections'][] = $name;
         $this->start('section', ['name' => $name]);
     }
 
@@ -104,7 +111,8 @@ final class TemplateContext
             throw new LogicException('Gebruik een geldige slotnaam; slot is gereserveerd voor de hoofdinhoud.');
         }
         $captures = $this->frames[array_key_last($this->frames)]['captures'];
-        $parent = $captures[array_key_last($captures)] ?? null;
+        $parentIndex = array_key_last($captures);
+        $parent = $parentIndex === null ? null : $captures[$parentIndex];
         if ($parent === null || $parent['kind'] !== 'component') {
             throw new LogicException('@slot moet rechtstreeks binnen een component staan.');
         }

@@ -100,20 +100,45 @@ final class View
             return $target;
         }
         $compiled = (new TemplateCompiler())->compile($source, $name);
-        if (!is_dir($this->cacheDirectory) && !mkdir($this->cacheDirectory, 0700, true) && !is_dir($this->cacheDirectory)) {
-            throw new RuntimeException('Kan de templatecachedirectory niet aanmaken.');
+        if (!is_dir($this->cacheDirectory)) {
+            set_error_handler(static function (int $severity, string $message): never {
+                throw new RuntimeException('Kan de templatecachedirectory niet aanmaken: ' . $message);
+            });
+            try {
+                if (!mkdir($this->cacheDirectory, 0700, true) && !is_dir($this->cacheDirectory)) {
+                    throw new RuntimeException('Kan de templatecachedirectory niet aanmaken.');
+                }
+            } catch (RuntimeException $error) {
+                if (!is_dir($this->cacheDirectory)) {
+                    throw $error;
+                }
+            } finally {
+                restore_error_handler();
+            }
+        }
+        $lock = fopen($this->cacheDirectory . '/.compile.lock', 'c');
+        if ($lock === false) {
+            throw new RuntimeException('Kan het templatecompilatieslot niet openen.');
         }
         $temporary = $this->cacheDirectory . '/compile-' . bin2hex(random_bytes(16)) . '.tmp';
         try {
+            if (!flock($lock, LOCK_EX)) {
+                throw new RuntimeException('Kan het templatecompilatieslot niet verkrijgen.');
+            }
+            if (is_file($target)) {
+                return $target;
+            }
             if (file_put_contents($temporary, $compiled, LOCK_EX) !== strlen($compiled)) {
                 throw new RuntimeException("Kan gecompileerde template niet schrijven: $name");
             }
             Filesystem::permissions($temporary, 0600);
             // Content-addressed namen hoeven nooit overschreven te worden, ook niet op Windows.
-            if (!is_file($target) && !rename($temporary, $target)) {
+            if (!rename($temporary, $target)) {
                 throw new RuntimeException("Kan gecompileerde template niet publiceren: $name");
             }
         } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
             if (is_file($temporary) && !unlink($temporary)) {
                 throw new RuntimeException('Kan tijdelijk templatebestand niet opruimen.');
             }

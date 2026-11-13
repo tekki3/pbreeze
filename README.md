@@ -108,7 +108,10 @@ is nog geen uitgevoerde Windows-test.
 app/
   controllers/       HTTP-acties
   models/            Databaselogica, zonder verplicht ORM
-  views/             Gewone PHP-templates
+  views/             PHP-views en gecompileerde .breeze.php-templates
+    layouts/         Gedeelde paginastructuur
+    partials/        Herbruikbare paginafragmenten
+    components/      Componenten met props en slots
 config/app.php       Getypeerd gebruikte applicatie-instellingen
 database/
   migrations/        Anonieme Migration-objecten met up/down
@@ -175,18 +178,218 @@ Redirects accepteren alleen lokale paden die beginnen met één `/`.
 
 ## Views en validatie
 
-Een viewnaam zoals `berichten.index` verwijst naar
-`app/views/berichten/index.php`. Data wordt beschikbaar als variabelen.
-Escape **alle onbetrouwbare waarden** met `e()`:
+### Breeze-templates
+
+De native template-engine ondersteunt layouts, secties, includes, componenten,
+slots, condities en loops. Geen dependencies, `eval()` of Composer:
+templates worden naar PHP gecompileerd en met `require` uitgevoerd.
+
+```sh
+php breeze make:template berichten.index
+php breeze make:template layouts.blog
+php breeze make:template components.panel
+```
+
+`berichten.index` verwijst naar `app/views/berichten/index.breeze.php`.
+Je controller blijft dezelfde API gebruiken:
+
+```php
+return new \PBreeze\Response($this->app->views->render('berichten.index', [
+    'name' => 'Mijn applicatie',
+    'title' => 'Berichten',
+    'items' => ['Eerste bericht', 'Tweede bericht'],
+    'session' => $this->app->session,
+]));
+```
+
+Data is beschikbaar als gewone PHP-variabelen. Expressies gebruiken native
+PHP-syntax, zoals `$title ?? 'Standaardtitel'`, `strtoupper($name)` of
+`$item['title']`. Alle `{{ ... }}`-uitvoer wordt automatisch voor HTML escaped:
+
+```html
+<h1>{{ $title }}</h1>
+<input name="name" value="{{ $oldName ?? '' }}">
+{{-- Dit commentaar verschijnt niet in de HTML. --}}
+```
+
+Gebruik dit voor HTML-tekst en geciteerde attributen. Dit vervangt geen
+URL-validatie, CSS-escaping of JavaScript-encoding. Scalars, `null` en
+`Stringable` worden ondersteund; arrays en andere objecten geven een fout.
+Gebruik niet daarnaast `e()` binnen `{{ }}`, anders escape je dubbel.
+
+**Ongeescapete HTML is expliciet:** `{!! $html !!}`. Gebruik dit uitsluitend
+voor vertrouwde markup, bijvoorbeeld een al gerenderd componentslot, nooit
+voor ongesanitiseerde gebruikersinvoer of inkomende e-mail.
+
+### Layouts en secties
+
+Een layout in `app/views/layouts/blog.breeze.php`:
+
+```html
+<!doctype html>
+<html lang="nl">
+<head><title>@yield('title', 'Mijn blog')</title></head>
+<body>
+    @include('partials.header')
+    <main>@yield('content')</main>
+</body>
+</html>
+```
+
+En een pagina in `app/views/berichten/index.breeze.php`:
+
+```html
+@extends('layouts.blog')
+
+@section('title')
+{{ $title }}
+@endsection
+
+@section('content')
+    <h1>{{ $title }}</h1>
+    @if(empty($items))
+        <p>Er zijn nog geen berichten.</p>
+    @else
+        <ul>
+        @foreach($items as $item)
+            <li>{{ $item }}</li>
+        @endforeach
+        </ul>
+    @endif
+@endsection
+```
+
+`@section` is altijd een blok met `@endsection`; de inlinevariant
+`@section('title', 'Titel')` wordt niet ondersteund.
+`@yield` geeft een al gerenderde sectie weer zonder extra escaping.
+De optionele standaardwaarde van `@yield` wordt wel escaped.
+Een template met `@extends` mag alleen witruimte buiten secties produceren.
+Layouts mogen zelf een andere layout uitbreiden; de secties van de meest
+specifieke pagina hebben voorrang. Een dubbele sectie in dezelfde template
+is een fout. Secties worden nooit tussen requests of losse renders gedeeld.
+
+### Partials en componenten
+
+Een include erft de variabelen op de huidige plek, ook loopvariabelen.
+Expliciete data overschrijft alleen binnen de include de geerfde waarden:
+
+```html
+@include('partials.item', ['title' => $item])
+```
+
+Includes hebben hun eigen sectiecontext; definieer layoutsecties in de pagina
+zelf, niet in een include.
+
+Componenten krijgen alleen de expliciete props en hun gerenderde slots.
+Bijvoorbeeld `app/views/components/panel.breeze.php`:
+
+```html
+<section>
+    <h2>{{ $title }}</h2>
+    {!! $slot !!}
+    @if(isset($footer))
+        <footer>{!! $footer !!}</footer>
+    @endif
+</section>
+```
+
+Gebruik:
+
+```html
+@component('components.panel', ['title' => 'Laatste berichten'])
+    <p>{{ $intro }}</p>
+    @slot('footer')
+        <a href="/berichten">Alle berichten</a>
+    @endslot
+@endcomponent
+```
+
+`$slot` bevat de hoofdinhoud. Benoemde slots zoals `$footer` worden apart
+beschikbaar en overschrijven eventuele gelijknamige props. `slot` is
+gereserveerd. Slotnamen zijn unieke variabelenamen zonder voorloop-underscore;
+een `@slot` staat rechtstreeks binnen een component. Je kunt verschillende
+componenten nesten. Variabelen binnen de aanroepinhoud komen uit de pagina,
+niet uit de props van de component.
+
+### Directives en foutafhandeling
+
+| Syntax | Gebruik |
+|---|---|
+| `{{ $value }}` | HTML-geescapete uitvoer |
+| `{!! $html !!}` | Bewust onbewerkte HTML |
+| `{{-- ... --}}` | Templatecommentaar |
+| `@extends('layouts.app')` | Een layout uitbreiden |
+| `@section('naam') ... @endsection` | Sectie vastleggen |
+| `@yield('naam', 'standaard')` | Sectie tonen, met optionele standaard |
+| `@include('partial', ['key' => $value])` | Partial met optionele data |
+| `@component('component', ['key' => $value]) ... @endcomponent` | Component |
+| `@slot('naam') ... @endslot` | Benoemd componentslot |
+| `@if(...) ... @elseif(...) ... @else ... @endif` | Condities |
+| `@foreach($items as $item) ... @endforeach` | Collectie doorlopen |
+| `@for($i = 0; $i < 3; $i++) ... @endfor` | Getelde loop |
+| `@csrf($session)` | Veilig hidden CSRF-veld |
+
+Gebruik `@@` voor een letterlijke `@`, bijvoorbeeld `@@include`.
+Scheid directives zonder argumenten van aansluitende letters met witruimte
+of HTML, bijvoorbeeld `@else <p>Geen resultaten</p>`.
+Normale e-mailadressen kun je als tekst opnemen; bevat een adres toevallig
+een directivenaam, schrijf het dan via `{{ 'naam@if.example' }}`.
+Gebruik geen PHP-tags, heredoc of backtick-expressies in Breeze-templates;
+gewone PHP-views blijven beschikbaar voor uitzonderingen.
+
+Onbekende directives, kapotte expressies en onjuist geneste blokken geven
+een exception met de templatenaam. Ontbrekende views, cyclische layouts,
+recursieve includes/componenten en nesting boven 32 views geven ook een fout.
+Outputbuffers worden na fouten opgeruimd, zonder gedeeltelijke pagina als
+succes terug te geven. De bestaande applicatiefoutafhandeling toont in
+productie een generieke 500 en logt de fout.
+
+### Compilatie en cache
+
+De cache staat standaard in `storage/views/`, buiten `public/`.
+De directory en nieuwe cachebestanden krijgen op Linux `0700` en `0600`;
+op Windows gelden de NTFS-ACL's van de map. Zorg dat de PHP-servicegebruiker
+deze cache mag aanmaken en lezen. Stem bij CLI en webserver de eigenaar en
+rechten op elkaar af; geef nooit uploaders schrijfrechten op deze directory.
+
+De cachenaam bevat een hash van het templatepad, de inhoud en de
+compilerversie. Gewijzigde templates worden automatisch opnieuw gecompileerd,
+ook wanneer hun wijzigingstijd gelijk blijft. Cachebestanden bevatten alleen
+gecompileerde code, geen meegegeven viewdata of gerenderde pagina's.
+Een slot en atomische publicatie beschermen gelijktijdige compilaties.
+Er wordt geen gecachte oude inhoud gebruikt als compilatie mislukt.
+Oude hashes blijven staan totdat je de cache wist:
+
+```sh
+php breeze view:clear
+```
+
+Dit verwijdert alleen de gecompileerde Breeze-cachebestanden, niet je
+brontemplates of overige bestanden in `storage/`. Voer dit bij deployment
+uit wanneer workers/verzoeken niet actief zijn; wis geen code die op dat
+moment geladen wordt. Bij een eigen `View`-instantie kun je de cachedirectory
+als tweede constructorargument meegeven.
+
+De startpagina gebruikt `home.breeze.php`, `layouts.app`, twee partials en
+`components.feedback` als werkend voorbeeld.
+
+### Bestaande PHP-views
+
+`php breeze make:view berichten.index` blijft een gewone
+`app/views/berichten/index.php` genereren. Wanneer beide formaten bestaan,
+heeft `.breeze.php` voorrang; de generators weigeren zulke naamconflicten.
+In gewone PHP-views escape je nog steeds zelf met `e()`:
 
 ```php
 <h1><?= e($title) ?></h1>
 ```
 
-Dit is een expliciete helper, geen automatische template-escaping.
-Gebruik `e()` voor HTML-tekst en geciteerde attributen, niet als vervanging voor
-URL-validatie of JavaScript-escaping. Templates zijn vertrouwde PHP-code;
-laat bezoekers nooit templates uploaden of een viewpad bepalen.
+**Veiligheidsgrens:** beide templateformaten zijn vertrouwde applicatiecode,
+geen sandbox voor bezoekers. PHP-expressies kunnen PHP-functies uitvoeren;
+laat bezoekers nooit templates uploaden, aanpassen of viewpaden bepalen.
+Namen van viewdata die met `__` beginnen zijn gereserveerd voor de engine.
+
+### Validatie
 
 ```php
 $errors = \PBreeze\Validator::errors($request->all(), [
