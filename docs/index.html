@@ -248,31 +248,6 @@ $emailId = $app-&gt;mail-&gt;queue($message);</code></pre><p>These recipes illus
 <p><strong>Example file value:</strong> <code>PBreeze</code></p>
 <p>Application name used in pages and API metadata. Default PBreeze.</p>
 </article>
-<article class="setting" id="setting-log-retention-days" data-search-unit data-title="LOG_RETENTION_DAYS">
-<h3><a href="#setting-log-retention-days">LOG_RETENTION_DAYS</a></h3>
-<p><strong>Example file value:</strong> <code>5</code></p>
-<p>Daily-file retention window, 1..3650 days, default 5. Includes today; pruning runs when an entry is written.</p>
-</article>
-<article class="setting" id="setting-log-level" data-search-unit data-title="LOG_LEVEL">
-<h3><a href="#setting-log-level">LOG_LEVEL</a></h3>
-<p><strong>Example file value:</strong> <code>debug</code></p>
-<p>Minimum lowercase severity: debug, info, notice, warning, error, critical, alert, emergency. Default debug. Higher thresholds may filter automatic error entries.</p>
-</article>
-<article class="setting" id="setting-upload-max-bytes" data-search-unit data-title="UPLOAD_MAX_BYTES">
-<h3><a href="#setting-upload-max-bytes">UPLOAD_MAX_BYTES</a></h3>
-<p><strong>Example file value:</strong> <code>2097152</code></p>
-<p>Positive integer per-file default for the Uploads service, default 2097152 (2 MiB). Does not change PHP or proxy request limits; handlers can override.</p>
-</article>
-<article class="setting" id="setting-app-locale" data-search-unit data-title="APP_LOCALE">
-<h3><a href="#setting-app-locale">APP_LOCALE</a></h3>
-<p><strong>Example file value:</strong> <code>en-US</code></p>
-<p>Default display locale for Formatter, en-US. Does not translate framework-maintained UI. Process environment overrides .env.</p>
-</article>
-<article class="setting" id="setting-app-timezone" data-search-unit data-title="APP_TIMEZONE">
-<h3><a href="#setting-app-timezone">APP_TIMEZONE</a></h3>
-<p><strong>Example file value:</strong> <code>UTC</code></p>
-<p>Default Formatter IANA zone, UTC. No global PHP timezone change occurs.</p>
-</article>
 <article class="setting" id="setting-app-url" data-search-unit data-title="APP_URL">
 <h3><a href="#setting-app-url">APP_URL</a></h3>
 <p><strong>Example file value:</strong> <code>http://127.0.0.1:8000</code></p>
@@ -292,6 +267,21 @@ $emailId = $app-&gt;mail-&gt;queue($message);</code></pre><p>These recipes illus
 <h3><a href="#setting-app-key">APP_KEY</a></h3>
 <p><strong>Example file value:</strong> <code>(empty)</code></p>
 <p>Secret base64:-prefixed 32-byte encryption key. Empty disables usable encryption, not unrelated features. Generate securely; never commit or log it.</p>
+</article>
+<article class="setting" id="setting-app-locale" data-search-unit data-title="APP_LOCALE">
+<h3><a href="#setting-app-locale">APP_LOCALE</a></h3>
+<p><strong>Example file value:</strong> <code>en-US</code></p>
+<p>Default display locale for Formatter, en-US. Does not translate framework-maintained UI. Process environment overrides .env.</p>
+</article>
+<article class="setting" id="setting-app-timezone" data-search-unit data-title="APP_TIMEZONE">
+<h3><a href="#setting-app-timezone">APP_TIMEZONE</a></h3>
+<p><strong>Example file value:</strong> <code>UTC</code></p>
+<p>Default Formatter IANA zone, UTC. No global PHP timezone change occurs.</p>
+</article>
+<article class="setting" id="setting-session-secure-cookie" data-search-unit data-title="SESSION_SECURE_COOKIE">
+<h3><a href="#setting-session-secure-cookie">SESSION_SECURE_COOKIE</a></h3>
+<p><strong>Example file value:</strong> <code>false</code></p>
+<p>Boolean Secure-cookie flag, false locally. Set true behind a properly configured HTTPS proxy; this does not encrypt an HTTP connection by itself.</p>
 </article>
 <article class="setting" id="setting-api-docs-enabled" data-search-unit data-title="API_DOCS_ENABLED">
 <h3><a href="#setting-api-docs-enabled">API_DOCS_ENABLED</a></h3>
@@ -328,10 +318,20 @@ $emailId = $app-&gt;mail-&gt;queue($message);</code></pre><p>These recipes illus
 <p><strong>Example file value:</strong> <code>(empty)</code></p>
 <p>Secret MySQL password. Empty in the example, not a production recommendation.</p>
 </article>
-<article class="setting" id="setting-session-secure-cookie" data-search-unit data-title="SESSION_SECURE_COOKIE">
-<h3><a href="#setting-session-secure-cookie">SESSION_SECURE_COOKIE</a></h3>
-<p><strong>Example file value:</strong> <code>false</code></p>
-<p>Boolean Secure-cookie flag, false locally. Set true behind a properly configured HTTPS proxy; this does not encrypt an HTTP connection by itself.</p>
+<article class="setting" id="setting-log-retention-days" data-search-unit data-title="LOG_RETENTION_DAYS">
+<h3><a href="#setting-log-retention-days">LOG_RETENTION_DAYS</a></h3>
+<p><strong>Example file value:</strong> <code>5</code></p>
+<p>Daily-file retention window, 1..3650 days, default 5. Includes today; pruning runs when an entry is written.</p>
+</article>
+<article class="setting" id="setting-log-level" data-search-unit data-title="LOG_LEVEL">
+<h3><a href="#setting-log-level">LOG_LEVEL</a></h3>
+<p><strong>Example file value:</strong> <code>debug</code></p>
+<p>Minimum lowercase severity: debug, info, notice, warning, error, critical, alert, emergency. Default debug. Higher thresholds may filter automatic error entries.</p>
+</article>
+<article class="setting" id="setting-upload-max-bytes" data-search-unit data-title="UPLOAD_MAX_BYTES">
+<h3><a href="#setting-upload-max-bytes">UPLOAD_MAX_BYTES</a></h3>
+<p><strong>Example file value:</strong> <code>2097152</code></p>
+<p>Positive integer per-file default for the Uploads service, default 2097152 (2 MiB). Does not change PHP or proxy request limits; handlers can override.</p>
 </article>
 <article class="setting" id="setting-mail-log" data-search-unit data-title="MAIL_LOG">
 <h3><a href="#setting-mail-log">MAIL_LOG</a></h3>
