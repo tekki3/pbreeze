@@ -184,6 +184,63 @@ bootstrap.php        Explicit framework registration
 breeze               CLI, run with php breeze
 ```
 
+## Form Generator
+
+Create a standalone Breeze form view using `field:type` arguments:
+
+```sh
+php breeze make:form forms.contact name:text email:email message:textarea
+```
+
+This writes `app/views/forms/contact.breeze.php`. Names use the same dot-separated
+format as other view generators; fields use lowercase snake_case names beginning
+with a letter. At least one field is required and duplicate fields are rejected.
+Supported types: `text`, `email`, `password`, `textarea`, `number`, `date`, `time`,
+`datetime-local`, `url`, `tel`, and `checkbox`. Selects and file uploads are not
+generated; add those controls manually when needed.
+
+The generated POST form includes `@csrf($session)`, associated labels, and escaped
+previous values. Field errors use `aria-invalid` and `aria-describedby`.
+Passwords are never repopulated; their autocomplete defaults to `new-password`
+(change it to `current-password` for a login form). Checkboxes submit `1` when
+checked and submit nothing when unchecked; previous values `1`, `'1'`, or `true`
+restore the checked state. Array-valued old input is not inserted into controls.
+Fields are optional by default: add `required`, lengths, limits, and other HTML
+attributes to suit your form, and always validate on the server.
+
+Render the form with a `Session` and a **trusted local action URL**. Optional
+`old` values are an array keyed by field name; `errors` has the
+`array<string, list<string>>` shape returned by `Validator::errors()`:
+
+```php
+// Inside a controller action; register the GET/POST routes explicitly yourself.
+$input = $request->method === 'POST' ? $request->all() : [];
+$errors = $request->method === 'POST'
+    ? \PBreeze\Validator::errors($input, [
+        'name' => 'required|string|max:80',
+        'email' => 'required|email|max:254',
+        'message' => 'required|string|max:2000',
+    ])
+    : [];
+
+// Handle a valid POST here, then redirect; this example only renders the view.
+return new \PBreeze\Response($this->app->views->render('forms.contact', [
+    'session' => $this->app->session,
+    'action' => '/contact',
+    'old' => array_intersect_key($input, array_flip(['name', 'email', 'message'])),
+    'errors' => $errors,
+]), $errors === [] ? 200 : 422);
+```
+
+Only the form markup is generated, not a layout, controller, route, validation
+rules, authorization, bot protection, or data storage. Include it in a page with
+`@include('forms.contact')`, or add your own layout. Include a particular form
+only once per page so its generated label/error IDs remain unique. Do not retain
+passwords or other secrets in `old`, logs, or sessions.
+
+Existing `.php` and `.breeze.php` views are preserved. The command rejects
+`--force` rather than overwriting them.
+
 ## Controllers and Routes
 
 ```sh

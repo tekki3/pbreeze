@@ -299,6 +299,75 @@ try {
         same(0, (int) $app->db->execute('SELECT COUNT(*) FROM migrations')->fetchColumn());
     });
 
+    test('CLI form generator renders all supported controls with CSRF and safe values', static function () use ($app, $temp): void {
+        $fields = ['full_name:text', 'email:email', 'password:password', 'message:textarea',
+            'quantity:number', 'birthday:date', 'alarm:time', 'appointment:datetime-local', 'website:url', 'phone:tel', 'agree:checkbox'];
+        $output = console($app, ['make:form', 'forms.contact', ...$fields]);
+        check(str_contains($output, 'No routes or validation rules were created.'));
+        check(is_file($temp . '/app/views/forms/contact.breeze.php'));
+        $html = $app->views->render('forms.contact', [
+            'session' => $app->session, 'action' => '/contact?source="test"',
+            'old' => ['full_name' => '"><script>alert(1)</script>', 'email' => ['invalid'],
+                'message' => '</textarea><script>alert(2)</script>', 'password' => 'never-repopulate', 'agree' => '1', 'quantity' => 0],
+            'errors' => ['full_name' => ['<script>invalid</script>', 'Try again.']],
+        ]);
+        check(!str_contains($html, '<script>'));
+        check(!str_contains($html, 'never-repopulate'));
+        $document = new DOMDocument();
+        $document->loadHTML($html);
+        $xpath = new DOMXPath($document);
+        same('/contact?source="test"', $xpath->evaluate('string(//form/@action)'));
+        same($app->session->token(), $xpath->evaluate('string(//input[@name="_token"]/@value)'));
+        same('"><script>alert(1)</script>', $xpath->evaluate('string(//input[@name="full_name"]/@value)'));
+        same('', $xpath->evaluate('string(//input[@name="email"]/@value)'));
+        same('0', $xpath->evaluate('string(//input[@name="quantity"]/@value)'));
+        same('</textarea><script>alert(2)</script>', $xpath->evaluate('string(//textarea)'));
+        same(1, $xpath->query('//input[@name="agree"][@checked]')->length);
+        same(0, $xpath->query('//input[@type="password"]/@value')->length);
+        foreach (array_diff($fields, ['message:textarea']) as $field) {
+            [$name, $type] = explode(':', $field);
+            same(1, $xpath->query('//input[@name="' . $name . '"][@type="' . $type . '"]')->length);
+        }
+        same('true', $xpath->evaluate('string(//input[@name="full_name"]/@aria-invalid)'));
+        $id = $xpath->evaluate('string(//input[@name="full_name"]/@aria-describedby)');
+        same('<script>invalid</script> Try again.', $xpath->evaluate('string(//p[@id="' . $id . '"])'));
+        same(11, $xpath->query('//label[@for]')->length);
+        $empty = $app->views->render('forms.contact', ['session' => $app->session, 'action' => '/contact']);
+        check(!str_contains($empty, 'aria-invalid='));
+        check(!str_contains($empty, ' checked '));
+    });
+
+    test('CLI form generator rejects invalid definitions without creating files', static function () use ($app, $temp): void {
+        foreach ([
+            ['make:form'], ['make:form', 'forms.invalid'], ['make:form', '../escape', 'name:text'],
+            ['make:form', 'con', 'name:text'], ['make:form', 'forms.invalid', 'name:text', '--force'],
+            ['make:form', 'forms.invalid', 'name:text', '--unknown'],
+            ...array_map(static fn (string $field): array => ['make:form', 'forms.invalid', 'name:text', $field], [
+                'name:email', 'email', 'email:', 'Email:text', '_token:text', 'bad-name:text',
+                'email:unsupported', 'email:select', 'email:file', 'email:text:required',
+                'email:text" autofocus', '{{bad}}:text', "email:te\nxt",
+            ]),
+        ] as $arguments) {
+            raises(static fn () => console($app, $arguments), InvalidArgumentException::class);
+            check(!file_exists($temp . '/app/views/forms/invalid.breeze.php'));
+        }
+    });
+
+    test('CLI form generator preserves existing PHP and Breeze views', static function () use ($app, $temp): void {
+        console($app, ['make:view', 'forms.existing']);
+        $path = $temp . '/app/views/forms/existing.php';
+        $original = file_get_contents($path);
+        raises(static fn () => console($app, ['make:form', 'forms.existing', 'name:text']), RuntimeException::class);
+        same($original, file_get_contents($path));
+        $path = $temp . '/app/views/forms/contact.breeze.php';
+        $original = file_get_contents($path);
+        raises(static fn () => console($app, ['make:form', 'forms.contact', 'name:text']), RuntimeException::class);
+        raises(static fn () => console($app, ['make:view', 'forms.contact']), RuntimeException::class);
+        raises(static fn () => console($app, ['make:template', 'forms.contact']), RuntimeException::class);
+        same($original, file_get_contents($path));
+        check(str_contains(console($app, ['help']), 'make:form folder.name field:type'));
+    });
+
     test('CLI rejects traversal, unknown options, and missing names', static function () use ($app): void {
         foreach ([
             ['make:view', '../escape'], ['make:controller', '../Escape'], ['make:model', '../Escape'], ['make:seeder', '../Escape'],

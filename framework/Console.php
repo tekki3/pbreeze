@@ -27,6 +27,7 @@ Usage: php breeze <command> [name] [--force]
   make:model Name            Create a model in app/models
   make:view folder.name      Create a PHP view in app/views
   make:template folder.name  Create a compiled Breeze template
+  make:form folder.name field:type ...  Create a Breeze POST form view
   view:clear                 Remove compiled templates
   make:migration name        Create an up/down migration
   make:seeder Name           Create a seeder
@@ -67,6 +68,14 @@ TEXT;
                 throw new InvalidArgumentException('API commands do not accept --force.');
             }
             $this->apiCommand($command, $arguments);
+            return 0;
+        }
+        if ($command === 'make:form') {
+            if ($force || count($arguments) < 2) {
+                throw new InvalidArgumentException('Usage: php breeze make:form folder.name field:type [field:type ...] (no --force).');
+            }
+            $name = array_shift($arguments);
+            $this->generate($command, $name, $arguments);
             return 0;
         }
         $mailCommands = ['mail:queue', 'mail:list', 'mail:show', 'mail:send', 'mail:work', 'mail:retry', 'mail:fetch'];
@@ -172,21 +181,22 @@ TEXT;
         return 0;
     }
 
-    private function generate(string $command, string $name): void
+    /** @param list<string> $fields */
+    private function generate(string $command, string $name, array $fields = []): void
     {
         Filesystem::portableName($name);
-        if ($command === 'make:view' || $command === 'make:template') {
+        if (in_array($command, ['make:view', 'make:template', 'make:form'], true)) {
             if (!preg_match('/^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/D', $name)) {
                 throw new InvalidArgumentException('Use a view name such as posts.index.');
             }
             $base = '/app/views/' . str_replace('.', '/', $name);
             foreach (['.php', '.breeze.php'] as $extension) {
-                if (file_exists($this->app->root . $base . $extension)) {
+                if (file_exists($this->app->root . $base . $extension) || is_link($this->app->root . $base . $extension)) {
                     throw new RuntimeException("View already exists: $name");
                 }
             }
-            $path = $base . ($command === 'make:template' ? '.breeze.php' : '.php');
-            $content = $command === 'make:template' ? <<<'TEMPLATE'
+            $path = $base . ($command === 'make:view' ? '.php' : '.breeze.php');
+            $content = $command === 'make:form' ? $this->formTemplate($name, $fields) : ($command === 'make:template' ? <<<'TEMPLATE'
 <h1>{{ $title ?? 'New page' }}</h1>
 
 TEMPLATE : <<<'PHP'
@@ -195,7 +205,7 @@ declare(strict_types=1);
 ?>
 <h1><?= e($title ?? 'New page') ?></h1>
 
-PHP;
+PHP);
         } elseif ($command === 'make:migration') {
             if (!preg_match('/^[a-z][a-z0-9_]{0,100}$/D', $name)) {
                 throw new InvalidArgumentException('Use snake_case for migrations (up to 101 characters).');
@@ -294,7 +304,49 @@ PHP;
             echo "Load the controller explicitly with require_once in routes/web.php and register the route.\n";
         } elseif ($command === 'make:model') {
             echo "Check the table name and configure fillable/casts/hidden. Load the model explicitly with require_once.\n";
+        } elseif ($command === 'make:form') {
+            echo "Render with session and a trusted local action URL; optionally pass old and errors arrays.\n";
+            echo "No routes or validation rules were created. Validate and authorize submissions in your controller.\n";
         }
+    }
+
+    /** @param list<string> $fields */
+    private function formTemplate(string $name, array $fields): string
+    {
+        $types = ['text', 'email', 'password', 'textarea', 'number', 'date', 'time', 'datetime-local', 'url', 'tel', 'checkbox'];
+        $seen = [];
+        $content = "<form method=\"post\" action=\"{{ \$action }}\">\n    @csrf(\$session)\n";
+        foreach ($fields as $definition) {
+            if (!preg_match('/^([a-z][a-z0-9_]*):([a-z-]+)$/D', $definition, $match)
+                || !in_array($match[2], $types, true)) {
+                throw new InvalidArgumentException('Use field:type with a lowercase snake_case field and one of: ' . implode(', ', $types) . '.');
+            }
+            [, $field, $type] = $match;
+            if (isset($seen[$field])) {
+                throw new InvalidArgumentException("Duplicate form field: $field");
+            }
+            $seen[$field] = true;
+            $id = 'form-' . str_replace('.', '-', $name) . '-' . $field;
+            $label = ucfirst(str_replace('_', ' ', $field));
+            $value = "{{ is_scalar(\$old['$field'] ?? null) ? \$old['$field'] : '' }}";
+            $content .= "    <div class=\"auth-field\">\n        <label for=\"$id\">$label</label>\n";
+            if ($type === 'textarea') {
+                $control = "        <textarea id=\"$id\" name=\"$field\" rows=\"5\"";
+            } else {
+                $control = "        <input id=\"$id\" name=\"$field\" type=\"$type\"";
+                $control .= match ($type) {
+                    'password' => ' autocomplete="new-password"',
+                    'checkbox' => " value=\"1\" @if(in_array(\$old['$field'] ?? null, ['1', 1, true], true)) checked @endif",
+                    default => " value=\"$value\"",
+                };
+            }
+            $content .= $control . "\n            @if(!empty(\$errors['$field'])) aria-invalid=\"true\" aria-describedby=\"$id-error\" @endif>";
+            $content .= $type === 'textarea' ? "$value</textarea>\n" : "\n";
+            $content .= "        @if(!empty(\$errors['$field']))\n"
+                . "            <p class=\"field-error\" id=\"$id-error\">{{ implode(' ', \$errors['$field']) }}</p>\n"
+                . "        @endif\n    </div>\n";
+        }
+        return $content . "    <button type=\"submit\">Submit</button>\n</form>\n";
     }
 
     private function seed(string $name): void
