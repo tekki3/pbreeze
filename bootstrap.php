@@ -6,6 +6,8 @@ if (PHP_VERSION_ID < 80300) {
 }
 
 require_once __DIR__ . '/framework/Env.php';
+require_once __DIR__ . '/framework/Filesystem.php';
+require_once __DIR__ . '/framework/Process.php';
 require_once __DIR__ . '/framework/Http.php';
 require_once __DIR__ . '/framework/Session.php';
 require_once __DIR__ . '/framework/View.php';

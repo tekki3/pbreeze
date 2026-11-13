@@ -90,10 +90,10 @@ TEXT;
                     throw new InvalidArgumentException('Gebruik een poort tussen 1024 en 65535.');
                 }
                 echo "Ontwikkelserver: http://127.0.0.1:$port (niet voor productie)\n";
-                passthru(escapeshellarg(PHP_BINARY) . ' -S ' . escapeshellarg("127.0.0.1:$port")
-                    . ' -t ' . escapeshellarg($this->app->root . '/public')
-                    . ' ' . escapeshellarg($this->app->root . '/public/router.php'), $status);
-                return $status;
+                return Process::run([
+                    PHP_BINARY, '-S', "127.0.0.1:$port", '-t', $this->app->root . '/public',
+                    $this->app->root . '/public/router.php',
+                ], $this->app->root);
             case 'routes':
                 $this->app->routes();
                 foreach ($this->app->router->listing() as $route) {
@@ -139,9 +139,7 @@ TEXT;
                 $this->seed($name ?? 'DatabaseSeeder');
                 break;
             case 'test':
-                $commandLine = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($this->app->root . '/tests/run.php');
-                passthru($commandLine, $status);
-                return $status;
+                return Process::run([PHP_BINARY, $this->app->root . '/tests/run.php'], $this->app->root);
             default:
                 throw new InvalidArgumentException("Onbekend commando: $command. Gebruik php breeze help.");
         }
@@ -150,6 +148,7 @@ TEXT;
 
     private function generate(string $command, string $name): void
     {
+        Filesystem::portableName($name);
         if ($command === 'make:view') {
             if (!preg_match('/^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/D', $name)) {
                 throw new InvalidArgumentException('Gebruik een viewnaam zoals berichten.index.');
@@ -260,6 +259,7 @@ PHP;
 
     private function seed(string $name): void
     {
+        Filesystem::portableName($name);
         if (!preg_match('/^[A-Z][a-zA-Z0-9]*$/D', $name)) {
             throw new InvalidArgumentException('Ongeldige seedernaam.');
         }
@@ -289,9 +289,7 @@ PHP;
             throw new RuntimeException("Bestand bestaat al of is niet schrijfbaar: $path");
         }
         try {
-            if (!chmod($path, $mode)) {
-                throw new RuntimeException("Kan bestandsrechten niet instellen: $path");
-            }
+            Filesystem::permissions($path, $mode);
             if (fwrite($handle, $content) !== strlen($content)) {
                 throw new RuntimeException("Kan bestand niet volledig schrijven: $path");
             }

@@ -24,7 +24,7 @@ final class Database
         $driver = $this->config['driver'];
         $name = $this->config['database'];
         if ($driver === 'sqlite') {
-            $path = $name === ':memory:' || str_starts_with($name, '/') ? $name : $this->root . '/' . $name;
+            $path = Filesystem::databasePath($this->root, $name);
             if ($path !== ':memory:' && !is_dir(dirname($path))) {
                 throw new RuntimeException('De databasedirectory bestaat niet.');
             }
@@ -34,9 +34,7 @@ final class Database
                     throw new RuntimeException('Kan SQLite-database niet aanmaken.');
                 }
                 try {
-                    if (!chmod($path, 0600)) {
-                        throw new RuntimeException('Kan SQLite-bestandsrechten niet instellen.');
-                    }
+                    Filesystem::permissions($path, 0600);
                 } finally {
                     fclose($handle);
                 }

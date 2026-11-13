@@ -5,12 +5,15 @@ packages, PSR-autoloading, container of verborgen bestandsdetectie. Alleen
 expliciete `require_once`-regels en PHP-extensies.
 
 Inclusief native SMTP, IMAP, configureerbare e-maillogging en een databasewachtrij.
+De applicatie, CLI en tests zijn ingericht voor zowel Windows als Linux.
 
 ## Beginnen
 
 Vereist: PHP 8.3+, PDO, `pdo_sqlite` voor SQLite of `pdo_mysql` voor MySQL,
 en de standaardextensies session, json en filter. De tests gebruiken daarnaast
-de native proces- en socketfuncties. Er is geen installatie van packages nodig.
+de native proces- en socketfuncties. De CLI gebruikt `proc_open` voor de
+ontwikkelserver en tests; deze functie moet daarvoor beschikbaar zijn.
+Er is geen installatie van packages nodig.
 
 ```sh
 php breeze init
@@ -27,6 +30,67 @@ Gebruik `php breeze serve 8080` voor een andere poort.
 `init` maakt een lokale `.env`, maar overschrijft nooit een bestaande.
 De standaard is SQLite in `database/app.sqlite`; de database wordt bij het
 eerste databasecommando aangemaakt. Het formulier heeft geen database nodig.
+
+## Windows en Linux
+
+Gebruik op beide systemen dezelfde commando's met `php breeze ...`.
+Op Windows werkt dit vanuit PowerShell of cmd, zonder WSL, Bash of
+uitvoerbare shebang. Zorg dat PHP CLI in `PATH` staat; controleer dit met
+`php -v` en bekijk `php --ini` om het gebruikte configuratiebestand te vinden.
+PHP voor je webserver kan een ander configuratiebestand gebruiken.
+
+Activeer op Windows de benodigde extensies in `php.ini`: voor SQLite
+`pdo_sqlite`, voor MySQL `pdo_mysql`, voor e-mail ook `openssl` en `iconv`.
+Gebruik de juiste DLL's voor je PHP-distributie. OpenSSL heeft een geldige
+CA-bundel nodig; stel indien nodig `openssl.cafile` in of gebruik de
+afzonderlijke `SMTP_CA_FILE`/`IMAP_CA_FILE`-instellingen. Schakel
+certificaatcontrole niet uit.
+
+Relatieve databasepaden zijn altijd relatief aan de projectroot. Zowel
+`database/app.sqlite` als `database\app.sqlite` is toegestaan. Volledige
+Windows-schijfpaden en UNC-paden worden herkend, bijvoorbeeld:
+
+```dotenv
+DB_DATABASE="C:/Data/PBreeze/app.sqlite"
+```
+
+Backslashes zijn ook toegestaan en worden niet als `.env`-escapes behandeld.
+Gebruik geen schijfrelatieve paden zoals `C:app.sqlite`. UNC-paden worden
+als absoluut herkend, maar gebruik voor SQLite lokale opslag: SMB/NFS-
+bestandsvergrendeling is geen vervanging voor een databaseserver. Gebruik
+MySQL voor gedeelde databases.
+
+De CLI start PHP zonder shell, zodat spaties, procenttekens en andere
+shelltekens in projectpaden behouden blijven. Generators weigeren op beide
+systemen Windows-apparaatnamen zoals `CON`, `NUL` en `COM1`. Houd daarnaast
+de exacte hoofdletters van bestanden en `require_once`-paden gelijk:
+Linux is doorgaans hoofdlettergevoelig, Windows doorgaans niet.
+
+Linux gebruikt POSIX-bestandsrechten: nieuwe `.env`- en SQLite-bestanden
+krijgen `0600`. Op Windows worden bestaande/geerfde NTFS-ACL's gebruikt;
+`chmod(0600)` levert daar geen vergelijkbare bescherming. Beperk daarom
+vóór initialisatie de toegang tot de projectmap, datamap en hun backups
+tot de beheerder en de PHP-servicegebruiker via Windows-mapbeveiliging.
+Geef de servicegebruiker alleen waar nodig schrijfrechten. De tests controleren
+op Windows lees-/schrijfbaarheid, niet Unix-permissiebits.
+
+Voor lokale ontwikkeling werkt `php breeze serve` op beide systemen.
+In productie kun je op beide systemen Apache gebruiken met `public/` als
+document root en de meegeleverde `.htaccess` met `mod_rewrite`. Bij IIS
+configureer je PHP via FastCGI, stel je de siteroot in op `public/` en
+configureer je URL Rewrite naar `index.php` voor niet-bestaande bestanden.
+`.htaccess` wordt door IIS niet gelezen. HTTPS en blokkering van verborgen
+bestanden moeten ook daar op serverniveau ingesteld worden.
+
+Voor periodieke e-mailverzending gebruik je op Linux cron en op Windows
+Taakplanner. Kies als programma het volledige pad naar `php`/`php.exe`,
+geef het absolute pad naar `breeze` en `mail:work 50` als argumenten mee
+en stel de projectmap in als werkmap. Zet paden met spaties tussen quotes.
+
+De workflow `.github/workflows/tests.yml` voert de volledige native suite
+uit op `ubuntu-latest` en `windows-latest`, met PHP 8.3 en 8.5, zodra het
+project op GitHub staat en Actions is ingeschakeld. Een toegevoegde workflow
+is nog geen uitgevoerde Windows-test.
 
 ## Zo loopt een verzoek
 
@@ -370,7 +434,8 @@ mag maximaal 6 MiB zijn; de inhoudelijke bodylimiet blijft 5 MiB.
 Bewaar zulke bestanden buiten `public/` en commit geen vertrouwelijke berichten.
 `mail:work` verwerkt één batch, oudste eerst, en stopt bij de eerste fout
 met exitcode 1. Het is geen achtergronddaemon. Je kunt dit commando periodiek
-via cron aanroepen met absolute paden naar PHP en `breeze`.
+via cron (Linux) of Taakplanner (Windows) aanroepen met absolute paden naar
+PHP en `breeze`.
 `mail:list`, `mail:show` en `mail:fetch` geven JSON weer, zodat ook onbetrouwbare
 onderwerpen geen terminalstuurcodes kunnen uitvoeren.
 
@@ -470,7 +535,8 @@ Systeemomgevingsvariabelen gaan vóór `.env`. `.env` ondersteunt
 `NAAM=waarde`, optionele enkele/dubbele quotes en volledige commentaarregels.
 Er is geen interpolatie, escapeverwerking, multiline- of inline-commentaarsyntax.
 Gebruik `true`/`false` voor booleans. `.env` en databasebestanden staan in
-`.gitignore`; nieuwe `.env`- en SQLite-bestanden krijgen rechten `0600`.
+`.gitignore`; nieuwe `.env`- en SQLite-bestanden krijgen op Linux rechten
+`0600`. Op Windows gelden de NTFS-ACL's van de map; beperk die vooraf.
 `APP_ENV` accepteert uitsluitend `local`, `testing` en `production`;
 een typefout schakelt de productiebeveiliging dus niet stilzwijgend uit.
 
@@ -486,8 +552,9 @@ een typefout schakelt de productiebeveiliging dus niet stilzwijgend uit.
 - Zorg dat PHP-foutmeldingen alleen naar beschermde serverlogs gaan;
   configureer ook PHP zelf met `display_errors=Off` en `log_errors=On`.
 - Geef alleen de benodigde gebruiker schrijfrechten op de SQLite-database,
-  de databasedirectory en `storage/`. Een met `0600` aangemaakt bestand is
-  alleen leesbaar door de eigenaar: stem de CLI/PHP-FPM-gebruiker daarop af.
+  de databasedirectory en `storage/`. Op Linux is een met `0600` aangemaakt
+  bestand alleen leesbaar door de eigenaar: stem de CLI/PHP-FPM-gebruiker
+  daarop af. Op Windows beperk je de NTFS-ACL's tot de benodigde gebruikers.
   Maak niet de hele applicatie schrijfbaar voor de webserver.
 - Beperk requestgroottes en timeouts in PHP en de webserver; regel rate limiting
   en TLS/HSTS op proxy- of webserverniveau.

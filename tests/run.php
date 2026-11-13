@@ -26,7 +26,7 @@ set_error_handler(static function (int $severity, string $message, string $file,
 
 $passed = 0;
 $failed = 0;
-$temp = sys_get_temp_dir() . '/pbreeze-tests-' . bin2hex(random_bytes(8));
+$temp = sys_get_temp_dir() . "/pbreeze tests % ! & '-" . bin2hex(random_bytes(8));
 mkdir($temp, 0700);
 foreach (['storage', 'database/migrations', 'database/seeders', 'app/controllers', 'app/views'] as $directory) {
     mkdir($temp . '/' . $directory, 0700, true);
@@ -122,6 +122,7 @@ function http(string $base, string $path, string $method = 'GET', string $body =
 }
 
 try {
+    require __DIR__ . '/platform.php';
     require __DIR__ . '/mail.php';
 
     test('HTML-escaping behandelt quotes en ongeldige UTF-8', static function (): void {
@@ -387,16 +388,22 @@ PHP);
         raises(static fn () => $notes->create(str_repeat('a', 121)), InvalidArgumentException::class);
     });
 
-    test('SQLite-bestanden krijgen beperkte bestandsrechten', static function () use ($temp): void {
+    test('SQLite-bestanden zijn bruikbaar met platformeigen bestandsrechten', static function () use ($temp): void {
         $db = new Database($temp, ['driver' => 'sqlite', 'database' => 'private.sqlite']);
         $db->pdo();
-        same(0600, fileperms($temp . '/private.sqlite') & 0777);
+        check(is_readable($temp . '/private.sqlite') && is_writable($temp . '/private.sqlite'));
+        if (PHP_OS_FAMILY !== 'Windows') {
+            same(0600, fileperms($temp . '/private.sqlite') & 0777);
+        }
     });
 
-    test('CLI init bewaart bestaande configuratie en maakt .env privaat', static function () use ($app, $root, $temp): void {
+    test('CLI init bewaart bestaande configuratie met platformeigen bestandsrechten', static function () use ($app, $root, $temp): void {
         copy($root . '/.env.example', $temp . '/.env.example');
         console($app, ['init']);
-        same(0600, fileperms($temp . '/.env') & 0777);
+        check(is_readable($temp . '/.env') && is_writable($temp . '/.env'));
+        if (PHP_OS_FAMILY !== 'Windows') {
+            same(0600, fileperms($temp . '/.env') & 0777);
+        }
         file_put_contents($temp . '/.env', 'APP_NAME=Eigen');
         console($app, ['init']);
         same('APP_NAME=Eigen', file_get_contents($temp . '/.env'));
@@ -422,11 +429,17 @@ PHP);
         $environment['SESSION_SECURE_COOKIE'] = 'false';
         $environment['DB_CONNECTION'] = 'sqlite';
         $environment['DB_DATABASE'] = $temp . '/http.sqlite';
-        $server = proc_open([PHP_BINARY, '-S', $address, '-t', $root . '/public', $root . '/public/router.php'], [
-            0 => ['file', '/dev/null', 'r'],
+        $public = $temp . '/public';
+        mkdir($public);
+        copy($root . '/public/router.php', $public . '/router.php');
+        file_put_contents($public . '/index.php', '<?php require ' . var_export($root . '/public/index.php', true) . ';');
+        file_put_contents($public . '/fixture.css', 'body { color: black; }');
+        file_put_contents($public . '/.private.css', 'not-public');
+        $server = proc_open([PHP_BINARY, '-S', $address, '-t', $public, $public . '/router.php'], [
+            0 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'r'],
             1 => ['file', $temp . '/server.log', 'a'],
             2 => ['file', $temp . '/server.log', 'a'],
-        ], $pipes, $root, $environment);
+        ], $pipes, $root, $environment, ['bypass_shell' => true]);
         if (!is_resource($server)) {
             throw new RuntimeException('Kan HTTP-server niet starten.');
         }
@@ -486,7 +499,10 @@ PHP);
             same('', http($base, '/', 'HEAD')['body']);
             same(419, http($base, '/', 'DELETE', '', ['X-CSRF-Token: invalid'])['status']);
             same(405, http($base, '/', 'DELETE', '', ['Cookie: ' . $cookie, 'X-CSRF-Token: ' . $token])['status']);
-            foreach (['/.env', '/bootstrap.php', '/database/app.sqlite', '/%2e%2e/.env', '/%00'] as $path) {
+            $asset = http($base, '/fixture.css');
+            same(200, $asset['status']);
+            same('body { color: black; }', $asset['body']);
+            foreach (['/.env', '/bootstrap.php', '/database/app.sqlite', '/%2e%2e/.env', '/%00', '/%5c.env', '/assets%5c..%5c.env', '/.private.css', '/%5c.private.css'] as $path) {
                 $response = http($base, $path);
                 check(in_array($response['status'], [400, 404], true), 'Onverwachte status voor ' . $path);
             }
@@ -511,6 +527,7 @@ PHP);
             unlink($file->getPathname());
         }
     }
+    unset($files, $file);
     rmdir($temp);
 }
 

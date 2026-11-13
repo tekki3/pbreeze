@@ -16,6 +16,7 @@ final class View
     /** @param array<string, mixed> $data */
     public function render(string $name, array $data = []): string
     {
+        Filesystem::portableName($name);
         if (!preg_match('/^[a-zA-Z][a-zA-Z0-9_-]*(?:\.[a-zA-Z][a-zA-Z0-9_-]*)*$/D', $name)) {
             throw new InvalidArgumentException('Ongeldige viewnaam.');
         }

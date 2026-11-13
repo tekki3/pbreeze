@@ -19,14 +19,16 @@ function mailFixture(array $options, callable $work): array
     $options['transcript'] = $name . '.transcript';
     file_put_contents($name . '.json', json_encode($options, JSON_THROW_ON_ERROR));
     $process = proc_open([PHP_BINARY, $root . '/tests/fixtures/mail-server.php', $name . '.json'], [
-        0 => ['file', '/dev/null', 'r'],
+        0 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'r'],
         1 => ['pipe', 'w'],
         2 => ['file', $name . '.log', 'a'],
-    ], $pipes);
+    ], $pipes, null, null, ['bypass_shell' => true]);
     if (!is_resource($process)) {
         throw new RuntimeException('Kan mailfixture niet starten.');
     }
-    stream_set_timeout($pipes[1], 10);
+    if (PHP_OS_FAMILY !== 'Windows') {
+        stream_set_timeout($pipes[1], 10);
+    }
     try {
         $address = fgets($pipes[1]);
         if ($address === false) {
@@ -85,11 +87,11 @@ CONFIG);
         throw new RuntimeException('Kan testcertificaataanvraag niet maken.');
     }
     $certificate = openssl_csr_sign($csr, null, $key, 1, $options);
-    if ($certificate === false || !openssl_x509_export($certificate, $cert) || !openssl_pkey_export($key, $private)) {
+    if ($certificate === false || !openssl_x509_export($certificate, $cert) || !openssl_pkey_export($key, $private, null, $options)) {
         throw new RuntimeException('Kan testcertificaat niet maken.');
     }
     file_put_contents($pem, $cert . $private);
-    chmod($pem, 0600);
+    \PBreeze\Filesystem::permissions($pem, 0600);
     return $pem;
 }
 
