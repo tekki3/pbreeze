@@ -15,6 +15,7 @@ require_once __DIR__ . '/framework/TemplateContext.php';
 require_once __DIR__ . '/framework/View.php';
 require_once __DIR__ . '/framework/Validator.php';
 require_once __DIR__ . '/framework/Router.php';
+require_once __DIR__ . '/framework/Encryption.php';
 require_once __DIR__ . '/framework/Database.php';
 require_once __DIR__ . '/framework/Query.php';
 require_once __DIR__ . '/framework/Model.php';

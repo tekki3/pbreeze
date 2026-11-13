@@ -13,14 +13,16 @@ final class Application
     public readonly Database $db;
     public readonly \PBreeze\Mail\Mailer $mail;
     public readonly Auth $auth;
+    public readonly Encryption $encryption;
 
-    /** @param array{name: string, url?: string, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}} $config */
-    public function __construct(public readonly string $root, public readonly array $config)
+    /** @param array{name: string, url?: string, key?: string, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}} $config */
+    public function __construct(public readonly string $root, #[\SensitiveParameter] public readonly array $config)
     {
         $this->router = new Router();
         $this->views = new View($root . '/app/views');
         $this->session = new Session();
-        $this->db = new Database($root, $config['database']);
+        $this->encryption = new Encryption($config['key'] ?? '');
+        $this->db = new Database($root, $config['database'], $this->encryption);
         $this->mail = new \PBreeze\Mail\Mailer($this->db, $config['mail'] ?? []);
         $this->auth = new Auth($this->db, $this->session, $this->mail, $config['url'] ?? 'http://127.0.0.1:8000', $config['environment'] === 'production');
     }

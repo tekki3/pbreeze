@@ -10,10 +10,12 @@ use Throwable;
 final class Database
 {
     private ?PDO $connection = null;
+    public readonly Encryption $encryption;
 
     /** @param array<string, string> $config */
-    public function __construct(private readonly string $root, private readonly array $config)
+    public function __construct(private readonly string $root, private readonly array $config, ?Encryption $encryption = null)
     {
+        $this->encryption = $encryption ?? new Encryption();
     }
 
     public function pdo(): PDO

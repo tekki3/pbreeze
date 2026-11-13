@@ -33,6 +33,11 @@ abstract class Model implements JsonSerializable
     {
         Query::identifier($this->table);
         Query::identifier($this->primaryKey);
+        foreach ($this->casts as $key => $cast) {
+            if ($this->encrypted($key) && ($key === $this->primaryKey || $this->timestamps && in_array($key, ['created_at', 'updated_at'], true))) {
+                throw new LogicException('Primaire sleutels en automatische timestamps kunnen niet worden versleuteld.');
+            }
+        }
     }
 
     /** @return Query<static> */
@@ -52,7 +57,7 @@ abstract class Model implements JsonSerializable
     }
 
     /** @param array<string, mixed> $data */
-    final public function create(array $data): static
+    final public function create(#[\SensitiveParameter] array $data): static
     {
         $record = new static($this->db);
         $record->fill($data);
@@ -61,7 +66,7 @@ abstract class Model implements JsonSerializable
     }
 
     /** @param array<string, mixed> $data */
-    final public function fill(array $data): static
+    final public function fill(#[\SensitiveParameter] array $data): static
     {
         $encoded = $this->encodeFill($data);
         $this->attributes = array_replace($this->attributes, $encoded);
@@ -72,7 +77,7 @@ abstract class Model implements JsonSerializable
      *  @param array<string, mixed> $data
      *  @return array<string, scalar|null>
      */
-    final public function encodeFill(array $data): array
+    final public function encodeFill(#[\SensitiveParameter] array $data): array
     {
         $result = [];
         foreach ($data as $key => $value) {
@@ -83,6 +88,10 @@ abstract class Model implements JsonSerializable
             }
             Query::identifier($key);
             $result[$key] = $this->encode($key, $value);
+            if ($this->encrypted($key) && array_key_exists($key, $this->attributes)
+                && $this->decode($key, $this->attributes[$key]) === $value) {
+                $result[$key] = $this->attributes[$key];
+            }
             if ($key === $this->primaryKey && ((!is_int($result[$key]) && !is_string($result[$key])) || $result[$key] === '')) {
                 throw new InvalidArgumentException('Een primaire sleutel moet een int of niet-lege string zijn.');
             }
@@ -99,7 +108,8 @@ abstract class Model implements JsonSerializable
         $record = new static($this->db);
         foreach ($data as $key => $value) {
             Query::identifier($key);
-            $record->attributes[$key] = $record->encode($key, $record->decode($key, $value));
+            $decoded = $record->decode($key, $value);
+            $record->attributes[$key] = $record->encrypted($key) ? $value : $record->encode($key, $decoded);
         }
         $record->original = $record->attributes;
         $record->persisted = true;
@@ -145,7 +155,7 @@ abstract class Model implements JsonSerializable
     }
 
     /** @param array<string, mixed> $data */
-    final public function update(array $data): bool
+    final public function update(#[\SensitiveParameter] array $data): bool
     {
         if (!$this->persisted) {
             throw new LogicException('update vereist een opgeslagen model.');
@@ -207,7 +217,7 @@ abstract class Model implements JsonSerializable
         return $this->decode($key, $this->attributes[$key]);
     }
 
-    final public function __set(string $key, mixed $value): void
+    final public function __set(string $key, #[\SensitiveParameter] mixed $value): void
     {
         $this->fill([$key => $value]);
     }
@@ -234,6 +244,14 @@ abstract class Model implements JsonSerializable
     final public function jsonSerialize(): array
     {
         return $this->toArray();
+    }
+
+    /** @internal */
+    final public function assertSearchable(string $key): void
+    {
+        if ($this->encrypted($key)) {
+            throw new LogicException('Versleutelde modelvelden ondersteunen geen vergelijking, sortering of relatiesleutels.');
+        }
     }
 
     /** @param class-string<Model> $related
@@ -268,6 +286,7 @@ abstract class Model implements JsonSerializable
     private function relationValue(string $key): int|string|null
     {
         Query::identifier($key);
+        $this->assertSearchable($key);
         if (!$this->persisted) {
             throw new LogicException('Relaties vereisen een opgeslagen model.');
         }
@@ -287,7 +306,7 @@ abstract class Model implements JsonSerializable
         return $key;
     }
 
-    private function encode(string $key, mixed $value): string|int|float|bool|null
+    private function encode(string $key, #[\SensitiveParameter] mixed $value): string|int|float|bool|null
     {
         $cast = $this->casts[$key] ?? null;
         $this->assertCast($cast);
@@ -298,8 +317,8 @@ abstract class Model implements JsonSerializable
             'int' => is_int($value),
             'float' => (is_int($value) || is_float($value)) && is_finite((float) $value),
             'bool' => is_bool($value),
-            'string' => is_string($value),
-            'json' => is_array($value),
+            'string', 'encrypted' => is_string($value),
+            'json', 'encrypted:json' => is_array($value),
             'datetime' => $value instanceof DateTimeInterface,
             null => is_scalar($value) && (!is_float($value) || is_finite($value)),
         };
@@ -307,6 +326,10 @@ abstract class Model implements JsonSerializable
             throw new InvalidArgumentException("Ongeldig type voor modelveld: $key");
         }
         return match ($cast) {
+            'encrypted', 'encrypted:json' => $this->db->encryption->encrypt(
+                $cast === 'encrypted:json' ? json_encode($value, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION) : $value,
+                $this->encryptionContext($key),
+            ),
             'json' => json_encode($value, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION),
             'datetime' => DateTimeImmutable::createFromInterface($value)->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s'),
             'bool' => $value ? 1 : 0,
@@ -315,12 +338,19 @@ abstract class Model implements JsonSerializable
         };
     }
 
-    private function decode(string $key, mixed $value): mixed
+    private function decode(string $key, #[\SensitiveParameter] mixed $value): mixed
     {
         $cast = $this->casts[$key] ?? null;
         $this->assertCast($cast);
         if ($value === null) {
             return null;
+        }
+        if ($this->encrypted($key)) {
+            if (!is_string($value)) {
+                throw new EncryptionException('Ongeldige opslag voor een versleuteld modelveld.');
+            }
+            $plaintext = $this->db->encryption->decrypt($value, $this->encryptionContext($key));
+            return $cast === 'encrypted:json' ? $this->json($plaintext, $key) : $plaintext;
         }
         return match ($cast) {
             'int' => filter_var($value, FILTER_VALIDATE_INT) !== false ? (int) $value : throw new InvalidArgumentException("Ongeldige integer in $key"),
@@ -335,12 +365,22 @@ abstract class Model implements JsonSerializable
 
     private function assertCast(?string $cast): void
     {
-        if (!in_array($cast, [null, 'int', 'float', 'bool', 'string', 'json', 'datetime'], true)) {
+        if (!in_array($cast, [null, 'int', 'float', 'bool', 'string', 'json', 'datetime', 'encrypted', 'encrypted:json'], true)) {
             throw new LogicException("Onbekende modelcast: $cast");
         }
     }
 
-    private function json(mixed $value, string $key): array
+    private function encrypted(string $key): bool
+    {
+        return in_array($this->casts[$key] ?? null, ['encrypted', 'encrypted:json'], true);
+    }
+
+    private function encryptionContext(string $key): string
+    {
+        return 'orm:' . $this->table . ':' . $key . ':' . $this->casts[$key];
+    }
+
+    private function json(#[\SensitiveParameter] mixed $value, string $key): array
     {
         if (!is_string($value)) {
             throw new InvalidArgumentException("Ongeldige JSON-opslag in $key");

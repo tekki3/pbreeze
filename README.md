@@ -9,6 +9,7 @@ Met registratie, login/logout, wachtwoordherstel en verplichte e-mailverificatie
 voor beschermde routes.
 Inclusief een native PDO-querybuilder en optionele ORM met modellen, casts
 en expliciete relaties. Geen globale databaseverbinding of autoloading.
+Native AES-256-GCM-encryptie is beschikbaar als service en via ORM-casts.
 De applicatie, CLI en tests zijn ingericht voor zowel Windows als Linux.
 
 ## Beginnen
@@ -17,6 +18,7 @@ Vereist: PHP 8.3+, PDO, `pdo_sqlite` voor SQLite of `pdo_mysql` voor MySQL,
 en de standaardextensies session, json en filter. De tests gebruiken daarnaast
 de native proces- en socketfuncties. De CLI gebruikt `proc_open` voor de
 ontwikkelserver en tests; deze functie moet daarvoor beschikbaar zijn.
+Encryptie vereist de native `openssl`-extensie met AES-256-GCM-ondersteuning.
 Er is geen installatie van packages nodig.
 
 ```sh
@@ -776,6 +778,8 @@ gebruik `create()` voor modelqueries.
 | `string` | string | string |
 | `json` | array | array; JSON met expliciete foutmeldingen |
 | `datetime` | `DateTimeInterface` | `DateTimeImmutable` in UTC |
+| `encrypted` | string | ontsleutelde string |
+| `encrypted:json` | array | ontsleutelde array |
 
 Null blijft bij alle casts null; de database bepaalt of een kolom null toestaat.
 Zonder cast zijn alleen scalars/null toegestaan en worden PDO-waarden gebruikt.
@@ -871,6 +875,153 @@ model-events zijn niet toegevoegd. Gebruik na rollback nieuwe/herladen
 instanties: een rollback herstelt de database, niet eerder gewijzigde
 PHP-objecten. De ORM vervangt geen validatie, routeguards of autorisatie
 per record.
+
+## Encryptie
+
+De native `Encryption`-service gebruikt **AES-256-GCM** via OpenSSL:
+256-bits sleutels, een nieuwe cryptografisch willekeurige 12-byte nonce per
+encryptie en een volledige 16-byte authenticatietag. Gegevens worden alleen
+teruggegeven als de integriteitscontrole slaagt. Er is geen terugval naar
+plaintext, een standaardkey of onbeveiligde encryptie.
+
+### Sleutel aanmaken en bewaren
+
+```sh
+php breeze key:generate
+```
+
+Dit toont één `APP_KEY=base64:...`-regel. Kopieer deze naar je lokale `.env`
+of zet `APP_KEY` via de omgevingsconfiguratie/secret store van je deployment.
+Het commando wijzigt **geen** bestanden en overschrijft nooit een bestaande
+sleutel. Iedere uitvoering toont een nieuwe sleutel; vervang een sleutel
+die al gegevens beschermt niet zomaar. `--force` wordt niet geaccepteerd.
+Voer het commando uit in een privéterminal, niet in gedeelde CI-logs.
+
+De sleutel moet exact 32 willekeurige bytes bevatten, canoniek base64-gecodeerd
+met prefix `base64:`; een wachtwoord of eigen tekstsleutel wordt geweigerd.
+Er wordt geen sleutel automatisch gegenereerd bij boot of per request.
+Zonder `APP_KEY` blijft het framework werken totdat je encryptie of een
+niet-null encrypted cast gebruikt; dan volgt een expliciete `EncryptionException`.
+
+Bewaar een veilige sleutelbackup **apart van de database**. Deel dezelfde
+sleutel met de webapp, CLI en workers die dezelfde data moeten ontsleutelen;
+gebruik verschillende sleutels voor verschillende applicaties/omgevingen.
+Commit nooit echte sleutels. Bescherm `.env`, omgevingsvariabelen, serverlogs
+en backups; dump de applicatieconfiguratie niet.
+Zonder de oorspronkelijke sleutel zijn versleutelde gegevens niet herstelbaar.
+
+### Service gebruiken
+
+```php
+$encrypted = $app->encryption->encrypt('Vertrouwelijke tekst', 'orders:notes');
+$plaintext = $app->encryption->decrypt($encrypted, 'orders:notes');
+```
+
+De optionele context wordt geauthenticeerd maar niet opgeslagen in de payload.
+Bij decryptie moet je exact dezelfde context gebruiken. Kies een vaste,
+toepassingsspecifieke context om onbedoeld hergebruik op een andere plek
+te blokkeren. Lege strings, Unicode en binaire strings worden ondersteund.
+Het uitvoerformaat is `pbreeze:v1:` gevolgd door base64 van nonce, tag en
+ciphertext. De prefix/versie en context worden als additional authenticated
+data meegenomen. Versleutel dezelfde waarde opnieuw en je krijgt een andere
+payload. Het formaat gebruikt geen PHP-serialisatie.
+
+```php
+use PBreeze\Encryption;
+
+$encryption = new Encryption($configuredKey);
+$encrypted = $encryption->encrypt($value);
+$value = $encryption->decrypt($encrypted);
+```
+
+Ongeldige/verouderde payloadformaten, afgekorte of gewijzigde data, een verkeerde
+sleutel of context geven `PBreeze\EncryptionException`. Een echte operationele
+fout moet zichtbaar blijven; vang die niet af om vervolgens lege tekst of
+de oorspronkelijke ciphertext als geslaagde decryptie terug te geven.
+Fouten bevatten geen sleutel of plaintext. Sleutel- en plaintextparameters
+zijn gemarkeerd met `SensitiveParameter`; de service redigeert sleuteldata
+bij `var_dump` en kan niet worden geserialiseerd. Dit vervangt geen zorgvuldig
+logbeleid: je eigen code kan ontsleutelde gegevens nog steeds lekken.
+
+### Versleutelde ORM-casts
+
+```php
+final class Customer extends \PBreeze\Model
+{
+    protected string $table = 'customers';
+    protected array $fillable = ['name', 'private_note', 'preferences'];
+    protected array $hidden = ['private_note', 'preferences'];
+    protected array $casts = [
+        'private_note' => 'encrypted',
+        'preferences' => 'encrypted:json',
+    ];
+}
+
+$customers = new Customer($app->db);
+$customer = $customers->create([
+    'name' => 'Voorbeeld',
+    'private_note' => 'Alleen voor intern gebruik',
+    'preferences' => ['language' => 'nl'],
+]);
+$text = $customer->private_note;       // ontsleutelde string
+$preferences = $customer->preferences; // ontsleutelde array
+$customer->update(['private_note' => 'Nieuwe tekst']);
+```
+
+`encrypted` accepteert strings, `encrypted:json` arrays. Beide behouden null
+als database-NULL. Ook bulkupdates via een modelquery gebruiken deze casts.
+Hydration/refresh valideert ciphertext zonder opnieuw te versleutelen:
+ongewijzigde data krijgt geen dirty markering en verandert niet bij een
+andere veldupdate. Dezelfde ontsleutelde waarde opnieuw toekennen behoudt de
+bestaande ciphertext. Wijs bewust nieuwe inhoud toe als je die wilt vervangen.
+
+Gebruik `TEXT` of bij grote payloads MySQL `LONGTEXT`, niet de oorspronkelijke
+korte `VARCHAR`: encryptie voegt 28 bytes en een prefix toe en base64 vergroot
+de payload verder. De exacte opslaglengte is `11 + 4 * ceil((28 + bytes) / 3)`.
+Er worden geen bestaande kolommen of data automatisch gewijzigd.
+
+De ORM-context bevat tabelnaam, kolomnaam en casttype. Ciphertext naar een
+andere tabel/kolom verplaatsen of het casttype wijzigen wordt daardoor
+geweigerd. De context bevat geen rij-ID: verplaatsing tussen rijen in dezelfde
+kolom of het terugzetten van oudere geldige data wordt niet voorkomen.
+Encryptie is geen bescherming tegen replay, verwijdering, een overgenomen
+applicatie of een aanvaller met toegang tot zowel data als sleutel.
+
+Encryptie maakt velden **niet automatisch hidden**. Lezen en `toArray()`/JSON
+geven plaintext terug tenzij je het veld aan `$hidden` toevoegt.
+`dirty()` en directe `$app->db->table(...)`-queries gebruiken het opslagformaat.
+Tabelqueries en handgeschreven SQL voeren geen encrypted casts uit: gebruik
+modellen bij writes naar versleutelde kolommen.
+
+Omdat ciphertext willekeurig is, zijn vergelijkingen, `whereIn` met waarden,
+LIKE, sortering en relatiesleutels op encrypted modelvelden niet bruikbaar;
+de modelquery weigert die expliciet. `whereNull`/`whereNotNull` en een lege
+`whereIn` blijven bruikbaar. Primaire sleutels en automatische timestampkolommen
+mogen geen encrypted cast hebben. Gebruik ook geen foreign/unique index als
+logische plaintextvergelijking. Bestaande login-e-mailadressen, wachtwoordhashes,
+reset-/verificatietokenhashes en mailqueue blijven bewust ongewijzigd.
+Wachtwoorden blijven eenrichtingsgehasht, niet omkeerbaar versleuteld.
+
+Bij een zelfgemaakte database-instantie geef je dezelfde service expliciet mee:
+
+```php
+$db = new \PBreeze\Database($root, $databaseConfig, $encryption);
+```
+
+### Bestaande data en sleutelrotatie
+
+Een encrypted cast op een bestaande plaintextkolom zetten migreert niets:
+lezen faalt dan bewust. Maak een eigen gecontroleerde migratie naar voldoende
+grote kolommen en versleutel bestaande waarden met de juiste context.
+Maak eerst backups en test op een kopie. Ook een tabel/kolom hernoemen vereist
+decryptie met de oude en encryptie met de nieuwe context.
+
+Er is geen automatische sleutelrotatie, sleutelring of migratiecommando.
+Stop voor een gecontroleerde rotatie alle schrijvers/workers, bewaar de oude
+sleutel veilig, ontsleutel met de oude service en versleutel met de nieuwe
+service met dezelfde context. Controleer alle records/backups, zet alle
+processen over op de nieuwe sleutel en hervat pas daarna writes. Alleen
+`APP_KEY` vervangen maakt eerder versleutelde data onleesbaar.
 
 ## Migraties en seeds
 
@@ -1206,5 +1357,8 @@ en persistente rate limits op een tijdelijke database.
 ORM-tests controleren querybindings, identifiercontrole, CRUD, schrijfguards,
 fillable/hidden, casts en corrupte opslagwaarden, paginering, relaties,
 handmatige sleutels, transacties en de modelgenerator.
+Encryptietests controleren native OpenSSL-interoperabiliteit, willekeurige
+nonces, bytegewijze manipulatie, verkeerde sleutels/contexten, foutieve
+payloads, CLI-sleutelgeneratie en encrypted ORM-casts.
 MySQL vereist daarnaast een eigen integratierun op een wegwerpdatabase;
 de meegeleverde suite valideert de MySQL-verbinding niet tegen een live server.

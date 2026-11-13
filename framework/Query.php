@@ -38,7 +38,7 @@ final class Query
         return '`' . $name . '`';
     }
 
-    public function where(string $column, mixed $operator, mixed $value = null): self
+    public function where(string $column, #[\SensitiveParameter] mixed $operator, #[\SensitiveParameter] mixed $value = null): self
     {
         if (func_num_args() === 2) {
             $value = $operator;
@@ -56,6 +56,7 @@ final class Query
             };
         }
         self::value($value);
+        $this->model?->assertSearchable($column);
         $query = clone $this;
         $query->conditions[] = self::identifier($column) . " $operator ?";
         $query->bindings[] = $value;
@@ -77,9 +78,12 @@ final class Query
     }
 
     /** @param list<scalar|null> $values */
-    public function whereIn(string $column, array $values): self
+    public function whereIn(string $column, #[\SensitiveParameter] array $values): self
     {
         $identifier = self::identifier($column);
+        if ($values !== []) {
+            $this->model?->assertSearchable($column);
+        }
         if (!array_is_list($values) || count($values) > 500) {
             throw new InvalidArgumentException('whereIn verwacht een lijst van maximaal 500 waarden.');
         }
@@ -97,6 +101,7 @@ final class Query
 
     public function orderBy(string $column, string $direction = 'asc'): self
     {
+        $this->model?->assertSearchable($column);
         $direction = strtoupper($direction);
         if (!in_array($direction, ['ASC', 'DESC'], true)) {
             throw new InvalidArgumentException('Sorteerrichting moet asc of desc zijn.');
@@ -219,7 +224,7 @@ final class Query
     /** @param array<string, mixed> $data
      *  @return T
      */
-    public function create(array $data): Model
+    public function create(#[\SensitiveParameter] array $data): Model
     {
         $this->assertInsert();
         if ($this->model === null) {
@@ -229,7 +234,7 @@ final class Query
     }
 
     /** @param array<string, mixed> $data */
-    public function update(array $data): int
+    public function update(#[\SensitiveParameter] array $data): int
     {
         $this->assertWrite();
         if ($this->model !== null) {

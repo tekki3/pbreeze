@@ -15,6 +15,7 @@ PBreeze - native PHP, zonder Composer of autoloader
 Gebruik: php breeze <commando> [naam] [--force]
 
   init                       Maak een lokale .env (bestaande blijft behouden)
+  key:generate               Toon een nieuwe APP_KEY; wijzigt geen bestanden
   serve [poort]              Start op http://127.0.0.1:8000
   routes                     Toon alle routes
   make:controller Naam       Maak een controller in app/controllers
@@ -71,6 +72,12 @@ TEXT;
             throw new RuntimeException('Productie is beschermd. Gebruik bewust --force na een back-up.');
         }
         switch ($command) {
+            case 'key:generate':
+                if ($force) {
+                    throw new InvalidArgumentException('key:generate overschrijft geen sleutels en accepteert geen --force.');
+                }
+                echo 'APP_KEY=' . Encryption::generateKey() . PHP_EOL;
+                break;
             case 'help':
                 echo self::HELP . PHP_EOL;
                 break;
