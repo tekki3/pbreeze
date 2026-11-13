@@ -11,6 +11,7 @@ final class Application
     public readonly View $views;
     public readonly Formatter $format;
     public readonly Strings $strings;
+    public readonly Ai $ai;
     public readonly Session $session;
     public readonly Database $db;
     public readonly \PBreeze\Mail\Mailer $mail;
@@ -21,7 +22,7 @@ final class Application
     public readonly Uploads $uploads;
     public readonly Logger $log;
 
-    /** @param array{name: string, locale?: string, timezone?: string, url?: string, key?: string, api_docs?: bool, upload_max_bytes?: int, log_retention_days?: int, log_level?: string, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}} $config */
+    /** @param array{name: string, locale?: string, timezone?: string, url?: string, key?: string, api_docs?: bool, upload_max_bytes?: int, log_retention_days?: int, log_level?: string, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}, ai?: array{provider?: string, timeout?: int, max_tokens?: int, ca_file?: string, openai?: array{key?: string, model?: string}, anthropic?: array{key?: string, model?: string}}} $config */
     public function __construct(public readonly string $root, #[\SensitiveParameter] public readonly array $config)
     {
         $this->router = new Router();
@@ -29,6 +30,7 @@ final class Application
         $this->uploads = new Uploads($root, $config['upload_max_bytes'] ?? 2097152);
         $this->format = new Formatter($config['locale'] ?? 'en-US', $config['timezone'] ?? 'UTC');
         $this->strings = new Strings();
+        $this->ai = new Ai($config['ai'] ?? []);
         $this->views = new View($root . '/app/views', formatter: $this->format, strings: $this->strings);
         $this->session = new Session();
         $this->botProtection = new BotProtection($this->session);

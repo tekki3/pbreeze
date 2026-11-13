@@ -14,6 +14,7 @@ require_once __DIR__ . '/framework/UploadedFile.php';
 require_once __DIR__ . '/framework/Uploads.php';
 require_once __DIR__ . '/framework/Formatter.php';
 require_once __DIR__ . '/framework/Strings.php';
+require_once __DIR__ . '/framework/Ai.php';
 require_once __DIR__ . '/framework/documents/DocumentFile.php';
 require_once __DIR__ . '/framework/documents/Documents.php';
 require_once __DIR__ . '/framework/documents/PdfDocument.php';
@@ -48,5 +49,6 @@ require_once __DIR__ . '/framework/helpers.php';
 \PBreeze\Env::load(__DIR__ . '/.env');
 $config = require __DIR__ . '/config/app.php';
 $config['mail'] = require __DIR__ . '/config/mail.php';
+$config['ai'] = require __DIR__ . '/config/ai.php';
 
 return new \PBreeze\Application(__DIR__, $config);

@@ -67,6 +67,7 @@ requires `iconv`. The document tests also use the native `dom` extension.
 Localized formatting requires the native `intl` extension and its ICU data.
 Upload validation requires native `fileinfo`; DOCX/XLSX upload checks also
 require native `zip`. PHP file uploads must be enabled.
+AI requests require native `curl` with HTTPS support and a trusted CA store.
 No package installation is required.
 
 ```sh
@@ -183,6 +184,175 @@ tests/run.php        Native tests, including real HTTP requests
 bootstrap.php        Explicit framework registration
 breeze               CLI, run with php breeze
 ```
+
+## AI: Claude and OpenAI
+
+The server-side `$app->ai` service supports text conversations and incremental
+text streaming through OpenAI's **Responses API** and Anthropic's **Claude
+Messages API**. It uses native PHP cURL, not an SDK or Composer. It does not
+create public routes or a chat UI. ChatGPT/Claude subscriptions do not provide
+API credentials or include API usage; obtain a provider API key and enable
+billing/access separately.
+
+### Configuration
+
+Add these settings to your existing `.env` or process environment. Set only
+the providers you use; never commit real API keys:
+
+```dotenv
+AI_PROVIDER=openai
+AI_TIMEOUT=60
+AI_MAX_TOKENS=1024
+AI_CA_FILE=
+OPENAI_API_KEY=
+OPENAI_MODEL=
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=
+```
+
+`AI_PROVIDER` accepts `openai` or `anthropic` (Claude). Set the API key and exact
+API model ID available to that account, not a ChatGPT/Claude UI label. Model
+settings are intentionally empty: no possibly retired model is silently chosen.
+Provider construction makes no network requests and permits unconfigured
+providers; calling an unconfigured provider fails explicitly.
+
+`AI_TIMEOUT` is the complete request deadline in seconds (1..300), including
+streaming. Connection setup is capped at the smaller of 15 seconds and that
+deadline. `AI_MAX_TOKENS` is the default output budget (1..128000); each model
+may enforce lower limits. Some reasoning models use output tokens internally,
+leaving fewer visible text tokens. `AI_CA_FILE` optionally specifies a readable
+CA bundle; otherwise native cURL/system trust and `curl.cainfo` apply. Keep
+certificate verification enabled and configure the correct CA store on both
+Windows and Linux.
+
+Bootstrap reads `config/ai.php` and exposes `$app->ai`. Programmatic application
+configuration can supply `ai` with `provider`, integer `timeout`/`max_tokens`,
+`ca_file`, and `openai`/`anthropic` arrays containing `key` and `model`.
+API keys and models are validated only for the provider used by each call.
+
+### Text conversations
+
+```php
+$app = require __DIR__ . '/bootstrap.php';
+
+$reply = $app->ai->chat(
+    [['role' => 'user', 'content' => 'Explain PHP routing in two sentences.']],
+    provider: 'anthropic',
+    system: 'Be concise and use US English.',
+    maxTokens: 512,
+);
+
+echo $reply['text']; // Plain-text CLI output. Escape with e() in HTML.
+```
+
+Omit `provider` to use `AI_PROVIDER`. Optional `model` and `maxTokens` named
+arguments override configuration for one call only. `system` is a separate
+trusted instruction string, not an entry with role `system`.
+
+Pass a nonempty list of messages containing exactly `role` (`user` or
+`assistant`) and nonempty UTF-8 `content`. The caller owns conversation history:
+
+```php
+$messages = [['role' => 'user', 'content' => 'What is CSRF?']];
+$first = $app->ai->chat($messages, provider: 'openai');
+$messages[] = ['role' => 'assistant', 'content' => $first['text']];
+$messages[] = ['role' => 'user', 'content' => 'Give a short PHP example.'];
+$second = $app->ai->chat($messages, provider: 'openai');
+```
+
+Every successful call returns exactly:
+
+| Key | Meaning |
+|---|---|
+| `provider` | `openai` or `anthropic` |
+| `id` | Provider response/message ID |
+| `model` | Model ID reported by the provider |
+| `text` | Combined visible text, including an OpenAI text refusal when returned |
+| `finish_reason` | Explicit provider completion reason; inspect before treating text as complete |
+| `input_tokens` | Provider-reported nonnegative input-token counter |
+| `output_tokens` | Provider-reported nonnegative output-token counter |
+
+OpenAI normally reports `completed`; text refusals report `refusal`. A
+token-budget-limited OpenAI response reports `max_output_tokens`. Claude normally
+reports `end_turn`, with possible `max_tokens`, `stop_sequence`, `refusal`, or
+`model_context_window_exceeded`. Token/context-limit results contain partial
+text: inspect the reason and decide whether to request more. Empty visible text,
+provider failures, and unsupported non-text results throw rather than returning
+a success-shaped empty answer. Token counters are not a cost estimate and do
+not include separately reported cache counters or pricing calculations.
+
+### Streaming text
+
+```php
+$reply = $app->ai->stream(
+    [['role' => 'user', 'content' => 'Explain prepared statements briefly.']],
+    static function (string $delta): void {
+        echo $delta; // Plain-text CLI output, not HTML.
+    },
+    provider: 'openai',
+    system: 'Use plain text.',
+);
+
+// $reply contains the same metadata and complete assembled text as chat().
+```
+
+The callback runs synchronously for each nonempty text delta as it arrives, not
+after the whole response has been buffered. The method returns only after a
+valid terminal event and complete HTTP transfer. SSE comments, fragmented
+UTF-8/network chunks, LF/CRLF/CR framing, and multiline data fields are handled.
+If your callback throws, the connection is canceled and that exception propagates.
+
+**Partial output is not proof of success.** An HTTP interruption, timeout,
+provider stream error, malformed event, missing terminal event, or mismatched
+OpenAI final text throws even when the callback has already received text.
+Do not automatically retry streams, and do not persist a partial answer as
+complete. There are no automatic retries or provider fallback, avoiding duplicate
+output and unexpected charges.
+
+This callback API is not an HTTP SSE endpoint. Application code must explicitly
+authenticate/authorize any endpoint it adds, impose rate limits and spending
+budgets, choose framing/content types, and configure proxy/output buffering and
+PHP execution timeouts. Close an active PHP session with `session_write_close()`
+before a long-running web stream if it no longer needs session changes.
+
+### Errors, limits, and privacy
+
+Invalid caller input or missing selected-provider configuration throws
+`InvalidArgumentException`. HTTP, network/TLS, provider, JSON, unsupported-content,
+and premature-stream failures throw `RuntimeException`. Non-200 HTTP errors
+include their status in `$error->getCode()` (for example 401 or 429) but never
+copy raw provider error bodies or credentials into the exception message.
+Catch errors at the application boundary and show a generic failure; inspect
+only safe metadata in private diagnostics. Callback exceptions remain unchanged.
+
+The native client uses fixed HTTPS provider URLs, verifies TLS certificates and
+hostnames, never follows redirects, and enforces a total timeout. Requests are
+capped at 4 MiB; responses at 16 MiB including stream metadata; each SSE event
+at 4 MiB. Provider token/context limits still apply. The framework does not
+store or log keys, prompts, responses, or conversation history. OpenAI requests
+set `store=false`, which is not a guarantee of zero provider retention: check
+each provider's data policies before sending personal or confidential content.
+
+AI output is untrusted. Escape it in HTML, never execute generated code or SQL
+automatically, and do not let prompts grant authorization. Keep API keys out
+of browser scripts, templates, logs, and source control. This API supports only
+text input/output; images, tools/function calls, structured output, audio,
+provider-side conversation persistence, and full reasoning-state replay are
+not implemented.
+
+For isolated tests, `new \PBreeze\Ai($config, $transport)` accepts an optional
+trusted transport Closure with signature
+`function (string $url, array $headers, string $json, int $timeout, \Closure $receive): void`.
+It must synchronously pass successful response-body chunks to `$receive` and
+throw for network errors or non-200 HTTP responses. The replacement controls
+its own TLS, HTTP status, and timeout safeguards; never derive it from request
+input. Normal applications should use the built-in transport.
+
+Provider protocols:
+[OpenAI Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create),
+[OpenAI streaming](https://developers.openai.com/api/docs/guides/streaming-responses),
+[Claude Messages API](https://platform.claude.com/docs/en/api/messages),
+[Claude streaming](https://platform.claude.com/docs/en/build-with-claude/streaming).
 
 ## Form Generator
 
@@ -2719,6 +2889,10 @@ The server is stopped and temporary files are cleaned up.
 SMTP and IMAP are tested through local protocol fixtures, including native TLS,
 STARTTLS, authentication, certificate verification, database queue, deduplication,
 and loss of the SMTP confirmation. No external email is sent.
+AI tests exercise request mapping, history, streamed SSE framing, errors,
+truncation, callback cancellation, and native HTTPS through isolated local TLS
+fixtures. They use no real provider credentials, call no external AI service,
+and incur no API charges.
 Authentication tests exercise the real HTTP forms, session and CSRF rotation,
 email verification, token expiration/reuse, password reset, session revocation,
 and persistent rate limits on a temporary database.

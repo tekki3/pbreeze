@@ -30,12 +30,13 @@
 - Use `$app->format` (or `$format` in views) for localized display values. Money uses decimal strings or integer minor units, never floats; keep stored/API numeric data locale-independent.
 - Handle multipart uploads through `Request::file()`/`files()` and `$app->uploads`, with explicit allowed types and private storage. Authorize ownership before downloads/deletions; storage keys are not credentials.
 - Use `$app->log` for structured application diagnostics. Keep messages/context free of secrets; exception logging records source metadata only. Log retention is configured through `LOG_RETENTION_DAYS`.
+- Use `$app->ai` for server-side OpenAI/Claude text requests. Keep keys/prompts out of logs, validate and authorize application inputs, and treat generated text as untrusted. Streaming may emit partial text before an error.
 
 ## Validation
 
 - Run commands from the project root. Use `php breeze help` to inspect available commands.
 - Run `php breeze test` for the native regression suite; add coverage for changed behavior.
-- CI runs that suite on Ubuntu and Windows with PHP 8.3 and 8.5, using `pdo_sqlite`, `openssl`, `iconv`, `mbstring`, `zip`, `dom`, `intl`, and `fileinfo`.
+- CI runs that suite on Ubuntu and Windows with PHP 8.3 and 8.5, using `pdo_sqlite`, `openssl`, `curl`, `iconv`, `mbstring`, `zip`, `dom`, `intl`, and `fileinfo`.
 - Validate changed PHP syntax with `php -l path/to/file.php`. Breeze templates must be exercised through the template engine, not linted as ordinary PHP.
 - For UI changes, check rendered desktop/mobile layouts and relevant form states.
 - Do not run migrations, seeds, email sending, or other data-changing commands against a real application merely to validate code. Prefer the isolated test fixtures.

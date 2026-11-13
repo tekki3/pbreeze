@@ -124,6 +124,7 @@ function http(string $base, string $path, string $method = 'GET', string $body =
 try {
     require __DIR__ . '/platform.php';
     require __DIR__ . '/mail.php';
+    require __DIR__ . '/ai.php';
     require __DIR__ . '/templates.php';
     require __DIR__ . '/orm.php';
     require __DIR__ . '/sqlsrv.php';
