@@ -30,6 +30,11 @@ every public function, CLI commands, and environment settings. Open it directly
 in a browser; its local search, styles, and print layout work offline.
 After changing framework APIs or documentation, run `php docs/build.php` to
 regenerate it and `php docs/build.php --check` to verify it is current.
+Application styles and scripts live in `public/assets/css/` and
+`public/assets/js/`. Vendored Swagger UI keeps its own `css/` and `js/`
+subfolders under `public/assets/swagger-ui/`, alongside its license metadata.
+The offline manual uses `docs/css/` and `docs/js/`; keep these folders with
+`docs/index.html` when copying the manual.
 
 ## Language Convention
 
@@ -74,7 +79,7 @@ Open <http://127.0.0.1:8000>. The example form demonstrates CSRF,
 validation, and safe HTML output. The development server stays on localhost.
 Use `php breeze serve 8080` for a different port.
 The home/test page has a responsive light design with local CSS
-in `public/assets/welcome.css`, a test form with error and success messages,
+in `public/assets/css/welcome.css`, a test form with error and success messages,
 and expandable CLI examples. No external fonts or scripts are loaded.
 
 `init` creates a local `.env`, but never overwrites an existing one.

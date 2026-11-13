@@ -4,10 +4,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ $name }} API reference</title>
-    <link rel="stylesheet" href="/assets/swagger-ui/swagger-ui.css">
-    <link rel="stylesheet" href="/assets/api-docs.css">
-    <script src="/assets/swagger-ui/swagger-ui-bundle.js" defer></script>
-    <script src="/assets/api-docs.js" defer></script>
+    <link rel="stylesheet" href="/assets/swagger-ui/css/swagger-ui.css">
+    <link rel="stylesheet" href="/assets/css/api-docs.css">
+    <script src="/assets/swagger-ui/js/swagger-ui-bundle.js" defer></script>
+    <script src="/assets/js/api-docs.js" defer></script>
 </head>
 <body>
     <header class="docs-header">

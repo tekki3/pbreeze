@@ -449,9 +449,11 @@ PHP);
         mkdir($public);
         copy($root . '/public/router.php', $public . '/router.php');
         mkdir($public . '/assets');
-        copy($root . '/public/assets/welcome.css', $public . '/assets/welcome.css');
-        mkdir($public . '/assets/swagger-ui');
-        foreach (['api-docs.js', 'api-docs.css', 'swagger-ui/swagger-ui-bundle.js', 'swagger-ui/swagger-ui.css'] as $asset) {
+        foreach (['css', 'js', 'swagger-ui', 'swagger-ui/css', 'swagger-ui/js'] as $directory) {
+            mkdir($public . '/assets/' . $directory);
+        }
+        copy($root . '/public/assets/css/welcome.css', $public . '/assets/css/welcome.css');
+        foreach (['js/api-docs.js', 'css/api-docs.css', 'swagger-ui/js/swagger-ui-bundle.js', 'swagger-ui/css/swagger-ui.css'] as $asset) {
             copy($root . '/public/assets/' . $asset, $public . '/assets/' . $asset);
         }
         $environment['API_DOCS_ENABLED'] = 'true';
@@ -502,8 +504,8 @@ PHP);
             check(str_contains(strtolower($headers), 'samesite=lax'));
             check(str_contains(strtolower($headers), 'content-security-policy:'));
             check(str_contains(strtolower($headers), 'x-content-type-options: nosniff'));
-            check(str_contains($response['body'], 'href="/assets/welcome.css"'));
-            $stylesheet = http($base, '/assets/welcome.css');
+            check(str_contains($response['body'], 'href="/assets/css/welcome.css"'));
+            $stylesheet = http($base, '/assets/css/welcome.css');
             same(200, $stylesheet['status']);
             check(str_contains(implode("\n", $stylesheet['headers']), 'text/css'));
             check(str_contains($stylesheet['body'], '@media'));

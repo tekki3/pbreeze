@@ -298,8 +298,8 @@ $tutorial = require __DIR__ . '/walkthrough.php';
 $html = '<!doctype html><html lang="en-US"><head><meta charset="utf-8">'
     . '<meta name="viewport" content="width=device-width, initial-scale=1">'
     . '<meta name="description" content="The complete PBreeze user manual: beginner tutorials, every public function, CLI commands, configuration, and deployment.">'
-    . '<title>PBreeze User Manual</title><link rel="stylesheet" href="manual.css">'
-    . '<script src="manual.js" defer></script></head><body>'
+    . '<title>PBreeze User Manual</title><link rel="stylesheet" href="css/manual.css">'
+    . '<script src="js/manual.js" defer></script></head><body>'
     . '<a class="skip-link" href="#main">Skip to manual</a>'
     . '<header class="topbar"><a class="brand" href="#start">PBreeze <span>User manual</span></a>'
     . '<a href="../README.md">Project README</a><button type="button" id="print" hidden>Print manual</button></header>'
@@ -354,6 +354,14 @@ try {
     libxml_use_internal_errors($previous);
 }
 $seenIds = [];
+foreach (['link' => 'href', 'script' => 'src'] as $tag => $attribute) {
+    foreach ($dom->getElementsByTagName($tag) as $element) {
+        $asset = $element->getAttribute($attribute);
+        if (!preg_match('~^(?:css|js)/[a-zA-Z0-9._-]+$~D', $asset) || !is_file(__DIR__ . '/' . $asset)) {
+            throw new RuntimeException('Missing or invalid local manual asset: ' . $asset);
+        }
+    }
+}
 foreach ($dom->getElementsByTagName('*') as $element) {
     if ($element->hasAttribute('id')) {
         $id = $element->getAttribute('id');

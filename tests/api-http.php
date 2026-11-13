@@ -58,7 +58,7 @@ test('HTTP Swagger loads local assets without weakening the CSP of regular web p
     $headers = strtolower(implode("\n", $docs['headers']));
     check(str_contains($headers, "script-src 'self'"));
     check(!str_contains($headers, 'set-cookie:'));
-    foreach (['/assets/swagger-ui/swagger-ui-bundle.js', '/assets/swagger-ui/swagger-ui.css', '/assets/api-docs.js', '/assets/api-docs.css'] as $asset) {
+    foreach (['/assets/swagger-ui/js/swagger-ui-bundle.js', '/assets/swagger-ui/css/swagger-ui.css', '/assets/js/api-docs.js', '/assets/css/api-docs.css'] as $asset) {
         same(200, http($base, $asset)['status']);
     }
     $spec = json_decode(http($base, '/api/openapi.json')['body'], true, 512, JSON_THROW_ON_ERROR);
