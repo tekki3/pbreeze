@@ -204,7 +204,11 @@ if ($readme === false) {
 }
 $readme = str_replace(["\r\n", "\r"], "\n", $readme);
 $ids = [];
-$navigation = '<a href="#start">Start here</a><a href="#tutorial">Build your first feature</a>';
+$navigation = '<a href="#start">Start here</a>'
+    . '<a href="#guide-start-here-your-first-steps">Beginner learning path</a>'
+    . '<a href="#guide-detailed-installation-guide">Install PBreeze</a>'
+    . '<a href="#guide-your-first-page">Your first page</a>'
+    . '<a href="#tutorial">Build your first feature</a>';
 $chapters = '';
 preg_match_all('/^## ([^\r\n]+)\r?\n(.*?)(?=^## |\z)/ms', $readme, $matches, PREG_SET_ORDER);
 foreach ($matches as $chapter) {
@@ -315,7 +319,7 @@ $html = '<!doctype html><html lang="en-US"><head><meta charset="utf-8">'
     . '<details class="class-nav"><summary>Browse all ' . $classCount . ' classes</summary>'
     . '<nav aria-label="Classes">' . $referenceNavigation . '</nav></details></details></aside>'
     . '<main id="main"><section class="intro" id="start" data-search-unit data-title="Start here">'
-    . '<h1>Build with PBreeze.</h1><p class="lead">A complete, practical guide to the native PHP framework. Start with a working feature, then keep the function reference beside you.</p>'
+    . '<h1>Learn PBreeze, one step at a time.</h1><p class="lead">Build your first PHP page, then learn to save form data. You do not need to learn every framework feature at once.</p>'
     . '<div class="search" id="search-panel" hidden><label for="manual-search">Search chapters, functions, commands, and examples</label>'
     . '<div class="search-row"><input id="manual-search" type="search" placeholder="Try moneyMinor, uploads, SMTP, or migrations" autocomplete="off">'
     . '<button type="button" id="clear-search" hidden>Clear</button></div>'
@@ -324,9 +328,13 @@ $html = '<!doctype html><html lang="en-US"><head><meta charset="utf-8">'
     . 'All maintained explanations and examples are US English. This manual opens directly from disk and works offline; JavaScript only enhances search and printing.</p>'
     . '<p><strong>Coverage:</strong> ' . $classCount . ' framework classes, ' . $methodCount
     . ' declared public methods and protected relationship helpers, ' . $count . ' global helpers, all CLI commands, and every example environment setting.</p>'
-    . '<h2>How to use this manual</h2><ol><li>Follow <a href="#tutorial">Build your first feature</a> for a complete route, validation, database, and view workflow.</li>'
-    . '<li>Use the chapters for full feature guides and production limits.</li>'
-    . '<li>Use the <a href="#api-reference">function reference</a> for exact signatures, parameter defaults, return types, and simple examples.</li></ol>'
+    . '<h2>New to frameworks? Start here</h2><ol>'
+    . '<li>Read the <a href="#guide-start-here-your-first-steps">beginner learning path</a> for basic terms and how to use code examples.</li>'
+    . '<li>Follow <a href="#guide-detailed-installation-guide">Install PBreeze</a>. Choose SQLite and your computer&apos;s operating system.</li>'
+    . '<li>Make <a href="#guide-your-first-page">your first page</a>. You will connect a URL to a template and display a name.</li>'
+    . '<li>Continue with <a href="#tutorial">Build your first feature</a> to save and display notes.</li></ol>'
+    . '<p>Already comfortable with PHP frameworks? Use the feature chapters for complete examples, the <a href="#cli-reference">CLI reference</a> to look up commands, '
+    . 'or the <a href="#api-reference">function reference</a> to check method names, inputs, and return values. You do not need to read the reference from beginning to end.</p>'
     . '<p class="note">Examples are learning material, not commands to run blindly against production. Replace example IDs, domains, and owner checks with application-specific values. Back up before schema changes.</p></section>'
     . $tutorial . $chapters
     . '<section class="chapter" id="api-reference" data-search-unit data-title="Using the function reference"><h2>Function reference</h2>'

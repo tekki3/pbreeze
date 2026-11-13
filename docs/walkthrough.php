@@ -135,17 +135,20 @@ ob_start();
 ?>
 <section class="chapter" id="tutorial" data-search-unit data-title="Build your first feature">
 <h2>Build your first feature</h2>
-<p>This walkthrough builds a small notes screen using a fresh local PBreeze installation. It reuses the shipped <code>notes</code> migration. All paths below are relative to the project root. Use a disposable development database while learning.</p>
-<h3>Check PHP and initialize</h3>
-<p>Open a terminal in the project folder. On Windows, use PowerShell or cmd; on Linux, use your normal terminal. Install PHP 8.3+ and enable the native extensions listed in Getting Started. There is no Composer install step.</p>
-<?= code("php -v\nphp -m\nphp breeze init\nphp breeze migrate\nphp breeze migrate:status", 'sh') ?>
-<p><code>init</code> preserves an existing <code>.env</code>. Inspect that file before migrating. The default local database is SQLite at <code>database/app.sqlite</code>; migrations create the notes, email, authentication, and API tables. <code>migrate:status</code> shows applied batches.</p>
+<p><strong>Goal:</strong> build a page where you can enter a note title, save it, and see your latest notes. You will create one controller, one template, and two routes. This is a local learning exercise: everyone using this page sees the same notes.</p>
+<p><strong>Before you start:</strong> finish the <a href="#guide-detailed-installation-guide">installation guide</a> and <a href="#guide-your-first-page">Your First Page</a>. Use a fresh local project and a database containing only practice data. All file paths below start from the project root, the folder containing <code>breeze</code>. You do not need email, AI, Redis, or a separate database server.</p>
+<h3>1. Check your local database</h3>
+<p>If you followed the SQLite installation steps, your tables already exist. In a terminal in the project root, run:</p>
+<?= code('php breeze migrate:status', 'sh') ?>
+<p><strong>Expected result:</strong> applied migrations show batch numbers, not <code>OPEN</code>. If any are open, run <code>php breeze migrate</code> on this practice database and check again. If configuration or extensions are missing, return to the installation guide rather than continuing through errors.</p>
+<p>The installation uses SQLite at <code>database/app.sqlite</code>. The bundled migrations already create a <code>notes</code> table, so this exercise does not need a new migration or model.</p>
 <h3>Understand where code runs</h3>
-<p><code>public/index.php</code> boots the framework and returns an Application. <code>routes/web.php</code> explicitly imports controllers and registers handlers. Controllers receive a Request and return a Response. Templates render display content; database queries belong in controllers/models, not HTML.</p>
-<p>Use <code>$app-&gt;db</code>, <code>$app-&gt;views</code>, and other injected services. Never create an autoloader or rely on magic class discovery. A controller existing on disk does not make it public: only a registered route does.</p>
-<h3>Create a controller</h3>
+<p>When you visit a URL, a route chooses a handler. In this example the handler is a method on a controller. The controller reads or saves data, asks a template to produce HTML, and returns that HTML in a response.</p>
+<ol><li><code>routes/web.php</code> connects <code>/notebook</code> to the controller.</li><li>The controller uses <code>$app-&gt;db</code> for database work and <code>$app-&gt;views</code> for page display.</li><li>The template displays the notes and the form. It does not run database queries.</li></ol>
+<p>PBreeze loads controller files explicitly with <code>require_once</code>. The generator creates a file, but you still need to register its routes. We will do both below.</p>
+<h3>2. Create a controller</h3>
 <?= code('php breeze make:controller NotebookController', 'sh') ?>
-<p>Replace the generated controller body with this small example in <code>app/controllers/NotebookController.php</code>. The constructor explicitly receives Application. The GET action reads twenty notes; the POST action validates and inserts only a title.</p>
+<p>Open <code>app/controllers/NotebookController.php</code> and <strong>replace the entire file contents</strong> with the following code, including its opening <code>&lt;?php</code> tag. Save the file. The constructor receives <code>Application</code>, giving this class access to the framework services.</p>
 <?= code(<<<'PHP'
 <?php
 declare(strict_types=1);
@@ -192,18 +195,20 @@ final class NotebookController
     }
 }
 PHP) ?>
-<p>On success, the browser receives a 303 redirect, so refreshing the notes page does not repeat the insert. On invalid input, the handler returns the same page with status 422 and visible errors. The query builder binds the title value instead of concatenating SQL.</p>
-<h3>Register the routes explicitly</h3>
-<p>Append these lines to <code>routes/web.php</code>. Keep existing routes intact. This is a local learning feature with shared notes, not a multi-user authorization design.</p>
+<p><strong>What this code does:</strong> <code>index()</code> shows the page. <code>store()</code> checks that the title is text between 2 and 120 characters, then saves it. <code>page()</code> reads the latest twenty notes and renders the template we will create next.</p>
+<p>After saving, the browser is redirected back to the list (HTTP status 303), so refreshing does not save the note again. Invalid input returns the form with errors (status 422). The query builder passes values separately from SQL, helping prevent SQL injection.</p>
+<h3>3. Register the routes</h3>
+<p>Open <code>routes/web.php</code> and <strong>add</strong> these lines at the bottom. Keep existing routes intact. Do not add a second <code>&lt;?php</code> tag.</p>
 <?= code(<<<'PHP'
 require_once $app->root . '/app/controllers/NotebookController.php';
 $notebook = new \App\Controllers\NotebookController($app);
 $router->get('/notebook', [$notebook, 'index']);
 $router->post('/notebook', [$notebook, 'store']);
 PHP) ?>
-<h3>Create the view</h3>
+<p><code>GET /notebook</code> opens the page; <code>POST /notebook</code> handles the submitted form. The URL is the same, but the request method chooses a different controller method.</p>
+<h3>4. Create the view</h3>
 <?= code('php breeze make:template notebook.index', 'sh') ?>
-<p>Replace the generated content in <code>app/views/notebook/index.breeze.php</code> with the following. <code>{{ ... }}</code> escapes text; <code>@csrf($session)</code> supplies the hidden token. Unlike raw output, the escaped title cannot introduce executable HTML.</p>
+<p>Open <code>app/views/notebook/index.breeze.php</code>, replace its entire contents with the following, and save. The dot in <code>notebook.index</code> becomes a folder separator. <code>{{ ... }}</code> displays values safely as text; <code>@csrf($session)</code> adds the hidden security token required for this form.</p>
 <?= code(<<<'HTML'
 <!doctype html>
 <html lang="en-US">
@@ -227,10 +232,14 @@ PHP) ?>
 </body>
 </html>
 HTML, 'html') ?>
-<h3>Run and check the feature</h3>
-<?= code("php breeze routes\nphp breeze serve", 'sh') ?>
-<p>Open <code>http://127.0.0.1:8000/notebook</code>. Save a note, then try a one-character title. The valid note should appear; invalid input should show an error without inserting a row. Missing CSRF should return 419. Stop the development server before running another process on the same port.</p>
-<h3>Move from demo to application</h3>
+<h3>5. Run and check the feature</h3>
+<?= code('php breeze routes', 'sh') ?>
+<p>Check that both <code>GET /notebook</code> and <code>POST /notebook</code> are listed. If your development server is not already running, start it with <code>php breeze serve</code>. Do not start a second server on the same port.</p>
+<ol><li>Open <code>http://127.0.0.1:8000/notebook</code> (use your chosen port if different). You should see a heading, a title field, and a Save note button.</li><li>Enter <code>My first note</code> and select Save note. The title should appear in the list.</li><li>Refresh the page. The note should still be there without being added a second time.</li><li>Try a one-character title. Your browser should block submission because of <code>minlength="2"</code>. The controller also checks the length because browser checks can be bypassed.</li></ol>
+<p>To exercise the server-side length check on this local practice page, temporarily remove <code>minlength="2"</code> from the template, save it, reload the page, and submit one character. You should see an error without a new row being saved. Restore <code>minlength="2"</code> afterward. Keep the CSRF field in place.</p>
+<p>If you get 404, check the routes and URL. If you get 419, reload the form and submit again with cookies enabled. For a server error, check the server terminal and run <code>php breeze logs:tail 20 error</code> in another terminal. Keep those logs private.</p>
+<h3>Next: move from demo to application</h3>
+<p><strong>Stop here if you are just learning.</strong> You have built the complete local example. The following steps are design work needed before making a real private notebook; adding a login check alone is not enough.</p>
 <p>Wrap both handlers with <code>$app-&gt;auth-&gt;protect(...)</code> if login is required. Add a new migration for a note-owner column and scope every read/write to the authenticated owner. The guard checks identity/verification, not object ownership. For public forms, also integrate the purpose-bound CAPTCHA/honeypot workflow from its chapter. Do not deploy the unscoped learning feature as a private notebook.</p>
 <?= code(<<<'PHP'
 $router->get('/notebook', $app->auth->protect([$notebook, 'index']));
@@ -238,6 +247,7 @@ $router->post('/notebook', $app->auth->protect([$notebook, 'store']));
 PHP) ?>
 <p>Use these guarded registrations <em>instead of</em> the unguarded ones, not in addition. The existing registration/login/verification pages are already wired; configure mail and run a worker so verification/reset emails can be delivered.</p>
 <h3>Common service recipes</h3>
+<p>These are separate examples for later, not more code to paste into the notebook. Learn one service at a time from its feature chapter; email requires its own configuration and delivery worker.</p>
 <?= code(<<<'PHP'
 // Display an exact amount without using floating-point money.
 $total = $app->format->money('1234.565', 'USD'); // $1,234.57

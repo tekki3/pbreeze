@@ -2,6 +2,10 @@
 
 <img src="artwork/logo.svg" alt="PBreeze logo" width="64" height="64">
 
+PBreeze helps you build websites with PHP 8.3 or later on Windows and Linux.
+It gives you tools for pages, forms, databases, user accounts, and email.
+You write normal PHP; no Composer installation or frontend build is needed.
+
 An approachable, learnable MVC foundation in native PHP 8.3+. No Composer,
 external PHP packages, PSR autoloading, container, or hidden file discovery.
 Only explicit `require_once` statements and PHP extensions.
@@ -42,6 +46,144 @@ The README references its logo, and the manual builder embeds that logo so
 the HTML manual remains usable offline without copying the artwork folder.
 Artwork is not used by the application or served publicly.
 
+## Start Here: Your First Steps
+
+New to frameworks? Start with a local copy on your own computer, not a live
+website. You should be comfortable editing a file, saving it, and writing
+basic PHP variables and functions. You do not need to understand every
+feature in this manual before making your first page.
+
+### Follow this learning path
+
+1. Follow the [Detailed Installation Guide](#detailed-installation-guide).
+   Choose **SQLite** and the built-in development server. Follow either the
+   Linux or Windows PHP instructions, not both.
+2. Check that the home page opens in your browser. Then follow
+   [Your First Page](#your-first-page) below.
+3. In the [HTML manual](docs/index.html), continue with **Build your first
+   feature** to create a form that saves notes to a database.
+4. Read feature chapters only when you need them. Email, AI, Redis,
+   external database servers, APIs, and production deployment can wait.
+
+The function reference is a lookup tool, not a course to read from beginning
+to end. If a method's technical details feel unfamiliar, return to its
+feature chapter for a complete example.
+
+### How to read the examples
+
+- **Terminal commands** start with `php breeze` or another program name.
+  Run them in PowerShell on Windows or a terminal on Linux, one line at a
+  time. Wait for each command to finish; stop and fix any error before
+  continuing. Do not paste these commands into a PHP file.
+- **PHP and HTML examples** go in the file named immediately above the
+  example. Save the file, then refresh your browser.
+- **Configuration examples** go in `.env`, a hidden text file in the main
+  project folder. Edit the existing setting; do not add a duplicate line.
+  Never share this file because it can contain passwords and keys.
+- **Project root** means the main PBreeze folder containing the `breeze`
+  file. Run every `php breeze ...` command from there.
+- **Example paths** such as `/absolute/path/to/pbreeze` are placeholders.
+  Replace them with the folder on your own computer. Do not type a shell
+  prompt such as `$` or `PS>` before a command.
+
+### Words you will meet
+
+| Term | Plain-language meaning |
+|---|---|
+| Framework | Reusable tools and structure so you do not have to build every website feature from scratch. |
+| CLI | Command-line interface: commands you type in a terminal, such as `php breeze help`. |
+| Route | A rule connecting a URL and request method to the PHP code that handles it. |
+| GET / POST | GET requests read a page; POST requests submit data, such as a form. |
+| Controller | A PHP class that handles a request, uses services, and returns a response. |
+| View / template | A file that describes the HTML shown to the visitor. |
+| MVC | Model, View, Controller: separate data work, page display, and request handling. |
+| Migration | A PHP file describing a database structure change, such as creating a table. |
+| Seeder | Code that adds starting or example data to a database. |
+| SQLite | A database stored in a file; it does not need a separate database server. |
+| Environment setting | A named value in `.env` that configures this installation without changing application code. |
+| Local / production | Local runs on your computer for development; production is a deployed site used by real visitors. |
+| CSRF token | A hidden form value checked by the server to help prevent another site from submitting actions using your login session. |
+| Escaping | Displaying a value as text instead of allowing it to become executable HTML. Breeze's `{{ ... }}` does this for you. |
+
+## Your First Page
+
+**Goal:** display `Hello, Ada!` at `/hello`. This exercise needs no database
+queries, login, or email. Finish the local installation first and confirm
+that <http://127.0.0.1:8000> opens.
+
+### 1. Create a template
+
+If the development server is running, leave it running and open a **second
+terminal** in the project root for commands. Alternatively, press Ctrl+C
+to stop it and start it again when you are ready to test.
+
+Run:
+
+```sh
+php breeze make:template hello
+```
+
+This creates `app/views/hello.breeze.php`. Open that file in your editor and
+**replace its entire contents** with:
+
+```html
+<!doctype html>
+<html lang="en-US">
+<head><meta charset="utf-8"><title>My first PBreeze page</title></head>
+<body>
+    <h1>Hello, {{ $name }}!</h1>
+    <p>I made this page with PBreeze.</p>
+</body>
+</html>
+```
+
+`$name` is a variable we will pass from the route. The double braces display
+its value safely as text. Creating this file alone does not create a URL.
+
+### 2. Connect a URL to the template
+
+Open `routes/web.php`. **Add** this code at the bottom, keeping the existing
+code. The file already begins with `<?php`; do not add another opening tag.
+
+```php
+$router->get('/hello', static function (\PBreeze\Request $request) use ($app): \PBreeze\Response {
+    return new \PBreeze\Response($app->views->render('hello', [
+        'name' => 'Ada',
+    ]));
+});
+```
+
+This rule handles a GET request to `/hello`. `$app` gives the handler access
+to framework services. `render('hello', ...)` loads the template and passes
+it a variable named `$name`. `Response` sends the resulting HTML to the
+browser. The `$request` parameter represents the incoming request; this
+simple page does not need to read anything from it.
+
+### 3. Open and change your page
+
+If the server is not running, run:
+
+```sh
+php breeze serve
+```
+
+Open <http://127.0.0.1:8000/hello>. You should see **Hello, Ada!** and the
+sentence from your template. Use your chosen port instead if it is not 8000.
+
+Change `'Ada'` to your own name in `routes/web.php`, save, and refresh.
+The heading should change. No compilation command is needed.
+
+If the page is not found, run `php breeze routes` in the second terminal
+and check that `GET /hello` is listed. If it is not, check that you saved
+the route in the same project copy that your server is running.
+If you see a server error, inspect the server terminal and run
+`php breeze logs:tail 20 error`. Check the example for missing brackets,
+quotes, or semicolons; do not publish private logs.
+
+You have connected a **route** to a **view** and passed it data. Next, use
+**Build your first feature** in the [HTML manual](docs/index.html) to move
+request handling into a controller and save form data.
+
 ## License
 
 PBreeze is licensed under the [MIT License](LICENSE).
@@ -67,6 +209,10 @@ formatter described below; this does not translate framework-maintained copy.
 
 ## Getting Started
 
+If this is your first framework, follow [Start Here](#start-here-your-first-steps)
+and the [Detailed Installation Guide](#detailed-installation-guide) instead
+of trying to configure every feature listed below.
+
 Requirements: PHP 8.3+, PDO, `pdo_sqlite` for SQLite, `pdo_mysql` for MySQL,
 `pdo_pgsql` with libpq for PostgreSQL, or `pdo_sqlsrv` plus Microsoft's ODBC Driver for SQL Server,
 and the standard session, json, and filter extensions. The tests also use
@@ -84,11 +230,17 @@ Optional shared caching requires native `redis` (PhpRedis 6+) or `memcached`
 
 ```sh
 php breeze init
+php breeze storage:prepare
 php breeze migrate
-php breeze db:seed
-php breeze test
 php breeze serve
 ```
+
+This is the short version for developers who already have a compatible PHP
+installation. `init` creates configuration, `storage:prepare` creates
+private working folders, `migrate` prepares database tables, and `serve`
+starts the local website. The detailed guide explains each step and key
+setup. Seeding example data and running the test suite are optional checks,
+not requirements for opening the home page.
 
 Open <http://127.0.0.1:8000>. The example form demonstrates CSRF,
 validation, and safe HTML output. The development server stays on localhost.
@@ -104,6 +256,11 @@ the first database command. The form does not need a database.
 ## Detailed Installation Guide
 
 ### 1. Choose your installation
+
+**Your first visit:** complete steps 1, 2 **or** 3, and 4 through 7.
+Step 8 covers optional features; step 9 is for deploying a live site later.
+If PHP is already installed, check its version and extensions before
+skipping to step 4.
 
 For the simplest local setup, use **PHP 8.3 or later with SQLite** and the
 built-in development server. You do not need Apache, Nginx, IIS, Redis,
@@ -282,6 +439,9 @@ php breeze migrate:status
 php breeze db:seed
 ```
 
+Run one command at a time. The last command, `db:seed`, is optional.
+If a command reports an error, resolve it before moving on.
+
 `storage:prepare` creates private logs, uploads, and compiled-view
 directories. `migrate` creates/applies the bundled schema in the configured
 SQLite file. `migrate:status` should show applied batch numbers rather than
@@ -331,6 +491,12 @@ empty unused integration settings are expected. The native tests use
 isolated fixtures, not your configured application database, and send no
 external email or AI requests. Optional live database/cache/server integration
 tests are separate and have their own prerequisites.
+
+`serve` is different from the other commands: it keeps running and uses
+that terminal until you stop it. This is normal, not a frozen command.
+Keep that terminal open and use a second terminal for other commands.
+The test command is optional for your first visit; when you do run it,
+check that the final summary reports no failures.
 
 Open <http://127.0.0.1:8000>. Confirm that the home page and its CSS load.
 Check <http://127.0.0.1:8000/health> for liveness and
