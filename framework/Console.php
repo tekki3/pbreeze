@@ -20,6 +20,7 @@ Usage: php breeze <command> [name] [--force]
   cache:test                 Verify cache round trip using one temporary key
   logs:tail [lines] [level]  Show recent JSONL logs (default: 50; optional minimum level)
   make:command Name          Create a custom command for explicit registration
+  make:test Name             Create a native test for explicit registration
   doctor                     Check production configuration and dependency readiness
   storage:prepare            Create private storage directories for deployment
   key:generate               Print a new APP_KEY; do not modify any files
@@ -63,7 +64,7 @@ TEXT;
     public function run(array $arguments): int
     {
         $command = array_shift($arguments) ?? 'help';
-        if (in_array($command, ['about', 'env:check', 'cache:test', 'logs:tail', 'make:command'], true)) {
+        if (in_array($command, ['about', 'env:check', 'cache:test', 'logs:tail', 'make:command', 'make:test'], true)) {
             return $this->utilityCommand($command, $arguments);
         }
         preg_match_all('/^  ([a-z][a-z:-]+)\s/m', self::HELP, $builtins);
@@ -228,7 +229,7 @@ TEXT;
     /** @param list<string> $arguments */
     private function utilityCommand(string $command, array $arguments): int
     {
-        $max = match ($command) { 'logs:tail' => 2, 'make:command' => 1, default => 0 };
+        $max = match ($command) { 'logs:tail' => 2, 'make:command', 'make:test' => 1, default => 0 };
         if (count($arguments) > $max) {
             throw new InvalidArgumentException('Too many arguments. Use php breeze help.');
         }
@@ -238,6 +239,32 @@ TEXT;
             }
         }
         switch ($command) {
+            case 'make:test':
+                $name = $arguments[0] ?? '';
+                Filesystem::portableName($name);
+                if (!preg_match('/^[A-Z][a-zA-Z0-9]{0,100}$/D', $name)) {
+                    throw new InvalidArgumentException('Use a test name such as ContactTest.');
+                }
+                if (!str_ends_with($name, 'Test')) {
+                    $name .= 'Test';
+                }
+                $directory = $this->app->root . '/tests';
+                if (is_link($directory) || is_link($directory . '/application')) {
+                    throw new RuntimeException('Test directories must not be symlinks.');
+                }
+                $this->write($directory . "/application/$name.php", str_replace('{{name}}', $name, <<<'PHP'
+<?php
+declare(strict_types=1);
+
+test('{{name}}', static function (): void {
+    throw new LogicException('Implement this test with check(), same(), or raises().');
+});
+
+PHP));
+                echo "Register explicitly in tests/application.php:\n"
+                    . "require __DIR__ . '/application/$name.php';\n"
+                    . "Replace the placeholder with assertions, then run php breeze test.\n";
+                return 0;
             case 'about':
                 $safe = static fn (string $value): string => json_encode($value, JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE);
                 echo "PBreeze: native PHP framework (no release version declared)\n";

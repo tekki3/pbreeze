@@ -4178,6 +4178,70 @@ uploads containing executable code in `public/`.
 
 ## Tests
 
+### Create your own tests
+
+Generate a test from the project root:
+
+```sh
+php breeze make:test ContactTest
+```
+
+This creates `tests/application/ContactTest.php`. If you supply `Contact`
+instead, the CLI adds the `Test` suffix for you. Names must start with an
+uppercase ASCII letter and contain only letters and digits. Existing files
+are never overwritten; `--force` is not supported.
+
+Open `tests/application.php` and add the registration line printed by the
+command. Keep any existing registrations. Do not add a second `<?php` tag:
+
+```php
+require __DIR__ . '/application/ContactTest.php';
+```
+
+There is no automatic file discovery: an unregistered file will not run.
+The generator does not edit the registry for you. If an older project does
+not have `tests/application.php`, create it with an opening `<?php` tag and
+the require line above; its test runner must include the application registry
+as shown in the current `tests/run.php`.
+
+The generated placeholder deliberately fails so an unfinished test cannot
+appear to pass. Replace its entire contents with a real check, for example:
+
+```php
+<?php
+declare(strict_types=1);
+
+test('Contact names must contain at least two characters', static function (): void {
+    $errors = \PBreeze\Validator::errors(['name' => 'A'], [
+        'name' => 'required|string|min:2',
+    ]);
+    check(isset($errors['name']), 'A one-character name should be rejected.');
+    same([], \PBreeze\Validator::errors(['name' => 'Ada'], [
+        'name' => 'required|string|min:2',
+    ]));
+});
+```
+
+Run all registered tests, including the framework suite:
+
+```sh
+php breeze test
+```
+
+Look for your test's `OK` or `FAIL` line and the final pass/fail summary.
+Any failed test makes the command exit with code 1. The native helpers are
+`check($condition, $message)` for a true condition,
+`same($expected, $actual)` for strict equality, and
+`raises($callback, ExceptionClass::class)` for an expected exception.
+Test files are loaded by the runner, not executed directly.
+
+Write each test as a `test('description', static function (): void { ... });`
+block. Load application classes explicitly with `require_once` as needed.
+Do not use the real application's database, mail delivery, or AI service
+merely to run a test; create isolated fixtures and clean them up in `finally`.
+No PHPUnit, Composer packages, test filtering, or separate feature/unit
+runner is introduced by this generator.
+
 ```sh
 php breeze test
 php breeze routes

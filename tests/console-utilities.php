@@ -8,6 +8,71 @@ function utilityApp(): \PBreeze\Application
     return $app;
 }
 
+test('CLI test generator creates failing native placeholders without registering or overwriting files', static function (): void {
+    $app = utilityApp();
+    $output = console($app, ['make:test', 'Contact']);
+    $path = $app->root . '/tests/application/ContactTest.php';
+    check(is_file($path));
+    check(str_contains($output, "require __DIR__ . '/application/ContactTest.php';"));
+    check(!file_exists($app->root . '/tests/application.php'));
+    $source = file_get_contents($path);
+    check(str_contains($source, "test('ContactTest', static function (): void"));
+    check(str_contains($source, "throw new LogicException("));
+    raises(static fn () => console($app, ['make:test', 'ContactTest']), RuntimeException::class);
+    same($source, file_get_contents($path));
+    console($app, ['make:test', 'OtherTest']);
+    check(is_file($app->root . '/tests/application/OtherTest.php'));
+    check(!is_file($app->root . '/tests/application/OtherTestTest.php'));
+    foreach ([[], ['../Escape'], ['bad'], ['NUL'], ['CON'], ['Contact.php'], ['Contact-Test'],
+        ['Contact', '--force'], ['Contact', 'extra'], [str_repeat('A', 102)]] as $arguments) {
+        raises(static fn () => console($app, ['make:test', ...$arguments]), InvalidArgumentException::class);
+    }
+    if (PHP_OS_FAMILY !== 'Windows') {
+        $linked = utilityApp();
+        symlink($app->root . '/tests', $linked->root . '/tests');
+        try {
+            raises(static fn () => console($linked, ['make:test', 'Linked']), RuntimeException::class);
+        } finally {
+            unlink($linked->root . '/tests');
+        }
+    }
+});
+
+test('Generated native tests execute assertions and placeholders return a failing runner exit code', static function () use ($root): void {
+    $app = utilityApp();
+    console($app, ['make:test', 'Generated']);
+    $test = $app->root . '/tests/application/GeneratedTest.php';
+    $runner = $app->root . '/tests/run.php';
+    $source = file_get_contents($root . '/tests/run.php');
+    $helpers = substr($source, strpos($source, 'function check('),
+        strpos($source, '/** @param list<string> $arguments */') - strpos($source, 'function check('));
+    $registry = $app->root . '/tests/application.php';
+    file_put_contents($registry, "<?php\nrequire __DIR__ . '/application/GeneratedTest.php';\n");
+    file_put_contents($runner, "<?php\n\$passed = \$failed = 0;\n" . $helpers
+        . "\nrequire __DIR__ . '/application.php';\nexit(\$failed === 0 ? 0 : 1);\n");
+    $execute = static function () use ($runner): array {
+        $process = proc_open([PHP_BINARY, $runner], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        check(is_resource($process));
+        fclose($pipes[0]);
+        $output = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        return [proc_close($process), $output];
+    };
+    [$exit, $output] = $execute();
+    same(1, $exit);
+    check(str_contains($output, 'Implement this test'));
+    file_put_contents($test, str_replace(
+        "throw new LogicException('Implement this test with check(), same(), or raises().');",
+        "same(4, 2 + 2);\n    check(true);\n    raises(static fn () => throw new LogicException('Expected.'), LogicException::class);",
+        file_get_contents($test),
+    ));
+    [$exit, $output] = $execute();
+    same(0, $exit);
+    check(str_contains($output, 'OK    GeneratedTest'));
+    check(str_contains($source, "require __DIR__ . '/application.php';"));
+});
+
 test('CLI about reports only safe runtime metadata without creating storage or connecting services', static function (): void {
     $app = utilityApp();
     $output = console($app, ['about']);

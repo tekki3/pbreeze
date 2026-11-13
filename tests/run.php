@@ -690,6 +690,9 @@ PHP);
             check(!str_contains(strtolower(implode("\n", $ready['headers'])), 'set-cookie:'));
         });
     }
+    if (is_file(__DIR__ . '/application.php')) {
+        require __DIR__ . '/application.php';
+    }
 } finally {
     if (is_resource($server)) {
         proc_terminate($server);

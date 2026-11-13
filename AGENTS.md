@@ -27,6 +27,7 @@
 - Never commit credentials or overwrite local `.env` files or stored application data.
 - Use new migrations for schema changes; do not rewrite previously applied migrations.
 - When changing CLI generators, update and test their generated output as well as the generator.
+- Generate native application tests with `make:test`; register them with explicit requires in `tests/application.php`. No discovery or PHPUnit dependency. Generated placeholders must fail until implemented.
 - Register custom CLI handlers explicitly in `routes/console.php`; handlers receive Application/raw arguments and return exit codes 0..255. Keep diagnostic output secret-safe and custom production guards explicit.
 - Use `$app->format` (or `$format` in views) for localized display values. Money uses decimal strings or integer minor units, never floats; keep stored/API numeric data locale-independent.
 - Handle multipart uploads through `Request::file()`/`files()` and `$app->uploads`, with explicit allowed types and private storage. Authorize ownership before downloads/deletions; storage keys are not credentials.
