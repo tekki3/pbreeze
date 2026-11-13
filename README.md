@@ -35,6 +35,8 @@ Application styles and scripts live in `public/assets/css/` and
 subfolders under `public/assets/swagger-ui/`, alongside its license metadata.
 The offline manual uses `docs/css/` and `docs/js/`; keep these folders with
 `docs/index.html` when copying the manual.
+The root `artwork/` folder is a standalone collection of image and logo files.
+It is not used by the application or served publicly.
 
 ## Language Convention
 
