@@ -1,0 +1,45 @@
+:root {
+    color-scheme: light;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #172f29;
+    background: #f7faf8;
+    accent-color: #166448;
+}
+
+body { margin: 0; }
+::selection { color: #fff; background: #166448; }
+a { color: #12583f; text-underline-offset: .2em; }
+a:hover { color: #093624; }
+:focus-visible { outline: 3px solid #166448; outline-offset: 4px; }
+.docs-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    padding: 1.25rem max(1.25rem, calc((100% - 1460px) / 2));
+    background: #fff;
+    border-bottom: 1px solid #d5e1db;
+}
+.docs-brand { color: #172f29; font-size: 1.25rem; font-weight: 750; text-decoration: none; }
+.docs-header nav { display: flex; flex-wrap: wrap; gap: .75rem 1.5rem; font-size: .9rem; }
+.docs-intro { max-width: 1460px; margin: 0 auto; padding: 1.5rem 20px 0; }
+.docs-intro h1 { margin: 1rem 0; font-size: clamp(1.8rem, 4vw, 2.5rem); letter-spacing: -.025em; }
+.docs-intro p { max-width: 72ch; line-height: 1.65; }
+.docs-intro code { overflow-wrap: anywhere; }
+.swagger-ui .info { margin: 2rem 0; }
+.swagger-ui .info .title { font-size: 1.75rem; }
+.swagger-ui .scheme-container { background: #fff; box-shadow: none; border-block: 1px solid #d5e1db; }
+.swagger-ui .btn.authorize { color: #12583f; border-color: #166448; }
+.swagger-ui .btn.authorize svg { fill: #166448; }
+.swagger-ui .opblock .opblock-summary-path { min-width: 0; overflow-wrap: anywhere; }
+.swagger-ui .opblock-body pre { max-width: 100%; }
+.swagger-ui .response-col_status { font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) {
+    .docs-header { align-items: flex-start; flex-direction: column; gap: .75rem; }
+    .swagger-ui .wrapper { padding-inline: 16px; }
+    .swagger-ui .opblock .opblock-summary { flex-wrap: wrap; gap: .25rem; }
+    .swagger-ui .opblock .opblock-summary-description { flex-basis: 100%; padding: .5rem; }
+    .swagger-ui .opblock .opblock-summary-path { font-size: 13px; }
+    .swagger-ui .dialog-ux .modal-ux { width: calc(100% - 24px); }
+    .swagger-ui .auth-container input[type=text] { box-sizing: border-box; max-width: 100%; }
+}

@@ -1,6 +1,7 @@
 Options -Indexes -MultiViews
 DirectoryIndex index.php
 RewriteEngine On
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 RewriteCond %{REQUEST_URI} (^|/)\. [OR]
 RewriteCond %{REQUEST_URI} \.(env|sqlite|log)$ [NC]
 RewriteRule ^ - [F,L]

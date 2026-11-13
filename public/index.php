@@ -10,7 +10,14 @@ try {
 } catch (Throwable $error) {
     error_log((string) $error);
     http_response_code(500);
-    header('Content-Type: text/plain; charset=UTF-8');
+    $path = rawurldecode(explode('?', $_SERVER['REQUEST_URI'] ?? '/', 2)[0]);
+    $api = $path === '/api' || str_starts_with($path, '/api/');
+    header('Content-Type: ' . ($api ? 'application/json; charset=UTF-8' : 'text/plain; charset=UTF-8'));
     header('X-Content-Type-Options: nosniff');
-    echo 'De applicatie kon niet starten. Controleer het serverlog.';
+    header('Cache-Control: no-store');
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'HEAD') {
+        echo $api
+            ? '{"error":{"status":500,"message":"De applicatie kon niet starten. Controleer het serverlog."}}'
+            : 'De applicatie kon niet starten. Controleer het serverlog.';
+    }
 }

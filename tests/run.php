@@ -128,6 +128,7 @@ try {
     require __DIR__ . '/orm.php';
     require __DIR__ . '/encryption.php';
     require __DIR__ . '/bot-protection.php';
+    require __DIR__ . '/api.php';
 
     test('HTML-escaping behandelt quotes en ongeldige UTF-8', static function (): void {
         same('&lt;script&gt;&quot;&#039;&amp;', e('<script>"\'&'));
@@ -441,6 +442,11 @@ PHP);
         copy($root . '/public/router.php', $public . '/router.php');
         mkdir($public . '/assets');
         copy($root . '/public/assets/welcome.css', $public . '/assets/welcome.css');
+        mkdir($public . '/assets/swagger-ui');
+        foreach (['api-docs.js', 'api-docs.css', 'swagger-ui/swagger-ui-bundle.js', 'swagger-ui/swagger-ui.css'] as $asset) {
+            copy($root . '/public/assets/' . $asset, $public . '/assets/' . $asset);
+        }
+        $environment['API_DOCS_ENABLED'] = 'true';
         file_put_contents($public . '/index.php', '<?php require ' . var_export($root . '/public/index.php', true) . ';');
         file_put_contents($public . '/fixture.css', 'body { color: black; }');
         file_put_contents($public . '/.private.css', 'not-public');
@@ -533,6 +539,7 @@ PHP);
 
         require __DIR__ . '/auth.php';
         require __DIR__ . '/bot-http.php';
+        require __DIR__ . '/api-http.php';
     }
 } finally {
     if (is_resource($server)) {

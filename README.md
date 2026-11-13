@@ -1,8 +1,10 @@
 # PBreeze
 
 Een kleine, leerbare MVC-basis in native PHP 8.3+. Geen Composer, externe
-packages, PSR-autoloading, container of verborgen bestandsdetectie. Alleen
+PHP-packages, PSR-autoloading, container of verborgen bestandsdetectie. Alleen
 expliciete `require_once`-regels en PHP-extensies.
+Uitzondering aan de frontend: de officiele Swagger UI is lokaal meegeleverd
+onder Apache-2.0 voor interactieve API-documentatie; geen CDN of npm nodig.
 
 Inclusief native SMTP, IMAP, configureerbare e-maillogging en een databasewachtrij.
 Met registratie, login/logout, wachtwoordherstel en verplichte e-mailverificatie
@@ -13,6 +15,7 @@ Native AES-256-GCM-encryptie is beschikbaar als service en via ORM-casts.
 Registratie, login, wachtwoordherstel aanvragen, verificatiemail opnieuw aanvragen
 en het voorbeeldformulier hebben een native SVG-CAPTCHA en honeypot.
 De applicatie, CLI en tests zijn ingericht voor zowel Windows als Linux.
+Inclusief een stateless JSON-API met bearer-tokens, OpenAPI 3 en CLI-scaffolding.
 
 ## Beginnen
 
@@ -108,8 +111,9 @@ is nog geen uitgevoerde Windows-test.
 1. De webserver bedient uitsluitend `public/`.
 2. `public/index.php` laadt `bootstrap.php`.
 3. De bootstrap laadt de frameworkbestanden expliciet en leest de configuratie.
-4. De applicatie start de sessie en laadt `routes/web.php`.
-5. Een onveilig HTTP-verzoek wordt eerst op CSRF gecontroleerd.
+4. De applicatie laadt `routes/web.php` en de expliciete API-modules in `routes/api.php`.
+5. Webverzoeken starten een sessie en controleren onveilige methodes op CSRF.
+   `/api` en `/api/*` gebruiken een aparte stateless router zonder sessies of cookie-authenticatie.
 6. De router roept je controller aan; die geeft een `Response` terug.
 
 ```text
@@ -127,6 +131,8 @@ database/
 framework/           Kleine native bouwstenen
 public/              Enige publieke document root
 routes/web.php       Expliciete imports en routeregistratie
+routes/api.php       Expliciete imports van API-modules (ook door CLI bijgewerkt)
+routes/api/          API-routes en OpenAPI-metadata in dezelfde definitie
 storage/             Migratieslot; schrijfbaar voor de CLI
 tests/run.php        Native tests, inclusief echte HTTP-verzoeken
 bootstrap.php        Expliciete frameworkregistratie
@@ -183,6 +189,165 @@ return \PBreeze\Response::redirect('/berichten');
 ```
 
 Redirects accepteren alleen lokale paden die beginnen met één `/`.
+
+## API en Swagger / OpenAPI
+
+De backend blijft volledig native PHP. De API reserveert `/api` en `/api/*`;
+plaats hier geen webformulieren of cookie-geauthenticeerde routes.
+Na `php breeze migrate` zijn beschikbaar:
+
+| Methode | Pad | Toegang |
+|---|---|---|
+| GET / HEAD | `/api/ping` | Publiek, `{"data":{"status":"ok"}}` |
+| GET / HEAD | `/api/me` | Bearer-token van een bevestigde gebruiker |
+| DELETE | `/api/token` | Trekt het gebruikte token in, lege HTTP 204 |
+| GET / HEAD | `/api/docs` | Lokale Swagger UI, indien ingeschakeld |
+| GET / HEAD | `/api/openapi.json` | OpenAPI 3.0.3, indien ingeschakeld |
+
+### Tokens aanmaken, bekijken en intrekken
+
+Registreer eerst via `/register` en bevestig het e-mailadres via de bestaande
+verificatiemail. Tokens worden bewust **alleen via de beheer-CLI** uitgegeven:
+geen publiek wachtwoord/tokenendpoint, OAuth-server of extra login zonder CAPTCHA.
+Gebruik het numerieke ID uit de `users`-tabel, niet het e-mailadres:
+
+```sh
+php breeze api:token 1 laptop 30
+php breeze api:tokens 1
+php breeze api:revoke 12
+```
+
+`api:token <gebruiker-ID> [naam] [dagen]` toont het nieuwe `pbz_...`-token
+eenmalig. De standaardvervaltermijn is 30 dagen; toegestaan is 1-365 dagen.
+`api:tokens` toont alleen ID, gebruiker-ID, naam en tijdstempels, ook van verlopen
+tokens; `api:revoke` gebruikt het **token-ID**, niet het gebruiker-ID.
+Bewaar het token in een secret store, niet in broncode, querystrings, shellhistorie
+of gedeelde terminallogs. De database bewaart alleen de SHA-256-hash.
+
+Stuur bij een API-client de header `Authorization: Bearer <token>`.
+Cookies, queryparameters en CSRF-tokens authenticeren API-verzoeken nooit.
+Een token is alleen geldig zolang de gebruiker bestaat, het e-mailadres bevestigd
+is, de vervaldatum niet verstreken is en de opgeslagen `session_version` overeenkomt.
+Wachtwoordherstel maakt daardoor ook **alle bestaande API-tokens** ongeldig.
+Web-uitloggen verwijdert alleen de websessie; trek API-tokens afzonderlijk in.
+Tokens hebben geen scopes/rollen: ze vertegenwoordigen de gebruiker.
+Implementeer altijd eigen autorisatie per object; een geldig token geeft niet
+automatisch toegang tot gegevens van andere gebruikers.
+
+### API via de CLI maken
+
+```sh
+php breeze make:api Products
+php breeze routes
+php breeze api:openapi > openapi.json
+```
+
+Dit maakt:
+
+- `app/controllers/api/ProductsApiController.php`;
+- `routes/api/products.php` met GET/POST `/api/products` en
+  GET/PUT/DELETE `/api/products/{id}`;
+- een **expliciete require** in `routes/api.php`.
+
+Geen directoryscans, autoloading of Composer. De routemodule registreert handlers
+en OpenAPI samen via `$api->add()`. Alle gegenereerde acties vereisen standaard
+een bearer-token. Ze geven bewust HTTP **501** totdat je ze implementeert:
+geen onbedoelde publieke CRUD of succesmelding zonder opslag.
+Vervang daarna ook de gegenereerde 501-responsebeschrijvingen en generieke
+requestBody-schema's door je echte velden, responses en validatie.
+De generator weigert bestaande bestanden, gereserveerde namen en routeconflicten;
+het register wordt vergrendeld tijdens de wijziging. Draai generators tijdens
+ontwikkeling, niet als vervanging voor een atomische productiedeployment.
+
+Een eigen routedefinitie in een expliciet geladen API-module:
+
+```php
+$api->add('POST', '/api/echo', static function (\PBreeze\Request $request): \PBreeze\Response {
+    $data = \PBreeze\Api::validate($request, [
+        'message' => 'required|string|min:2|max:200',
+    ]);
+    $user = $request->apiUser();
+    return \PBreeze\Response::json(['data' => [
+        'message' => $data['message'],
+        'user_id' => $user['id'],
+    ]]);
+}, [
+    'summary' => 'Echo a validated message',
+    'operationId' => 'echoMessage',
+    'requestBody' => ['required' => true, 'content' => [
+        'application/json' => ['schema' => [
+            'type' => 'object',
+            'required' => ['message'],
+            'properties' => ['message' => ['type' => 'string', 'minLength' => 2, 'maxLength' => 200]],
+        ]],
+    ]],
+    'responses' => ['200' => ['description' => 'Validated message and current user ID']],
+]);
+```
+
+Geef alleen voor bewust publieke endpoints `false` als vijfde argument mee.
+`summary`, een uniek `operationId` en `responses` zijn verplicht.
+Padparameters krijgen automatisch een verplichte OpenAPI-stringdefinitie;
+je kunt ze via `parameters` nader specificeren. Bearer-security wordt afgeleid
+van de werkelijke routebeveiliging, niet van handmatig ingestelde metadata.
+OpenAPI beschrijft het contract maar voert geen validatie uit.
+`Api::validate()` gebruikt de bestaande native Validator, geeft uitsluitend de
+opgegeven velden terug en meldt ongeldige invoer met HTTP 422 en velddetails.
+Geneste JSON-objecten blijven `stdClass`; valideer die expliciet.
+
+### JSON, fouten en limieten
+
+Niet-lege API-bodies vereisen `Content-Type: application/json` en een JSON-object.
+Ongeldige JSON geeft 400, andere bodytypes 415, bodies groter dan 1 MiB 413.
+Lege bodies zonder JSON-contenttype zijn toegestaan, bijvoorbeeld bij DELETE.
+Configureer ook limieten in PHP, webserver en proxy: PHP kan uploads al verwerken
+voordat applicatiecode draait.
+Normaal geparste API-verzoeken hebben een vaste database-rate-limit van
+**120 verzoeken per direct client-IP per kalender-minuut**; daarna HTTP 429 met
+`Retry-After`. Documentatie en OpenAPI zijn hiervan uitgezonderd en hebben geen
+database nodig. `REMOTE_ADDR` wordt gebruikt, niet onbevestigde proxyheaders.
+Achter een proxy delen clients dus het proxy-IP; regel verdere limieten aan
+de edge. Deze limiet is geen DDoS-bescherming.
+
+API-fouten gebruiken consequent:
+
+```json
+{"error":{"status":422,"message":"Controleer je invoer.","details":{"message":["Dit veld is verplicht."]}}}
+```
+
+`details` is alleen aanwezig bij validatiefouten. Onbekende routes geven JSON 404,
+verkeerde methodes JSON 405 met `Allow`, ontbrekende/ongeldige tokens JSON 401 met
+`WWW-Authenticate`. Onverwachte fouten worden gelogd en geven een generieke JSON
+500, ook in debugmodus. Gebruik `Response::json()` voor eigen API-responses;
+voor een lege 204 gebruik je een lege `Response` met JSON-contenttype.
+API-verzoeken starten geen sessie en zetten geen sessiecookie.
+De bestaande web-CSRF-controle blijft ongewijzigd.
+Er is bewust geen automatische CORS- of preflightconfiguratie; clients op
+een andere origin vereisen een expliciet, zorgvuldig beperkt beleid.
+
+### Lokale Swagger UI
+
+Open <http://127.0.0.1:8000/api/docs>. Gebruik **Authorize** met alleen het
+`pbz_...`-token; probeer daarna bijvoorbeeld GET `/api/me`.
+**Try it out** verstuurt echte verzoeken naar deze server; DELETE `/api/token`
+trekt dus ook werkelijk het ingevoerde token in.
+
+Documentatie is standaard aan in `local`/`testing` en uit in `production`.
+Met `API_DOCS_ENABLED=true` of `false` overschrijf je dit bewust.
+Dit is een beschikbaarheidsinstelling, geen toegangscontrole: bescherm
+productiedocumentatie indien nodig ook op proxy-/webserverniveau.
+`api:openapi` blijft voor lokale export beschikbaar, ook wanneer HTTP-docs uitstaan.
+
+Swagger UI **5.35.0** is officieel, lokaal en vastgepind in
+`public/assets/swagger-ui/`; bron, integriteit en checksums staan in `VERSION`,
+met de originele `LICENSE`, `NOTICE` en JavaScript-dependentielicenties.
+Er is geen CDN, remote validator of npm-installatie nodig.
+Alleen de documentatiepagina krijgt een eigen CSP met lokale scripts en de
+inline styles die Swagger UI nodig heeft; gewone webpagina's houden
+`script-src 'none'`. Uitgaande documentatieverzoeken zijn beperkt tot de eigen
+origin en `/api/`. De Swagger-client verstuurt geen sessiecookies en bewaart
+autorisatie niet in localStorage/sessionStorage; herladen wist het token.
+De meegeleverde assets blijven statisch publiek bereikbaar wanneer docs uitstaan.
 
 ## Views en validatie
 
@@ -1406,7 +1571,9 @@ een typefout schakelt de productiebeveiliging dus niet stilzwijgend uit.
   en TLS/HSTS op proxy- of webserverniveau.
 - De standaardheaders bevatten CSP, `nosniff`, frameblokkering, beperkt
   permissiebeleid en `Cache-Control: no-store` voor applicatieresponses.
-  De CSP staat geen scripts of inline styles toe. Zelfgeschreven responses
+  De standaard-CSP staat geen scripts of inline styles toe; alleen de
+  Swagger-documentatie krijgt de hierboven beschreven beperkte uitzondering.
+  Zelfgeschreven responses
   kunnen headers expliciet aanpassen; houd die wijzigingen beperkt.
 - Statische bestanden worden direct door de webserver bediend: configureer
   daarvoor zelf passende cache- en veiligheidsheaders.
@@ -1461,5 +1628,8 @@ payloads, CLI-sleutelgeneratie en encrypted ORM-casts.
 Botbeschermingstests controleren sessie-/formulierbinding, verval, hergebruik,
 honeypot-types, begrensde sessieopslag, SVG-responses, vernieuwen en het
 uitblijven van neveneffecten op alle vijf beschermde formulieren.
+API-tests controleren tokenhashes, verificatie, verval/intrekking, wachtwoordreset,
+stateless HTTP, JSON-fouten/bodylimieten, rate limiting, OpenAPI/routeregistratie,
+CLI-scaffolding en de lokale Swagger-assets en afgeschermde CSP.
 MySQL vereist daarnaast een eigen integratierun op een wegwerpdatabase;
 de meegeleverde suite valideert de MySQL-verbinding niet tegen een live server.

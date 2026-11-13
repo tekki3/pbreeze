@@ -15,8 +15,9 @@ final class Application
     public readonly Auth $auth;
     public readonly Encryption $encryption;
     public readonly BotProtection $botProtection;
+    public readonly Api $api;
 
-    /** @param array{name: string, url?: string, key?: string, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}} $config */
+    /** @param array{name: string, url?: string, key?: string, api_docs?: bool, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}} $config */
     public function __construct(public readonly string $root, #[\SensitiveParameter] public readonly array $config)
     {
         $this->router = new Router();
@@ -27,6 +28,7 @@ final class Application
         $this->db = new Database($root, $config['database'], $this->encryption);
         $this->mail = new \PBreeze\Mail\Mailer($this->db, $config['mail'] ?? []);
         $this->auth = new Auth($this->db, $this->session, $this->mail, $config['url'] ?? 'http://127.0.0.1:8000', $config['environment'] === 'production');
+        $this->api = new Api($this->db, $this->views, $config['name'], $config['api_docs'] ?? $config['environment'] !== 'production');
     }
 
     public function routes(): void
@@ -34,26 +36,36 @@ final class Application
         $app = $this;
         $router = $this->router;
         require $this->root . '/routes/web.php';
+        $api = $this->api;
+        if (is_file($this->root . '/routes/api.php')) {
+            require $this->root . '/routes/api.php';
+        }
     }
 
     public function handle(Request $request): Response
     {
+        if (Api::matches($request->path)) {
+            return $this->api->dispatch($request);
+        }
         $this->session->verifyCsrf($request);
         return $this->router->dispatch($request);
     }
 
     public function run(): void
     {
+        $apiRequest = Api::matches(rawurldecode(explode('?', $_SERVER['REQUEST_URI'] ?? '/', 2)[0]));
         try {
             $https = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
             if ($this->config['environment'] === 'production' && !$this->config['secure_cookie'] && !$https) {
                 throw new \RuntimeException('Productie vereist HTTPS of SESSION_SECURE_COOKIE=true achter een HTTPS-proxy.');
             }
-            $this->session->start($https || $this->config['secure_cookie']);
+            if (!$apiRequest) {
+                $this->session->start($https || $this->config['secure_cookie']);
+            }
             $this->routes();
             $response = $this->handle(Request::capture());
         } catch (Throwable $error) {
-            $response = self::errorResponse($error, $this->config['debug'] && $this->config['environment'] === 'local');
+            $response = $apiRequest ? Api::errorResponse($error) : self::errorResponse($error, $this->config['debug'] && $this->config['environment'] === 'local');
         }
         $response->send(($_SERVER['REQUEST_METHOD'] ?? '') === 'HEAD');
     }

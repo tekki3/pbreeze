@@ -19,6 +19,11 @@ Gebruik: php breeze <commando> [naam] [--force]
   serve [poort]              Start op http://127.0.0.1:8000
   routes                     Toon alle routes
   make:controller Naam       Maak een controller in app/controllers
+  make:api Naam              Maak API-controller, routes en OpenAPI; registreer expliciet
+  api:token ID [naam] [dagen] Maak token voor bevestigde gebruiker (standaard 30 dagen)
+  api:tokens ID              Toon tokenmetadata voor een gebruiker, nooit de tokens
+  api:revoke ID              Trek een API-token in
+  api:openapi                Schrijf OpenAPI JSON naar stdout
   make:model Naam            Maak een model in app/models
   make:view map.naam         Maak een PHP-view in app/views
   make:template map.naam     Maak een gecompileerde Breeze-template
@@ -57,8 +62,15 @@ TEXT;
                 throw new InvalidArgumentException("Onbekende optie: $argument");
             }
         }
+        if (in_array($command, ['api:token', 'api:tokens', 'api:revoke', 'api:openapi'], true)) {
+            if ($force) {
+                throw new InvalidArgumentException('API-commando accepteert geen --force.');
+            }
+            $this->apiCommand($command, $arguments);
+            return 0;
+        }
         $mailCommands = ['mail:queue', 'mail:list', 'mail:show', 'mail:send', 'mail:work', 'mail:retry', 'mail:fetch'];
-        $allowsName = in_array($command, ['serve', 'make:controller', 'make:model', 'make:view', 'make:template', 'make:migration', 'make:seeder', 'db:seed', ...$mailCommands], true);
+        $allowsName = in_array($command, ['serve', 'make:controller', 'make:api', 'make:model', 'make:view', 'make:template', 'make:migration', 'make:seeder', 'db:seed', ...$mailCommands], true);
         if (count($arguments) > ($allowsName ? 1 : 0)) {
             throw new InvalidArgumentException('Te veel argumenten. Gebruik php breeze help.');
         }
@@ -105,11 +117,12 @@ TEXT;
                 ], $this->app->root);
             case 'routes':
                 $this->app->routes();
-                foreach ($this->app->router->listing() as $route) {
+                foreach ([...$this->app->router->listing(), ...$this->app->api->listing()] as $route) {
                     printf("%-7s %s\n", $route['method'], $route['path']);
                 }
                 break;
             case 'make:controller':
+            case 'make:api':
             case 'make:model':
             case 'make:view':
             case 'make:template':
@@ -214,7 +227,10 @@ PHP;
                 || in_array(strtolower($name), ['class', 'trait', 'interface', 'enum', 'match', 'function', 'parent', 'self', 'static', 'readonly', 'namespace', 'use', 'new', 'default', 'return', 'abstract', 'final', 'extends', 'implements', 'echo', 'print', 'list', 'array', 'string', 'int', 'float', 'bool', 'true', 'false', 'null', 'object', 'mixed', 'never', 'void', 'iterable', 'callable', 'resource'], true)) {
                 throw new InvalidArgumentException('Gebruik een geldige PascalCase-naam zonder gereserveerde woorden.');
             }
-            if ($command === 'make:controller') {
+            if ($command === 'make:api') {
+                $this->generateApi($name);
+                return;
+            } elseif ($command === 'make:controller') {
                 if (!str_ends_with($name, 'Controller')) {
                     $name .= 'Controller';
                 }
@@ -299,6 +315,182 @@ PHP;
         echo "Seeder uitgevoerd: $name\n";
     }
 
+    /** @param list<string> $arguments */
+    private function apiCommand(string $command, array $arguments): void
+    {
+        $count = count($arguments);
+        if ($command === 'api:openapi') {
+            if ($count !== 0) {
+                throw new InvalidArgumentException('Gebruik: php breeze api:openapi');
+            }
+            $this->app->routes();
+            echo json_encode($this->app->api->openApi(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL;
+            return;
+        }
+        if ($count < 1 || $count > ($command === 'api:token' ? 3 : 1)
+            || !ctype_digit($arguments[0]) || strlen($arguments[0]) > 18 || (int) $arguments[0] < 1) {
+            throw new InvalidArgumentException('Gebruik een positief ID en controleer php breeze help.');
+        }
+        $id = (int) $arguments[0];
+        if ($command === 'api:token') {
+            $days = $arguments[2] ?? '30';
+            if (!ctype_digit($days) || strlen($days) > 3 || (int) $days < 1 || (int) $days > 365) {
+                throw new InvalidArgumentException('Tokenverval moet tussen 1 en 365 dagen liggen.');
+            }
+            $result = $this->app->api->tokens->create($id, $arguments[1] ?? 'cli', (int) $days);
+            echo "Bewaar dit bearer-token veilig: het wordt maar één keer getoond.\n";
+            echo json_encode($result, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR) . PHP_EOL;
+        } elseif ($command === 'api:tokens') {
+            echo json_encode($this->app->api->tokens->listing($id), JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR) . PHP_EOL;
+        } else {
+            $this->app->api->tokens->revoke($id);
+            echo "API-token ingetrokken: $id\n";
+        }
+    }
+
+    private function generateApi(string $name): void
+    {
+        $resource = strtolower((string) preg_replace('/(?<!^)[A-Z]/', '-$0', $name));
+        if (in_array($resource, ['ping', 'me', 'token', 'docs'], true)) {
+            throw new InvalidArgumentException('Deze API-resourcenaam is gereserveerd.');
+        }
+        $class = $name . 'ApiController';
+        $controller = $this->app->root . "/app/controllers/api/$class.php";
+        $module = $this->app->root . "/routes/api/$resource.php";
+        $registry = $this->app->root . '/routes/api.php';
+        foreach ([$controller, $module] as $path) {
+            if (file_exists($path) || is_link($path)) {
+                throw new RuntimeException("Bestand bestaat al: $path");
+            }
+        }
+        if (!is_file($registry)) {
+            throw new RuntimeException('routes/api.php ontbreekt; herstel eerst het API-register.');
+        }
+        $handle = fopen($registry, 'r+');
+        if ($handle === false) {
+            throw new RuntimeException('Kan API-register niet openen.');
+        }
+        $created = [];
+        $original = null;
+        $changed = false;
+        try {
+            if (!flock($handle, LOCK_EX)) {
+                throw new RuntimeException('Kan API-register niet vergrendelen.');
+            }
+            $original = stream_get_contents($handle);
+            if ($original === false) {
+                throw new RuntimeException('Kan API-register niet lezen.');
+            }
+            foreach (token_get_all($original, TOKEN_PARSE) as $token) {
+                if (is_array($token) && in_array($token[0], [T_CLOSE_TAG, T_INLINE_HTML, T_HALT_COMPILER], true)) {
+                    throw new RuntimeException('API-register moet een PHP-bestand zonder sluitende tag zijn.');
+                }
+            }
+            $preview = new Application($this->app->root, $this->app->config);
+            $preview->routes();
+            if (class_exists("App\\Controllers\\Api\\$class", false)) {
+                throw new RuntimeException('API-controllerklasse bestaat al; PHP-klassen zijn hoofdletterongevoelig.');
+            }
+            foreach ($preview->api->listing() as $route) {
+                if ($route['path'] === "/api/$resource" || str_starts_with($route['path'], "/api/$resource/")) {
+                    throw new RuntimeException('API-resource heeft al routes.');
+                }
+            }
+            $ids = array_map(static fn (string $action): string => 'generated' . $name . ucfirst($action), ['index', 'store', 'show', 'update', 'destroy']);
+            foreach ($preview->api->openApi()['paths'] as $operations) {
+                foreach ($operations as $operation) {
+                    if (in_array($operation['operationId'], $ids, true)) {
+                        throw new RuntimeException('Een gegenereerd OpenAPI operationId bestaat al.');
+                    }
+                }
+            }
+            $controllerSource = str_replace('{{class}}', $class, <<<'PHP'
+<?php
+declare(strict_types=1);
+
+namespace App\Controllers\Api;
+
+use PBreeze\Application;
+use PBreeze\HttpException;
+use PBreeze\Request;
+use PBreeze\Response;
+
+final class {{class}}
+{
+    public function __construct(private readonly Application $app)
+    {
+    }
+
+    public function index(Request $request): Response
+    {
+        throw new HttpException(501, 'Implementeer index(), inclusief toegangscontrole op je eigen gegevens.');
+    }
+
+    public function store(Request $request): Response
+    {
+        throw new HttpException(501, 'Implementeer store(), inclusief invoervalidatie en toegangscontrole.');
+    }
+
+    public function show(Request $request, string $id): Response
+    {
+        throw new HttpException(501, 'Implementeer show(), inclusief toegangscontrole op dit record.');
+    }
+
+    public function update(Request $request, string $id): Response
+    {
+        throw new HttpException(501, 'Implementeer update(), inclusief invoervalidatie en toegangscontrole.');
+    }
+
+    public function destroy(Request $request, string $id): Response
+    {
+        throw new HttpException(501, 'Implementeer destroy(), inclusief toegangscontrole op dit record.');
+    }
+}
+
+PHP);
+            $moduleSource = "<?php\ndeclare(strict_types=1);\n\n";
+            $moduleSource .= "require_once \$app->root . '/app/controllers/api/$class.php';\n\n";
+            $moduleSource .= "(static function (\\PBreeze\\Application \$app, \\PBreeze\\Api \$api): void {\n";
+            $moduleSource .= "    \$controller = new \\App\\Controllers\\Api\\$class(\$app);\n";
+            foreach ([
+                ['GET', '', 'index', 'List'], ['POST', '', 'store', 'Create'],
+                ['GET', '/{id}', 'show', 'Get'], ['PUT', '/{id}', 'update', 'Update'], ['DELETE', '/{id}', 'destroy', 'Delete'],
+            ] as [$method, $suffix, $action, $summary]) {
+                $moduleSource .= "    \$api->add('$method', '/api/$resource$suffix', [\$controller, '$action'], [\n";
+                $moduleSource .= "        'summary' => '$summary $name', 'operationId' => 'generated{$name}" . ucfirst($action) . "',\n";
+                if (in_array($method, ['POST', 'PUT'], true)) {
+                    $moduleSource .= "        'requestBody' => ['required' => true, 'content' => ['application/json' => ['schema' => ['type' => 'object']]]],\n";
+                }
+                $moduleSource .= "        'tags' => ['$name'],\n        'responses' => ['501' => ['description' => 'Implement this action before use']],\n    ]);\n";
+            }
+            $moduleSource .= "})(\$app, \$api);\n";
+            $this->write($controller, $controllerSource);
+            $created[] = $controller;
+            $this->write($module, $moduleSource);
+            $created[] = $module;
+            $line = "\nrequire \$app->root . '/routes/api/$resource.php';\n";
+            $changed = true;
+            if (fwrite($handle, $line) !== strlen($line) || !fflush($handle)) {
+                throw new RuntimeException('Kan API-module niet registreren.');
+            }
+            echo "Geregistreerd: /api/$resource. Alle acties vereisen een bearer-token en geven 501 tot implementatie.\n";
+        } catch (\Throwable $error) {
+            if ($changed && is_string($original)) {
+                if (!ftruncate($handle, strlen($original)) || !fflush($handle)) {
+                    throw new RuntimeException('Herstel van API-register mislukt; controleer routes/api.php.', 0, $error);
+                }
+            }
+            foreach (array_reverse($created) as $path) {
+                if (!unlink($path)) {
+                    throw new RuntimeException("Opruimen mislukt: $path", 0, $error);
+                }
+            }
+            throw $error;
+        } finally {
+            fclose($handle);
+        }
+    }
+
     private function write(string $path, string $content, int $mode = 0644): void
     {
         if (file_exists($path) || is_link($path)) {
@@ -317,8 +509,16 @@ PHP;
             if (fwrite($handle, $content) !== strlen($content)) {
                 throw new RuntimeException("Kan bestand niet volledig schrijven: $path");
             }
-        } finally {
+        } catch (\Throwable $error) {
             fclose($handle);
+            if (!unlink($path)) {
+                throw new RuntimeException("Kan onvolledig bestand niet verwijderen: $path", 0, $error);
+            }
+            throw $error;
+        } finally {
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
         }
         echo "Aangemaakt: $path\n";
     }

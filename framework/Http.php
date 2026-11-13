@@ -17,6 +17,8 @@ final class HttpException extends RuntimeException
 
 final class Request
 {
+    /** @var array{id: int, name: string, email: string, token_id: int}|null */
+    private ?array $apiIdentity = null;
     /**
      * @param array<string, mixed> $query
      * @param array<string, mixed> $body
@@ -48,11 +50,38 @@ final class Request
                 $headers[strtolower(str_replace('_', '-', substr($key, 5)))] = $value;
             }
         }
+        foreach (['CONTENT_TYPE' => 'content-type', 'CONTENT_LENGTH' => 'content-length'] as $serverKey => $header) {
+            if (isset($_SERVER[$serverKey]) && is_string($_SERVER[$serverKey])) {
+                $headers[$header] = $_SERVER[$serverKey];
+            }
+        }
+        if (!isset($headers['authorization']) && isset($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) {
+            $headers['authorization'] = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
+        }
         $contentType = strtolower(explode(';', $_SERVER['CONTENT_TYPE'] ?? '')[0]);
         $body = $_POST;
+        $api = Api::matches($path);
+        $raw = null;
+        if ($api) {
+            if ((int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 1048576) {
+                throw new HttpException(413, 'API-requestinhoud mag maximaal 1 MiB zijn.');
+            }
+            $raw = file_get_contents('php://input', false, null, 0, 1048577);
+            if ($raw === false) {
+                throw new RuntimeException('Kan requestinhoud niet lezen.');
+            }
+            if (strlen($raw) > 1048576) {
+                throw new HttpException(413, 'API-requestinhoud mag maximaal 1 MiB zijn.');
+            }
+            if ($contentType !== 'application/json'
+                && ($raw !== '' || (int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 0 || $_POST !== [] || $_FILES !== [])) {
+                throw new HttpException(415, 'Gebruik Content-Type: application/json.');
+            }
+            $body = [];
+        }
         if ($contentType === 'application/json') {
             try {
-                $raw = file_get_contents('php://input');
+                $raw ??= file_get_contents('php://input');
                 if ($raw === false) {
                     throw new RuntimeException('Kan requestinhoud niet lezen.');
                 }
@@ -92,6 +121,20 @@ final class Request
     public function clientIp(): string
     {
         return $this->ip;
+    }
+
+    /** @internal @param array{id: int, name: string, email: string, token_id: int} $user */
+    public function withApiUser(array $user): self
+    {
+        $request = clone $this;
+        $request->apiIdentity = $user;
+        return $request;
+    }
+
+    /** @return array{id: int, name: string, email: string, token_id: int} */
+    public function apiUser(): array
+    {
+        return $this->apiIdentity ?? throw new \LogicException('Deze request heeft geen API-identiteit.');
     }
 }
 

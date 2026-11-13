@@ -15,6 +15,7 @@ return [
     'environment' => $environment,
     'debug' => Env::bool('APP_DEBUG'),
     'secure_cookie' => Env::bool('SESSION_SECURE_COOKIE'),
+    'api_docs' => Env::bool('API_DOCS_ENABLED', $environment !== 'production'),
     'database' => [
         'driver' => Env::get('DB_CONNECTION', 'sqlite'),
         'database' => Env::get('DB_DATABASE', 'database/app.sqlite'),

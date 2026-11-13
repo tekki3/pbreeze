@@ -1,0 +1,10 @@
+swagger-ui-dist 5.35.0 (Apache-2.0)
+Source: https://registry.npmjs.org/swagger-ui-dist/-/swagger-ui-dist-5.35.0.tgz
+Upstream: https://github.com/swagger-api/swagger-ui/tree/v5.35.0
+Package integrity (SHA-512, base64):
+U06rpMtW9V3XPGOBeamTUSr0Z09jMX4IJuANpE/EZbAhw0G8CgwrzU4YmXkn/h0wCDNsXdGarTNNHC3sU8yVUQ==
+Vendored files (SHA-256):
+5ed08757e53da3e026d6cbecc61fe5d43585c9560b302d534ad56692519a273d  swagger-ui.css
+e6a898692f2d768e807c3ba4626068a69a2c5dd960dd6c76f3e4d3a3de180af2  swagger-ui-bundle.js
+LICENSE, NOTICE and swagger-ui-bundle.js.LICENSE.txt are retained unmodified.
+Only official frontend assets are vendored; no npm runtime or PHP package dependency.
