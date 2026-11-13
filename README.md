@@ -10,6 +10,8 @@ voor beschermde routes.
 Inclusief een native PDO-querybuilder en optionele ORM met modellen, casts
 en expliciete relaties. Geen globale databaseverbinding of autoloading.
 Native AES-256-GCM-encryptie is beschikbaar als service en via ORM-casts.
+Registratie, login, wachtwoordherstel aanvragen, verificatiemail opnieuw aanvragen
+en het voorbeeldformulier hebben een native SVG-CAPTCHA en honeypot.
 De applicatie, CLI en tests zijn ingericht voor zowel Windows als Linux.
 
 ## Beginnen
@@ -433,6 +435,8 @@ Geef `$this->app->session` als `session` mee aan de view.
 Een JSON-client kan hetzelfde token als `X-CSRF-Token` meesturen, samen met
 de sessiecookie. Een verkeerd of ontbrekend token geeft 419. Er zijn bewust
 geen standaard CSRF-uitzonderingen of onbeveiligde API-routes.
+Bij een formulier met botbescherming stuur je daarnaast de CAPTCHA-velden
+en lege honeypot mee; alleen een CSRF-token is daar niet voldoende.
 
 ```php
 $this->app->session->put('notice', 'Opgeslagen');
@@ -443,6 +447,99 @@ $this->app->session->regenerate();
 Authenticatie vernieuwt automatisch het sessie-ID en het CSRF-token bij login
 en logout. Daarbij worden bestaande sessiegegevens gewist. Een CSRF-token
 vervangt geen toegangscontrole; bescherm je routes expliciet.
+
+## CAPTCHA en honeypot
+
+De gekozen formulieren gebruiken **beide** controles: registratie, login,
+wachtwoord vergeten, verificatiemail opnieuw aanvragen en het naamformulier
+op de startpagina. Uitloggen, een verificatielink bevestigen en een nieuw
+wachtwoord opslaan blijven beschermd door CSRF en hun eigen guards/tokens
+en bestaande limieten, zonder extra CAPTCHA.
+
+De CAPTCHA is volledig native PHP: geen externe diensten, JavaScript,
+GD, fonts, Composer of API-sleutel. `GET /captcha/{id}` levert een lokale
+SVG met zes willekeurige tekens, getekend als vectorpaden met lichte ruis.
+De oplossing staat niet als tekst of metadata in HTML/SVG; in de sessie
+wordt de SHA-256-hash bewaard, naast de SVG, formuliernaam en vervaltijd.
+Verwarrende tekens `0`, `1`, `I` en `O` worden niet gebruikt.
+
+### Gedrag voor gebruikers
+
+- Neem de zes tekens over; hoofdlettergebruik maakt niet uit. Spaties aan
+  het begin/einde worden genegeerd.
+- Een code is vijf minuten geldig en werkt alleen in dezelfde sessie en
+  voor hetzelfde formulierdoel.
+- Iedere indienpoging verbruikt de opgegeven code, ook bij een fout
+  antwoord, gevulde honeypot of andere validatiefout. Het formulier toont
+  daarna een nieuwe code; wachtwoordvelden blijven leeg.
+- **Andere code tonen** vernieuwt via een CSRF-beveiligde POST zonder
+  formulieractie, login of e-mailverzending uit te voeren. De browser hoeft
+  daarvoor overige velden nog niet te valideren. Naam/e-mail blijven bewaard;
+  wachtwoorden niet. De oude code van dat formulier wordt ingetrokken.
+- Afbeeldingen ophalen of HEAD-verzoeken verbruiken geen code. Afbeeldingen
+  zijn sessiegebonden en worden niet gecachet.
+- Maximaal twaalf nog geldige codes per sessie ondersteunen meerdere
+  tabbladen. Bij meer vervalt de oudste code. Maximaal zestig nieuwe codes
+  per sessie per minuut; daarna volgt 429 met `Retry-After`.
+- De honeypot `website` moet aanwezig zijn als **lege string**. Het veld
+  is visueel verborgen, uit de toetsenbordvolgorde en voor screenreaders
+  verborgen; het heeft autocomplete uit. Ingevulde, ontbrekende of
+  verkeerd getypeerde waarden worden niet geaccepteerd.
+
+Botcontrolefouten geven 422 met een algemene melding en een nieuw formulier.
+Ontbrekende/onjuiste CSRF blijft 419 en wordt eerder gecontroleerd.
+Er wordt geen succesmelding getoond voor een geblokkeerde actie.
+De bestaande databasegebonden authenticatielimieten blijven actief wanneer
+de botcontrole slaagt.
+
+**Beperkingen:** een eenvoudige SVG-CAPTCHA kan door OCR, patroonherkenning
+of menselijke oplosdiensten worden opgelost. De honeypot is een extra
+drempel, geen bewijs dat een bezoeker menselijk is. De aanmaaklimiet is
+sessiegebonden; nieuwe cookies omzeilen die limiet. Gebruik aanvullend
+requestlimieten per IP en abuse-detectie op je vertrouwde webserver/proxy.
+Een visuele CAPTCHA is niet zelfstandig bruikbaar voor blinde gebruikers:
+er is nog geen audio- of gelijkwaardige toegankelijke verificatieroute.
+Regel die voordat je deze formulieren aanbiedt aan een publiek waarvoor
+visuele verificatie niet toegankelijk is; voeg geen onbeveiligde bypass toe.
+
+### Eigen formulieren
+
+De bestaande `Application` stelt `$app->botProtection` beschikbaar:
+
+```php
+// Bij het tonen van het formulier, na eventuele sessie-/auth-controles:
+$captcha = $app->botProtection->challenge('contact');
+
+// Geef captcha en errors mee aan een Breeze-view, plus session voor @csrf.
+// In de form:
+// @csrf($session)
+// @include('partials.bot-protection')
+
+// In een POST-handler, na de globale CSRF-controle:
+$errors = $app->botProtection->errors($request, 'contact');
+if ($errors !== []) {
+    // Render status 422, met errors en een nieuwe challenge('contact').
+    // Voer hier geen inhoudelijke formulieractie uit.
+}
+```
+
+Kies zelf een vaste server-side formuliernaam, niet een doel uit de
+requestinvoer. Hergebruik exact die naam voor uitgifte en controle.
+De partial bevat `_captcha_id`, `_captcha_answer` en `website`.
+Zet net als in de bestaande views de vernieuwknop `_captcha_refresh=1`
+met `formnovalidate` **na** je normale verzendknop, zodat Enter standaard
+het formulier indient en niet alleen de code vernieuwt.
+Handel vernieuwen apart af **vóór**
+de inhoudelijke actie: `$app->botProtection->forget($request, 'contact')`,
+maak een nieuwe challenge en render het formulier opnieuw.
+Je eigen handlers krijgen niet automatisch botbescherming.
+
+De bestaande sessieopslag moet server-side en privé zijn. Login/logout
+wissen alle sessiegegevens, dus ook nog open CAPTCHA's. Een JSON-client
+gebruikt dezelfde veldnamen, dezelfde cookies en de bestaande CSRF-header;
+er is bewust geen testmodus of API-uitzondering die CAPTCHA overslaat.
+De tests maken alleen in hun geïsoleerde, lokale sessiefixture een bekende
+oplossing; dat verandert geen productiecode.
 
 ## Authenticatie
 
@@ -550,7 +647,8 @@ Vaste, databasegebonden tijdvensters begrenzen pogingen, ook over sessies heen:
 | Verificatiemail opnieuw | 5 per gebruiker en 20 per IP per uur |
 | Verificatietoken indienen | 30 per IP per 15 minuten |
 
-Ook ongeldige aanvragen tellen mee voor de IP-limiet. Verlopen limietrecords
+Ook inhoudelijk ongeldige aanvragen tellen mee voor de IP-limiet, zodra de
+CAPTCHA en honeypot zijn geslaagd. Verlopen limietrecords
 worden bij een volgende poging opgeruimd. Alleen SHA-256-buckets worden bewaard,
 geen ruwe IP-adressen in `auth_limits`. De bron is uitsluitend `REMOTE_ADDR`;
 forwarded headers worden niet vertrouwd. Achter een reverse proxy delen
@@ -1360,5 +1458,8 @@ handmatige sleutels, transacties en de modelgenerator.
 Encryptietests controleren native OpenSSL-interoperabiliteit, willekeurige
 nonces, bytegewijze manipulatie, verkeerde sleutels/contexten, foutieve
 payloads, CLI-sleutelgeneratie en encrypted ORM-casts.
+Botbeschermingstests controleren sessie-/formulierbinding, verval, hergebruik,
+honeypot-types, begrensde sessieopslag, SVG-responses, vernieuwen en het
+uitblijven van neveneffecten op alle vijf beschermde formulieren.
 MySQL vereist daarnaast een eigen integratierun op een wegwerpdatabase;
 de meegeleverde suite valideert de MySQL-verbinding niet tegen een live server.

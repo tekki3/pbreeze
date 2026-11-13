@@ -14,6 +14,7 @@ final class Application
     public readonly \PBreeze\Mail\Mailer $mail;
     public readonly Auth $auth;
     public readonly Encryption $encryption;
+    public readonly BotProtection $botProtection;
 
     /** @param array{name: string, url?: string, key?: string, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}} $config */
     public function __construct(public readonly string $root, #[\SensitiveParameter] public readonly array $config)
@@ -21,6 +22,7 @@ final class Application
         $this->router = new Router();
         $this->views = new View($root . '/app/views');
         $this->session = new Session();
+        $this->botProtection = new BotProtection($this->session);
         $this->encryption = new Encryption($config['key'] ?? '');
         $this->db = new Database($root, $config['database'], $this->encryption);
         $this->mail = new \PBreeze\Mail\Mailer($this->db, $config['mail'] ?? []);

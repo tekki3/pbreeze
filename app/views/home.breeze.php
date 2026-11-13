@@ -41,7 +41,9 @@
                             {{ implode(' ', $errors['name']) }}
                         @endcomponent
                     @endif
+                    @include('partials.bot-protection')
                     <button type="submit">Verstuur je naam <span aria-hidden="true">&rarr;</span></button>
+                    <button class="button-secondary captcha-refresh" type="submit" name="_captcha_refresh" value="1" formnovalidate>Andere code tonen</button>
                     @if(!empty($greeting))
                         @component('components.feedback', ['kind' => 'success'])
                             <strong>{{ $greeting }}</strong>

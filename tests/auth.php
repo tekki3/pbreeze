@@ -9,6 +9,7 @@ final class AuthBrowser
 {
     public string $cookie = '';
     public string $csrf = '';
+    public bool $solveCaptcha = true;
 
     public function __construct(private readonly string $base)
     {
@@ -21,6 +22,16 @@ final class AuthBrowser
      */
     public function request(string $path, string $method = 'GET', array $data = [], array $extraHeaders = []): array
     {
+        $forms = [
+            '/register' => '/register', '/login' => '/login', '/forgot-password' => '/forgot-password',
+            '/email/verification-notification' => '/email/verify', '/greet' => '/',
+        ];
+        if ($method === 'POST' && $this->solveCaptcha && isset($forms[$path]) && !array_key_exists('_captcha_id', $data)) {
+            $form = $this->request($forms[$path]);
+            if ($form['status'] === 200) {
+                $data += captchaFields($this->cookie, $form['body']);
+            }
+        }
         $headers = ['Cookie: ' . $this->cookie, ...$extraHeaders];
         if ($method === 'POST') {
             $headers[] = 'Content-Type: application/x-www-form-urlencoded';

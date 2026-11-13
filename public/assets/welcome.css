@@ -124,6 +124,13 @@ code { font-size: .9em; }
 .auth-logout button { margin-top: 0; }
 .button-secondary { color: var(--green); background: transparent; border-color: var(--green); }
 .button-secondary:hover { color: #fff; }
+.form-trap { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.captcha-field { min-width: 0; margin: 24px 0 0; padding: 18px 0 0; border: 0; border-top: 1px solid var(--line); }
+.captcha-field legend { padding: 0 12px 0 0; font-size: 13px; font-weight: 650; }
+.captcha-field .field-hint { margin-top: 0; }
+.captcha-image { display: block; width: 240px; max-width: 100%; height: auto; margin-block: 14px; border: 1px solid var(--line); border-radius: 6px; }
+.captcha-field > input[type="text"] { max-width: 240px; letter-spacing: .15em; }
+.captcha-refresh, .auth-body .captcha-refresh { width: auto; min-height: 44px; margin-top: 12px; }
 @media (max-width: 1000px) {
     .page-width { width: calc(100% - 48px); }
     .intro { gap: 32px; padding-block: 52px; }

@@ -109,6 +109,16 @@ final class AuthController
             'oldEmail' => is_string($request->input('email')) ? $request->input('email') : '',
             'token' => $this->token($request->input('token')),
         ];
+        if (in_array($mode, ['register', 'login', 'forgot', 'notice'], true)) {
+            if ($request->input('_captcha_refresh') === '1') {
+                $this->app->botProtection->forget($request, $mode);
+                return $this->page($mode, $data + ['captchaRefreshed' => true]);
+            }
+            $errors = $this->app->botProtection->errors($request, $mode);
+            if ($errors !== []) {
+                return $this->page($mode, $data + ['errors' => $errors], 422);
+            }
+        }
         try {
             $work();
         } catch (AuthException $error) {
@@ -126,11 +136,15 @@ final class AuthController
     private function page(string $mode, array $data = [], int $status = 200, int $retryAfter = 0): Response
     {
         [$title, $description, $action, $button] = self::PAGES[$mode];
+        $user = $this->app->auth->user();
+        $captcha = in_array($mode, ['register', 'login', 'forgot', 'notice'], true) && empty($data['message'])
+            ? $this->app->botProtection->challenge($mode) : null;
         return new Response($this->app->views->render('auth.page', $data + [
             'name' => $this->app->config['name'], 'session' => $this->app->session,
             'mode' => $mode, 'title' => $title, 'description' => $description,
-            'action' => $action, 'button' => $button, 'user' => $this->app->auth->user(),
+            'action' => $action, 'button' => $button, 'user' => $user,
             'errors' => [], 'message' => null, 'oldName' => '', 'oldEmail' => '', 'token' => '',
+            'captcha' => $captcha, 'captchaRefreshed' => false,
         ]), $status, [
             'Content-Type' => 'text/html; charset=UTF-8',
             'Referrer-Policy' => 'no-referrer',

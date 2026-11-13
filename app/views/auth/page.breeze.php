@@ -58,7 +58,13 @@
                         @include('auth.field', ['field' => 'password_confirmation', 'label' => 'Herhaal je wachtwoord', 'type' => 'password', 'autocomplete' => 'new-password', 'value' => '', 'minimum' => 12, 'maximum' => 72])
                     @endif
                 @endif
+                @if($captcha !== null)
+                    @include('partials.bot-protection')
+                @endif
                 <button type="submit">{{ $button }}</button>
+                @if($captcha !== null)
+                    <button class="button-secondary captcha-refresh" type="submit" name="_captcha_refresh" value="1" formnovalidate>Andere code tonen</button>
+                @endif
                 @if($mode === 'login')
                     <p class="auth-next"><a href="/forgot-password">Wachtwoord vergeten?</a></p>
                 @elseif($mode === 'reset' || $mode === 'verify')

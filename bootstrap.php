@@ -10,6 +10,7 @@ require_once __DIR__ . '/framework/Filesystem.php';
 require_once __DIR__ . '/framework/Process.php';
 require_once __DIR__ . '/framework/Http.php';
 require_once __DIR__ . '/framework/Session.php';
+require_once __DIR__ . '/framework/BotProtection.php';
 require_once __DIR__ . '/framework/TemplateCompiler.php';
 require_once __DIR__ . '/framework/TemplateContext.php';
 require_once __DIR__ . '/framework/View.php';

@@ -127,6 +127,7 @@ try {
     require __DIR__ . '/templates.php';
     require __DIR__ . '/orm.php';
     require __DIR__ . '/encryption.php';
+    require __DIR__ . '/bot-protection.php';
 
     test('HTML-escaping behandelt quotes en ongeldige UTF-8', static function (): void {
         same('&lt;script&gt;&quot;&#039;&amp;', e('<script>"\'&'));
@@ -494,19 +495,24 @@ PHP);
         test('HTTP weigert ontbrekende CSRF en accepteert een geldig token', static function () use ($base, &$cookie, &$token): void {
             $headers = ['Content-Type: application/x-www-form-urlencoded', 'Cookie: ' . $cookie];
             same(419, http($base, '/greet', 'POST', 'name=Ada', $headers)['status']);
-            $response = http($base, '/greet', 'POST', http_build_query(['_token' => $token, 'name' => '<script>alert(1)</script>']), $headers);
+            $fields = captchaFields($cookie, http($base, '/', 'GET', '', ['Cookie: ' . $cookie])['body']);
+            $response = http($base, '/greet', 'POST', http_build_query(['_token' => $token, 'name' => '<script>alert(1)</script>'] + $fields), $headers);
             same(200, $response['status']);
             check(str_contains($response['body'], '&lt;script&gt;'));
             check(!str_contains($response['body'], '<script>'));
-            same(422, http($base, '/greet', 'POST', http_build_query(['_token' => $token, 'name' => 'A']), $headers)['status']);
+            $fields = captchaFields($cookie, $response['body']);
+            same(422, http($base, '/greet', 'POST', http_build_query(['_token' => $token, 'name' => 'A'] + $fields), $headers)['status']);
         });
 
         test('HTTP valideert JSON en ondersteunt CSRF-header', static function () use ($base, &$cookie, &$token): void {
             $headers = ['Content-Type: application/json', 'Cookie: ' . $cookie, 'X-CSRF-Token: ' . $token];
             same(400, http($base, '/greet', 'POST', '{', $headers)['status']);
             same(400, http($base, '/greet', 'POST', '[]', $headers)['status']);
-            same(200, http($base, '/greet', 'POST', '{"name":"Ada"}', $headers)['status']);
-            same(422, http($base, '/greet', 'POST', '{"name":["Ada"]}', $headers)['status']);
+            $fields = captchaFields($cookie, http($base, '/', 'GET', '', ['Cookie: ' . $cookie])['body']);
+            $response = http($base, '/greet', 'POST', json_encode(['name' => 'Ada'] + $fields, JSON_THROW_ON_ERROR), $headers);
+            same(200, $response['status']);
+            $fields = captchaFields($cookie, $response['body']);
+            same(422, http($base, '/greet', 'POST', json_encode(['name' => ['Ada']] + $fields, JSON_THROW_ON_ERROR), $headers)['status']);
         });
 
         test('HTTP HEAD is leeg en privébestanden zijn onbereikbaar', static function () use ($base, &$cookie, &$token): void {
@@ -526,6 +532,7 @@ PHP);
         });
 
         require __DIR__ . '/auth.php';
+        require __DIR__ . '/bot-http.php';
     }
 } finally {
     if (is_resource($server)) {
