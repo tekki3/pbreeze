@@ -11,12 +11,14 @@ final class SqlServerRecordingPdo extends PDO
     public int $commits = 0;
     public int $rollbacks = 0;
     public int $lockResult = 0;
+    /** @var list<mixed> */
+    public array $columnResults = [];
 
-    public function __construct() {}
+    public function __construct(private string $driver = 'sqlsrv') {}
 
     public function getAttribute(int $attribute): mixed
     {
-        return $attribute === PDO::ATTR_DRIVER_NAME ? 'sqlsrv' : null;
+        return $attribute === PDO::ATTR_DRIVER_NAME ? $this->driver : null;
     }
 
     public function prepare(string $query, array $options = []): PDOStatement|false
@@ -88,10 +90,16 @@ final class SqlServerRecordingStatement extends PDOStatement
 
     public function fetchColumn(int $column = 0): mixed
     {
+        if ($this->connection->columnResults !== []) {
+            return array_shift($this->connection->columnResults);
+        }
         if (str_contains($this->sql, 'sp_getapplock')) {
             return $this->connection->lockResult;
         }
-        return str_contains($this->sql, 'OUTPUT INSERTED.') ? '42' : 0;
+        if (str_contains($this->sql, 'pg_try_advisory_lock')) {
+            return $this->connection->lockResult >= 0;
+        }
+        return str_contains($this->sql, 'OUTPUT INSERTED.') || str_contains($this->sql, 'RETURNING ') ? '42' : 0;
     }
 
     public function rowCount(): int

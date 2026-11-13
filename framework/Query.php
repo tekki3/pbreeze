@@ -31,13 +31,17 @@ final class Query
 
     public static function identifier(string $name, string $driver = 'mysql'): string
     {
-        if (!in_array($driver, ['sqlite', 'mysql', 'sqlsrv'], true)) {
+        if (!in_array($driver, ['sqlite', 'mysql', 'sqlsrv', 'pgsql'], true)) {
             throw new InvalidArgumentException('Unsupported SQL identifier driver.');
         }
         if (preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/D', $name) !== 1) {
             throw new InvalidArgumentException('Use a simple SQL identifier without expressions or a table prefix.');
         }
-        return $driver === 'sqlsrv' ? '[' . $name . ']' : '`' . $name . '`';
+        return match ($driver) {
+            'sqlsrv' => '[' . $name . ']',
+            'pgsql' => '"' . $name . '"',
+            default => '`' . $name . '`',
+        };
     }
 
     private function quote(string $name): string

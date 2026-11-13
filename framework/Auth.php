@@ -78,12 +78,26 @@ final class Auth
         $this->db->transaction(function () use ($data, $hash): void {
             // The unique email index also handles concurrent registrations.
             try {
-                $id = $this->db->insert('users', [
-                    'name' => $data['name'], 'email' => $data['email'],
-                    'password_hash' => $hash, 'created_at' => time(),
-                ]);
+                if ($this->db->driver() === 'pgsql') {
+                    // A uniqueness exception would abort PostgreSQL's entire transaction.
+                    $statement = $this->db->execute(
+                        'INSERT INTO users (name, email, password_hash, created_at) VALUES (?, ?, ?, ?)
+                         ON CONFLICT (email) DO NOTHING RETURNING id',
+                        [$data['name'], $data['email'], $hash, time()],
+                    );
+                    $id = $statement->fetchColumn();
+                    $statement->closeCursor();
+                    if ($id === false) {
+                        return;
+                    }
+                } else {
+                    $id = $this->db->insert('users', [
+                        'name' => $data['name'], 'email' => $data['email'],
+                        'password_hash' => $hash, 'created_at' => time(),
+                    ]);
+                }
             } catch (PDOException $error) {
-                if (in_array((string) $error->getCode(), ['23000', '23505'], true)
+                if ($this->db->driver() !== 'pgsql' && in_array((string) $error->getCode(), ['23000', '23505'], true)
                     && $this->db->execute('SELECT id FROM users WHERE email = ?', [$data['email']])->fetchColumn() !== false) {
                     return;
                 }

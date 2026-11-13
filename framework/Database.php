@@ -53,6 +53,27 @@ final class Database
                 throw new RuntimeException('Invalid database port.');
             }
             $dsn = "mysql:host={$this->config['host']};port={$this->config['port']};dbname=$name;charset=utf8mb4";
+        } elseif ($driver === 'pgsql') {
+            $host = $this->config['host'] ?? '127.0.0.1';
+            $port = $this->config['port'] ?? '5432';
+            $sslmode = $this->config['sslmode'] ?? 'verify-full';
+            $sslrootcert = $this->config['sslrootcert'] ?? '';
+            if (!preg_match('/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/D', $host)
+                || !ctype_digit($port) || (int) $port < 1 || (int) $port > 65535
+                || !preg_match('/^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,62}$/D', $name)
+                || !in_array($sslmode, ['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'], true)) {
+                throw new RuntimeException('Invalid PostgreSQL host, port, database name, or SSL mode.');
+            }
+            if ($sslrootcert !== '' && (preg_match('/[;\'\x00-\x1f\x7f]/', $sslrootcert) || !is_readable($sslrootcert))) {
+                throw new RuntimeException('PostgreSQL requires a readable local CA file without DSN delimiters.');
+            }
+            $dsn = "pgsql:host=$host;port=$port;dbname=$name;sslmode=$sslmode;connect_timeout=15";
+            if ($sslrootcert !== '') {
+                $dsn .= ';sslrootcert=' . $sslrootcert;
+            }
+            if (!in_array('pgsql', PDO::getAvailableDrivers(), true)) {
+                throw new RuntimeException('PostgreSQL requires the native pdo_pgsql extension and libpq.');
+            }
         } elseif ($driver === 'sqlsrv') {
             $host = $this->config['host'] ?? '127.0.0.1';
             $port = $this->config['port'] ?? '1433';
@@ -71,7 +92,7 @@ final class Database
                 throw new RuntimeException('SQL Server requires the native pdo_sqlsrv extension and Microsoft ODBC Driver for SQL Server.');
             }
         } else {
-            throw new RuntimeException('DB_CONNECTION must be sqlite, mysql, or sqlsrv.');
+            throw new RuntimeException('DB_CONNECTION must be sqlite, mysql, sqlsrv, or pgsql.');
         }
         $pdo = new PDO($dsn, $this->config['username'] ?? '', $this->config['password'] ?? '', [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -86,6 +107,8 @@ final class Database
             $pdo->exec('SET ANSI_NULLS ON; SET QUOTED_IDENTIFIER ON; SET ANSI_PADDING ON;
                 SET ANSI_WARNINGS ON; SET CONCAT_NULL_YIELDS_NULL ON; SET ARITHABORT ON;
                 SET NUMERIC_ROUNDABORT OFF; SET NOCOUNT OFF');
+        } elseif ($driver === 'pgsql') {
+            $pdo->exec("SET client_encoding TO 'UTF8'; SET TIME ZONE 'UTC'");
         }
         return $this->connection = $pdo;
     }
@@ -137,12 +160,15 @@ final class Database
         $sql .= $columns === []
             ? ($this->driver() === 'mysql' ? ' () VALUES ()' : ' DEFAULT VALUES')
             : ' VALUES (' . implode(', ', array_fill(0, count($columns), '?')) . ')';
+        if ($this->driver() === 'pgsql' && $identity !== null) {
+            $sql .= ' RETURNING ' . $quote($identity);
+        }
         $statement = $this->execute($sql, array_values($data));
         if ($identity === null) {
             $statement->closeCursor();
             return 0;
         }
-        $id = $this->driver() === 'sqlsrv' ? $statement->fetchColumn() : $this->pdo()->lastInsertId();
+        $id = in_array($this->driver(), ['sqlsrv', 'pgsql'], true) ? $statement->fetchColumn() : $this->pdo()->lastInsertId();
         $statement->closeCursor();
         if ($id === false || $id === null) {
             throw new RuntimeException('Cannot retrieve the insert ID.');

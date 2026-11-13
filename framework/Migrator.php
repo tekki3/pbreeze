@@ -119,8 +119,8 @@ final class Migrator
         sort($files, SORT_STRING);
         $result = [];
         foreach ($files as $file) {
-            if ($this->db->driver() === 'sqlsrv') {
-                $override = dirname($file) . '/sqlsrv/' . basename($file);
+            if (in_array($this->db->driver(), ['sqlsrv', 'pgsql'], true)) {
+                $override = dirname($file) . '/' . $this->db->driver() . '/' . basename($file);
                 if (is_file($override)) {
                     $file = $override;
                 }
@@ -146,7 +146,7 @@ final class Migrator
     private function atomic(callable $work): void
     {
         // MySQL DDL commits implicitly; a transaction would incorrectly suggest atomicity.
-        if (in_array($this->db->driver(), ['sqlite', 'sqlsrv'], true)) {
+        if (in_array($this->db->driver(), ['sqlite', 'sqlsrv', 'pgsql'], true)) {
             $this->db->transaction($work);
         } else {
             $work($this->db->pdo());
@@ -161,6 +161,7 @@ final class Migrator
         }
         $mysqlLock = null;
         $sqlsrvLock = false;
+        $pgsqlLock = false;
         try {
             if (!flock($handle, LOCK_EX | LOCK_NB)) {
                 throw new RuntimeException('A migration process is already running.');
@@ -184,6 +185,13 @@ final class Migrator
                 }
                 $sqlsrvLock = true;
             }
+            if ($this->db->driver() === 'pgsql') {
+                $result = $this->db->execute('SELECT pg_try_advisory_lock(1346523717, 1)')->fetchColumn();
+                if (!in_array($result, [true, 1, '1', 't'], true)) {
+                    throw new RuntimeException('The database is locked by another migration process.');
+                }
+                $pgsqlLock = true;
+            }
             return $work();
         } finally {
             try {
@@ -192,6 +200,9 @@ final class Migrator
                 }
                 if ($sqlsrvLock) {
                     $this->db->execute("EXEC sys.sp_releaseapplock @Resource = N'pbreeze:migrations', @LockOwner = 'Session'")->closeCursor();
+                }
+                if ($pgsqlLock) {
+                    $this->db->execute('SELECT pg_advisory_unlock(1346523717, 1)')->closeCursor();
                 }
             } finally {
                 flock($handle, LOCK_UN);

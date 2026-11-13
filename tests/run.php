@@ -127,6 +127,7 @@ try {
     require __DIR__ . '/templates.php';
     require __DIR__ . '/orm.php';
     require __DIR__ . '/sqlsrv.php';
+    require __DIR__ . '/pgsql.php';
     require __DIR__ . '/encryption.php';
     require __DIR__ . '/bot-protection.php';
     require __DIR__ . '/api.php';

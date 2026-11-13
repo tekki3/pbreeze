@@ -29,7 +29,7 @@ final class MailStore
     {
         $message = $incoming['message'];
         try {
-            $id = $this->db->insert('emails', [
+            $data = [
                 'direction' => 'incoming', 'status' => 'received', 'from_address' => $message['from'],
                 'to_addresses' => json_encode([$message['to']], JSON_THROW_ON_ERROR),
                 'subject' => $message['subject'], 'text_body' => $message['text'], 'html_body' => $message['html'],
@@ -37,10 +37,28 @@ final class MailStore
                 'raw_message' => base64_encode($incoming['raw']), 'source_key' => $incoming['source_key'],
                 'mailbox' => $incoming['mailbox'], 'imap_uid' => $incoming['uid'], 'imap_uidvalidity' => $incoming['uidvalidity'],
                 'created_at' => self::now(), 'updated_at' => self::now(),
-            ]);
+            ];
+            if ($this->db->driver() === 'pgsql') {
+                $statement = $this->db->execute(
+                    'INSERT INTO emails (' . implode(', ', array_keys($data)) . ') VALUES ('
+                    . implode(', ', array_fill(0, count($data), '?'))
+                    . ') ON CONFLICT (source_key) DO NOTHING RETURNING id',
+                    array_values($data),
+                );
+                $id = $statement->fetchColumn();
+                $statement->closeCursor();
+                if ($id === false) {
+                    $id = $this->db->execute('SELECT id FROM emails WHERE source_key = ?', [$incoming['source_key']])->fetchColumn();
+                    if ($id === false) {
+                        throw new RuntimeException('The duplicate imported email no longer exists.');
+                    }
+                }
+            } else {
+                $id = $this->db->insert('emails', $data);
+            }
         } catch (\PDOException $error) {
             // Concurrent imports of the same UID are allowed; other database errors remain errors.
-            if (in_array((string) $error->getCode(), ['23000', '23505'], true)) {
+            if ($this->db->driver() !== 'pgsql' && in_array((string) $error->getCode(), ['23000', '23505'], true)) {
                 $existing = $this->db->execute('SELECT id FROM emails WHERE source_key = ?', [$incoming['source_key']])->fetchColumn();
                 if ($existing !== false) {
                     return (int) $existing;
