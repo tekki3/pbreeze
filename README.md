@@ -38,6 +38,13 @@ The offline manual uses `docs/css/` and `docs/js/`; keep these folders with
 The root `artwork/` folder is a standalone collection of image and logo files.
 It is not used by the application or served publicly.
 
+## License
+
+PBreeze is licensed under the [MIT License](LICENSE).
+Vendored Swagger UI and its bundled dependencies retain their own licenses
+and notices under `public/assets/swagger-ui/`; the framework's MIT license
+does not replace those third-party terms.
+
 ## Language Convention
 
 All framework-maintained UI, CLI output, diagnostics, emails, generated code,
