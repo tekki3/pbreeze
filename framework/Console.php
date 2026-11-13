@@ -237,17 +237,19 @@ final class {{name}}
 PHP);
             } elseif ($command === 'make:model') {
                 $path = "/app/models/$name.php";
-                $content = str_replace('{{name}}', $name, <<<'PHP'
+                $table = strtolower((string) preg_replace('/(?<!^)[A-Z]/', '_$0', $name)) . 's';
+                $content = str_replace(['{{name}}', '{{table}}'], [$name, $table], <<<'PHP'
 <?php
 declare(strict_types=1);
 
 namespace App\Models;
 
-final class {{name}}
+final class {{name}} extends \PBreeze\Model
 {
-    public function __construct(private readonly \PBreeze\Database $db)
-    {
-    }
+    protected string $table = '{{table}}';
+    protected array $fillable = [];
+    protected array $hidden = [];
+    protected array $casts = [];
 }
 
 PHP);
@@ -268,7 +270,7 @@ PHP;
         if ($command === 'make:controller') {
             echo "Laad de controller expliciet met require_once in routes/web.php en registreer de route.\n";
         } elseif ($command === 'make:model') {
-            echo "Laad het model expliciet met require_once waar je het gebruikt.\n";
+            echo "Controleer de tabelnaam en vul fillable/casts/hidden in. Laad het model expliciet met require_once.\n";
         }
     }
 

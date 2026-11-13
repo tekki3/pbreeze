@@ -7,6 +7,8 @@ expliciete `require_once`-regels en PHP-extensies.
 Inclusief native SMTP, IMAP, configureerbare e-maillogging en een databasewachtrij.
 Met registratie, login/logout, wachtwoordherstel en verplichte e-mailverificatie
 voor beschermde routes.
+Inclusief een native PDO-querybuilder en optionele ORM met modellen, casts
+en expliciete relaties. Geen globale databaseverbinding of autoloading.
 De applicatie, CLI en tests zijn ingericht voor zowel Windows als Linux.
 
 ## Beginnen
@@ -109,7 +111,7 @@ is nog geen uitgevoerde Windows-test.
 ```text
 app/
   controllers/       HTTP-acties
-  models/            Databaselogica, zonder verplicht ORM
+  models/            ORM-modellen of eigen databaselogica
   views/             PHP-views en gecompileerde .breeze.php-templates
     layouts/         Gedeelde paginastructuur
     partials/        Herbruikbare paginafragmenten
@@ -586,7 +588,8 @@ Tabelnamen, kolomnamen en sorteerrichtingen kun je niet binden: gebruik
 daarvoor een vaste whitelist. Vermijd geneste transacties en DDL in
 `Database::transaction()`.
 
-`app/models/Note.php` is een concreet modelvoorbeeld:
+`app/models/Note.php` bewaart de bestaande kleine repository-API en gebruikt
+intern de querybuilder:
 
 ```php
 require_once $app->root . '/app/models/Note.php';
@@ -595,7 +598,279 @@ $id = $notes->create('Mijn eerste notitie');
 $recent = $notes->latest(20);
 ```
 
-Er is bewust geen ORM, querybuilder of automatische mass assignment.
+Direct PDO blijft beschikbaar naast de optionele ORM.
+
+## Native ORM en querybuilder
+
+De ORM bestaat uit `framework/Query.php` en `framework/Model.php`, expliciet
+geladen in de bootstrap. Elke query en elk model krijgt de bestaande
+`Database`-instantie. Er zijn geen packages, autoloading, globale verbindingen,
+schema-inspectie of automatische migraties. De SQL is ingericht voor SQLite
+en MySQL; de bestaande platformonafhankelijke PDO-configuratie blijft leidend.
+
+### Tabelqueries: arrays
+
+```php
+$query = $app->db->table('notes');
+$id = $query->insert(['title' => 'Mijn notitie']);
+$note = $query->find($id);          // array of null
+$note = $query->findOrFail($id);    // array of RecordNotFoundException
+
+$recent = $query->where('id', '>', 0)
+    ->where('title', 'LIKE', '%notitie%')
+    ->orderBy('id', 'desc')
+    ->limit(20)
+    ->get();
+
+$query->where('id', $id)->update(['title' => 'Gewijzigd']); // aantal rijen
+$query->where('id', $id)->delete();                       // aantal rijen
+```
+
+Queries zijn **immutable**: `where`, `orderBy`, `limit` en `offset` geven een
+nieuwe query terug. Bewaar dus het resultaat of keten de aanroepen.
+Alle `where`-voorwaarden worden met AND gecombineerd:
+
+```php
+$query = $app->db->table('notes');
+$filtered = $query->whereIn('id', [1, 2, 3])->whereNotNull('title');
+$first = $filtered->first();            // array of null
+$first = $filtered->firstOrFail();      // exception indien afwezig
+$count = $filtered->count();            // int
+$exists = $filtered->exists();          // bool
+$rows = $filtered->orderBy('id')->limit(10)->offset(10)->get();
+```
+
+Ondersteunde operatoren: `=`, `!=`, `<>`, `<`, `<=`, `>`, `>=`, `LIKE`,
+`NOT LIKE`. `where('kolom', $waarde)` gebruikt `=`.
+`where('kolom', null)` en `where('kolom', '!=', null)` gebruiken respectievelijk
+`IS NULL` en `IS NOT NULL`; expliciete `whereNull`/`whereNotNull` bestaan ook.
+`whereIn` verwacht een lijst van maximaal 500 waarden zonder null; een lege
+lijst vindt of wijzigt **geen** rijen. LIKE-wildcards `%` en `_` behouden hun
+SQL-betekenis: parameterbinding maakt ze niet letterlijk.
+
+Waarden worden gebonden als int, bool, string of null; floats worden als
+tekstuele getallen gebonden. Arrays, objecten, resources, INF en NAN worden
+geweigerd. Tabel- en kolomnamen moeten eenvoudige identifiers zijn
+(`letters_cijfers_underscore`, niet beginnend met een cijfer); ze worden gequote.
+Operatoren en sorteerrichtingen worden gecontroleerd. De builder accepteert
+geen SQL-fragmenten, joins, aliassen, schema-/tabelprefixen, OR-groepen of raw-
+expressies. Gebruik voor complexere SQL bewust `Database::execute()` met
+bindings. Kies ook bij geldige kolomnamen zelf welke een gebruiker mag opvragen
+of wijzigen: identifiercontrole is geen autorisatie.
+
+`update` en `delete` zonder expliciete WHERE worden geweigerd. Writes met
+sortering, limiet of offset worden eveneens geweigerd, zodat voorwaarden nooit
+stilzwijgend worden genegeerd. `insert`/`create` accepteert geen filters,
+sortering of paginering. `insert([])` gebruikt de databasedefaults en retourneert
+het PDO-insert-ID (int indien representabel, anders string); bij handmatige
+sleutels gebruik je de zelf aangeleverde sleutel, niet dit driverafhankelijke ID.
+`get()` haalt alle passende rijen op tenzij je een limiet opgeeft.
+`count()` en `exists()` werken op de filters en negeren leeslimieten,
+offsets en sortering. `offset` bij `get()` vereist een expliciete `limit`.
+
+### Modellen: objecten
+
+```sh
+php breeze make:model Article
+```
+
+De generator maakt een `Model`-subklasse met standaard een snake_case-naam
+plus `s` als tabelnaam. Er is bewust geen taalafhankelijke meervoudsherkenning:
+controleer de naam, maak de tabel via een migratie en vul `$fillable` in.
+De standaardlijst is leeg: geen enkel veld is dan massaal schrijfbaar.
+
+Voorbeeld voor een eigen `articles`-tabel met de getoonde kolommen:
+
+```php
+<?php
+declare(strict_types=1);
+
+namespace App\Models;
+
+final class Article extends \PBreeze\Model
+{
+    protected string $table = 'articles';
+    protected bool $timestamps = true;
+    protected array $fillable = ['author_id', 'title', 'published', 'metadata', 'published_at'];
+    protected array $hidden = ['metadata'];
+    protected array $casts = [
+        'id' => 'int',
+        'author_id' => 'int',
+        'published' => 'bool',
+        'metadata' => 'json',
+        'published_at' => 'datetime',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+    ];
+
+    public function author(): \PBreeze\Query
+    {
+        return $this->belongsTo(Author::class, 'author_id');
+    }
+}
+```
+
+Een model heeft standaard primaire sleutel `id`, `$incrementing = true` en
+`$timestamps = false`. Zet timestamps alleen aan als **beide** kolommen
+`created_at` en `updated_at` bestaan. Gebruik daarvoor UTC-velden die waarden
+in `Y-m-d H:i:s` kunnen opslaan. Maak foreign keys en databasedefaults expliciet
+in je migratie. Een model voert geen schemamigraties of inhoudsvalidatie uit.
+
+```php
+require_once $app->root . '/app/models/Article.php';
+require_once $app->root . '/app/models/Author.php';
+
+$articles = new \App\Models\Article($app->db);
+$article = $articles->create([
+    'author_id' => 1,
+    'title' => 'Mijn eerste artikel',
+    'published' => false,
+    'metadata' => ['tags' => ['php']],
+    'published_at' => null,
+]);
+
+$article->title = 'Een nieuwe titel'; // controleert fillable en cast
+$changes = $article->dirty();        // gewijzigde velden in opslagformaat
+$article->save();                    // insert nieuw model; anders alleen wijzigingen
+$article->update(['published' => true]);
+$article->refresh();                 // herladen; overschrijft lokale wijzigingen
+
+$found = $articles->query()->findOrFail($article->id); // Article-object
+$list = $articles->query()->where('published', true)->orderBy('id')->get();
+$article->delete();                  // verwijdert de rij; niet opnieuw opslaan
+```
+
+`create()` maakt altijd een **nieuw** model, ook als je het op een geladen
+record aanroept. `query()->create()` is hetzelfde alternatief. `save()`,
+`update()` en `delete()` geven bij succes true en falen bij databasefouten
+expliciet. Een onbekend/niet-geladen veld lezen geeft een `LogicException`.
+`exists()` op een model geeft de lokaal bekende opgeslagen status; voor een
+actuele databasecontrole gebruik je `query()->where(...)->exists()`.
+Na een write worden defaults en databasewaarden herladen. Een ongewijzigd
+model opslaan schrijft niets. `refresh()` of een write op een verdwenen rij
+geeft `RecordNotFoundException`; een ongewijzigde `save()` controleert dat
+niet opnieuw. Deze exception is geen automatische HTTP-404: vertaal hem
+waar gewenst in je controller naar een `HttpException(404, ...)`.
+
+`fill()` en veldtoekenning accepteren alleen `$fillable`. Onbekende velden
+worden niet stil genegeerd. De primaire sleutel van een opgeslagen model en
+automatische timestamps zijn niet schrijfbaar. Voor handmatige/string-
+sleutels zet je `$incrementing = false`, kies je `$primaryKey` en voeg je die
+sleutel toe aan `$fillable` voor het aanmaken.
+
+Modelqueries ondersteunen ook gefilterde bulk-`update`/`delete`.
+`update` controleert fillable en casts, maar werkt zonder modelinstanties:
+automatische timestamps worden daarbij **niet** bijgewerkt. Gebruik `save()`
+of `update()` op een geladen model als je die wilt. Primaire-sleutelupdates
+via een modelquery worden altijd geweigerd. Op een tabelquery zijn
+modelbeschermingen niet van toepassing. `insert()` is alleen voor tabelqueries;
+gebruik `create()` voor modelqueries.
+
+### Casts en serialisatie
+
+| Cast | PHP-waarde bij toekenning | Waarde bij lezen |
+|---|---|---|
+| `int` | int | int, met overflowcontrole bij hydration |
+| `float` | eindige int/float | float |
+| `bool` | bool | bool; opslag 0/1 |
+| `string` | string | string |
+| `json` | array | array; JSON met expliciete foutmeldingen |
+| `datetime` | `DateTimeInterface` | `DateTimeImmutable` in UTC |
+
+Null blijft bij alle casts null; de database bepaalt of een kolom null toestaat.
+Zonder cast zijn alleen scalars/null toegestaan en worden PDO-waarden gebruikt.
+Casts zijn bewust strikt bij toekenning: formuliertekst `'false'` wordt
+bijvoorbeeld niet per ongeluk true. Valideer en converteer formulierinvoer
+zelf. Datums gebruiken UTC met secondenprecisie. JSON-objecten worden bij het
+lezen associatieve arrays; wijzig een JSON-veld door de aangepaste array
+opnieuw toe te kennen, niet via indirecte arraymutatie op een magic property.
+Foute JSON, datums of andere ongeldige opslagwaarden geven een exception.
+
+```php
+$array = $article->toArray();
+$json = json_encode($article, JSON_THROW_ON_ERROR);
+```
+
+`$hidden` sluit velden uit van `toArray()` en JSON, ook binnen een lijst of
+paginering. Zet bij een gebruikersmodel bijvoorbeeld `password_hash` in
+`$hidden` én niet in `$fillable` als die niet massaal schrijfbaar mag zijn.
+Verborgen velden blijven voor je eigen PHP-code direct leesbaar; de database
+en `dirty()` bevatten ook verborgen waarden. Datums worden in arrays/JSON
+als UTC ISO-8601-strings teruggegeven. Serialisatie voert geen relatiequeries uit.
+De bestaande authenticatie gebruikt bewust de eigen atomaire SQL voor tokens,
+wachtrijen en sessieversies en hoeft hiervoor niet te worden omgeschreven.
+
+### Relaties
+
+Definieer relaties met expliciete modelklassen en sleutels. De gerelateerde
+klasse moet zelf via `require_once` geladen zijn:
+
+```php
+final class Author extends \PBreeze\Model
+{
+    protected string $table = 'authors';
+    protected array $fillable = ['name'];
+
+    public function articles(): \PBreeze\Query
+    {
+        return $this->hasMany(Article::class, 'author_id');
+    }
+}
+
+$author = $article->author()->first(); // Author of null
+$authorArticles = $author->articles()->where('published', true)->get();
+```
+
+`hasMany(Related::class, foreignKey, localKey)` gebruikt standaard de eigen
+primaire sleutel als localKey. `belongsTo(Related::class, foreignKey, ownerKey)`
+gebruikt standaard de primaire sleutel van het gerelateerde model.
+Beide geven een nieuwe, filterbare **modelquery** terug op dezelfde
+databaseverbinding. Een null-relatiesleutel geeft geen resultaten.
+Relaties op niet-opgeslagen modellen worden geweigerd; er worden geen records
+automatisch opgeslagen of gekoppeld. Gebruik bij een nullable belongsTo
+zelf een nullcontrole voordat je verder navigeert.
+
+Er is geen impliciet lazy loading via properties, eager loading, relationcache,
+cascade-save, polymorfisme of many-to-many-API. Relatiequeries binnen een loop
+maken dus afzonderlijke queries; haal voor grotere lijsten bewust benodigde
+rijen in batches op met `whereIn`. Cascades en referentiële integriteit
+horen in je migraties.
+
+### Paginering en transacties
+
+```php
+$page = $articles->query()->orderBy('id', 'desc')->paginate(20, 2);
+// [
+//   'data' => [Article, ...],
+//   'total' => 42,
+//   'per_page' => 20,
+//   'current_page' => 2,
+//   'last_page' => 3,
+// ]
+```
+
+Tabelqueries geven dezelfde vorm met arrays in `data`. Paginanummers zijn
+positief; de paginagrootte is 1 tot 100. Zonder expliciete sortering wordt de
+primaire sleutel gebruikt (`id` bij tabelqueries). Sorteer bij eigen
+sorteervelden ook op een unieke sleutel voor stabiele pagina's.
+Een lege dataset heeft `last_page = 1`; pagina's voorbij het einde hebben
+lege `data`. Telling en ophalen zijn aparte queries, geen snapshot bij
+gelijktijdige wijzigingen.
+
+```php
+$app->db->transaction(function () use ($app): void {
+    $authors = new \App\Models\Author($app->db);
+    $authors->create(['name' => 'Ada']);
+    // Andere databasewrites op dezelfde verbinding.
+});
+```
+
+Modelwrites gebruiken dezelfde PDO-verbinding en doen mee aan de bestaande
+transactie. Geneste transacties, optimistic locking, soft deletes en
+model-events zijn niet toegevoegd. Gebruik na rollback nieuwe/herladen
+instanties: een rollback herstelt de database, niet eerder gewijzigde
+PHP-objecten. De ORM vervangt geen validatie, routeguards of autorisatie
+per record.
 
 ## Migraties en seeds
 
@@ -928,5 +1203,8 @@ en het verliezen van de SMTP-bevestiging. Er wordt geen externe mail verstuurd.
 Authenticatietests doorlopen de echte HTTP-formulieren, sessie- en CSRF-rotatie,
 e-mailverificatie, tokenverval/hergebruik, wachtwoordherstel, sessie-intrekking
 en persistente rate limits op een tijdelijke database.
+ORM-tests controleren querybindings, identifiercontrole, CRUD, schrijfguards,
+fillable/hidden, casts en corrupte opslagwaarden, paginering, relaties,
+handmatige sleutels, transacties en de modelgenerator.
 MySQL vereist daarnaast een eigen integratierun op een wegwerpdatabase;
 de meegeleverde suite valideert de MySQL-verbinding niet tegen een live server.

@@ -125,6 +125,7 @@ try {
     require __DIR__ . '/platform.php';
     require __DIR__ . '/mail.php';
     require __DIR__ . '/templates.php';
+    require __DIR__ . '/orm.php';
 
     test('HTML-escaping behandelt quotes en ongeldige UTF-8', static function (): void {
         same('&lt;script&gt;&quot;&#039;&amp;', e('<script>"\'&'));

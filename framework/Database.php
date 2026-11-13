@@ -74,6 +74,12 @@ final class Database
         return $statement;
     }
 
+    /** @return Query<array<string, mixed>> */
+    public function table(string $table): Query
+    {
+        return new Query($this, $table);
+    }
+
     public function transaction(callable $work): mixed
     {
         $pdo = $this->pdo();

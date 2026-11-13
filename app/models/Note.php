@@ -18,10 +18,7 @@ final class Note
         if ($limit < 1 || $limit > 100) {
             throw new InvalidArgumentException('Gebruik een limiet tussen 1 en 100.');
         }
-        $statement = $this->db->pdo()->prepare('SELECT id, title, created_at FROM notes ORDER BY id DESC LIMIT ?');
-        $statement->bindValue(1, $limit, \PDO::PARAM_INT);
-        $statement->execute();
-        return $statement->fetchAll();
+        return $this->db->table('notes')->orderBy('id', 'desc')->limit($limit)->get();
     }
 
     public function create(string $title): int
@@ -29,7 +26,6 @@ final class Note
         if (trim($title) === '' || !preg_match('/^.{1,120}$/usD', $title)) {
             throw new InvalidArgumentException('Een notitietitel moet 1 tot 120 tekens bevatten.');
         }
-        $this->db->execute('INSERT INTO notes (title) VALUES (?)', [$title]);
-        return (int) $this->db->pdo()->lastInsertId();
+        return (int) $this->db->table('notes')->insert(['title' => $title]);
     }
 }

@@ -1,0 +1,360 @@
+<?php
+declare(strict_types=1);
+
+namespace PBreeze;
+
+use DateTimeImmutable;
+use DateTimeInterface;
+use DateTimeZone;
+use InvalidArgumentException;
+use JsonSerializable;
+use LogicException;
+
+abstract class Model implements JsonSerializable
+{
+    protected string $table = '';
+    protected string $primaryKey = 'id';
+    protected bool $incrementing = true;
+    protected bool $timestamps = false;
+    /** @var list<string> */
+    protected array $fillable = [];
+    /** @var list<string> */
+    protected array $hidden = [];
+    /** @var array<string, string> */
+    protected array $casts = [];
+    /** @var array<string, scalar|null> */
+    private array $attributes = [];
+    /** @var array<string, scalar|null> */
+    private array $original = [];
+    private bool $persisted = false;
+    private bool $deleted = false;
+
+    final public function __construct(protected readonly Database $db)
+    {
+        Query::identifier($this->table);
+        Query::identifier($this->primaryKey);
+    }
+
+    /** @return Query<static> */
+    final public function query(): Query
+    {
+        return new Query($this->db, $this->table, $this);
+    }
+
+    final public function keyName(): string
+    {
+        return $this->primaryKey;
+    }
+
+    final public function exists(): bool
+    {
+        return $this->persisted;
+    }
+
+    /** @param array<string, mixed> $data */
+    final public function create(array $data): static
+    {
+        $record = new static($this->db);
+        $record->fill($data);
+        $record->save();
+        return $record;
+    }
+
+    /** @param array<string, mixed> $data */
+    final public function fill(array $data): static
+    {
+        $encoded = $this->encodeFill($data);
+        $this->attributes = array_replace($this->attributes, $encoded);
+        return $this;
+    }
+
+    /** @internal
+     *  @param array<string, mixed> $data
+     *  @return array<string, scalar|null>
+     */
+    final public function encodeFill(array $data): array
+    {
+        $result = [];
+        foreach ($data as $key => $value) {
+            if (!is_string($key) || !in_array($key, $this->fillable, true)
+                || $key === $this->primaryKey && ($this->incrementing || $this->persisted)
+                || $this->timestamps && in_array($key, ['created_at', 'updated_at'], true)) {
+                throw new InvalidArgumentException('Niet-schrijfbaar modelveld: ' . $key);
+            }
+            Query::identifier($key);
+            $result[$key] = $this->encode($key, $value);
+            if ($key === $this->primaryKey && ((!is_int($result[$key]) && !is_string($result[$key])) || $result[$key] === '')) {
+                throw new InvalidArgumentException('Een primaire sleutel moet een int of niet-lege string zijn.');
+            }
+        }
+        return $result;
+    }
+
+    /** @internal @param array<string, mixed> $data */
+    final public function hydrate(array $data): static
+    {
+        if (!isset($data[$this->primaryKey]) || !is_int($data[$this->primaryKey]) && !is_string($data[$this->primaryKey])) {
+            throw new LogicException('Een modelrecord vereist een int/string primaire sleutel.');
+        }
+        $record = new static($this->db);
+        foreach ($data as $key => $value) {
+            Query::identifier($key);
+            $record->attributes[$key] = $record->encode($key, $record->decode($key, $value));
+        }
+        $record->original = $record->attributes;
+        $record->persisted = true;
+        return $record;
+    }
+
+    final public function save(): bool
+    {
+        if ($this->deleted) {
+            throw new LogicException('Een verwijderd model kan niet opnieuw worden opgeslagen.');
+        }
+        if ($this->persisted && $this->dirty() === []) {
+            return true;
+        }
+        $values = $this->attributes;
+        if ($this->timestamps) {
+            $now = gmdate('Y-m-d H:i:s');
+            $values['updated_at'] = $now;
+            if (!$this->persisted) {
+                $values['created_at'] = $now;
+            }
+        }
+        if ($this->persisted) {
+            $changes = $this->changes($values);
+            $query = $this->db->table($this->table)->where($this->primaryKey, $this->key());
+            if ($query->update($changes) === 0 && !$query->exists()) {
+                throw new RecordNotFoundException('Het modelrecord bestaat niet meer.');
+            }
+        } else {
+            if (!$this->incrementing && !isset($values[$this->primaryKey])) {
+                throw new LogicException('Een niet-incrementeel model vereist een primaire sleutel.');
+            }
+            $id = $this->db->table($this->table)->insert($values);
+            if ($this->incrementing) {
+                $values[$this->primaryKey] = $id;
+            }
+            $this->persisted = true;
+        }
+        $this->attributes = $values;
+        $this->original = $values;
+        $this->refresh();
+        return true;
+    }
+
+    /** @param array<string, mixed> $data */
+    final public function update(array $data): bool
+    {
+        if (!$this->persisted) {
+            throw new LogicException('update vereist een opgeslagen model.');
+        }
+        return $this->fill($data)->save();
+    }
+
+    final public function delete(): bool
+    {
+        if (!$this->persisted) {
+            throw new LogicException('delete vereist een opgeslagen model.');
+        }
+        $deleted = $this->db->table($this->table)->where($this->primaryKey, $this->key())->delete() === 1;
+        if (!$deleted) {
+            throw new RecordNotFoundException('Het modelrecord bestaat niet meer.');
+        }
+        $this->persisted = false;
+        $this->deleted = true;
+        return true;
+    }
+
+    final public function refresh(): static
+    {
+        if (!$this->persisted) {
+            throw new LogicException('refresh vereist een opgeslagen model.');
+        }
+        $data = $this->db->table($this->table)->where($this->primaryKey, $this->key())->firstOrFail();
+        $record = $this->hydrate($data);
+        $this->attributes = $record->attributes;
+        $this->original = $record->original;
+        return $this;
+    }
+
+    /** @return array<string, scalar|null> */
+    final public function dirty(): array
+    {
+        return $this->changes($this->attributes);
+    }
+
+    /** @param array<string, scalar|null> $values
+     *  @return array<string, scalar|null>
+     */
+    private function changes(array $values): array
+    {
+        $dirty = [];
+        foreach ($values as $key => $value) {
+            if (!array_key_exists($key, $this->original) || $this->original[$key] !== $value) {
+                $dirty[$key] = $value;
+            }
+        }
+        return $dirty;
+    }
+
+    final public function __get(string $key): mixed
+    {
+        if (!array_key_exists($key, $this->attributes)) {
+            throw new LogicException("Onbekend of niet-geladen modelveld: $key");
+        }
+        return $this->decode($key, $this->attributes[$key]);
+    }
+
+    final public function __set(string $key, mixed $value): void
+    {
+        $this->fill([$key => $value]);
+    }
+
+    final public function __isset(string $key): bool
+    {
+        return isset($this->attributes[$key]);
+    }
+
+    /** @return array<string, mixed> */
+    final public function toArray(): array
+    {
+        $data = [];
+        foreach ($this->attributes as $key => $value) {
+            if (!in_array($key, $this->hidden, true)) {
+                $value = $this->decode($key, $value);
+                $data[$key] = $value instanceof DateTimeInterface ? $value->format('Y-m-d\TH:i:s\Z') : $value;
+            }
+        }
+        return $data;
+    }
+
+    /** @return array<string, mixed> */
+    final public function jsonSerialize(): array
+    {
+        return $this->toArray();
+    }
+
+    /** @param class-string<Model> $related
+     *  @return Query<Model>
+     */
+    final protected function hasMany(string $related, string $foreignKey, ?string $localKey = null): Query
+    {
+        $value = $this->relationValue($localKey ?? $this->primaryKey);
+        $query = $this->related($related)->query();
+        return $value === null ? $query->whereIn($foreignKey, []) : $query->where($foreignKey, $value);
+    }
+
+    /** @param class-string<Model> $related
+     *  @return Query<Model>
+     */
+    final protected function belongsTo(string $related, string $foreignKey, ?string $ownerKey = null): Query
+    {
+        $model = $this->related($related);
+        $value = $this->relationValue($foreignKey);
+        $key = $ownerKey ?? $model->keyName();
+        return $value === null ? $model->query()->whereIn($key, []) : $model->query()->where($key, $value);
+    }
+
+    private function related(string $class): Model
+    {
+        if (!is_subclass_of($class, self::class)) {
+            throw new InvalidArgumentException('Een relatie vereist een expliciet geladen Model-subklasse.');
+        }
+        return new $class($this->db);
+    }
+
+    private function relationValue(string $key): int|string|null
+    {
+        Query::identifier($key);
+        if (!$this->persisted) {
+            throw new LogicException('Relaties vereisen een opgeslagen model.');
+        }
+        $value = $this->__get($key);
+        if ($value !== null && !is_int($value) && !is_string($value)) {
+            throw new LogicException('Een relatiesleutel moet int, string of null zijn.');
+        }
+        return $value;
+    }
+
+    private function key(): int|string
+    {
+        $key = $this->attributes[$this->primaryKey] ?? null;
+        if (!is_int($key) && !is_string($key)) {
+            throw new LogicException('Een primaire sleutel moet int of string zijn.');
+        }
+        return $key;
+    }
+
+    private function encode(string $key, mixed $value): string|int|float|bool|null
+    {
+        $cast = $this->casts[$key] ?? null;
+        $this->assertCast($cast);
+        if ($value === null) {
+            return null;
+        }
+        $valid = match ($cast) {
+            'int' => is_int($value),
+            'float' => (is_int($value) || is_float($value)) && is_finite((float) $value),
+            'bool' => is_bool($value),
+            'string' => is_string($value),
+            'json' => is_array($value),
+            'datetime' => $value instanceof DateTimeInterface,
+            null => is_scalar($value) && (!is_float($value) || is_finite($value)),
+        };
+        if (!$valid) {
+            throw new InvalidArgumentException("Ongeldig type voor modelveld: $key");
+        }
+        return match ($cast) {
+            'json' => json_encode($value, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION),
+            'datetime' => DateTimeImmutable::createFromInterface($value)->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s'),
+            'bool' => $value ? 1 : 0,
+            'float' => (float) $value,
+            default => $value,
+        };
+    }
+
+    private function decode(string $key, mixed $value): mixed
+    {
+        $cast = $this->casts[$key] ?? null;
+        $this->assertCast($cast);
+        if ($value === null) {
+            return null;
+        }
+        return match ($cast) {
+            'int' => filter_var($value, FILTER_VALIDATE_INT) !== false ? (int) $value : throw new InvalidArgumentException("Ongeldige integer in $key"),
+            'float' => is_numeric($value) && is_finite((float) $value) ? (float) $value : throw new InvalidArgumentException("Ongeldig getal in $key"),
+            'bool' => in_array($value, [0, 1, '0', '1', false, true], true) ? (bool) $value : throw new InvalidArgumentException("Ongeldige boolean in $key"),
+            'string' => is_scalar($value) ? (string) $value : throw new InvalidArgumentException("Ongeldige tekst in $key"),
+            'json' => $this->json($value, $key),
+            'datetime' => $this->date($value, $key),
+            null => $value,
+        };
+    }
+
+    private function assertCast(?string $cast): void
+    {
+        if (!in_array($cast, [null, 'int', 'float', 'bool', 'string', 'json', 'datetime'], true)) {
+            throw new LogicException("Onbekende modelcast: $cast");
+        }
+    }
+
+    private function json(mixed $value, string $key): array
+    {
+        if (!is_string($value)) {
+            throw new InvalidArgumentException("Ongeldige JSON-opslag in $key");
+        }
+        $decoded = json_decode($value, true, 512, JSON_THROW_ON_ERROR);
+        return is_array($decoded) ? $decoded : throw new InvalidArgumentException("JSON-veld $key moet een array/object bevatten.");
+    }
+
+    private function date(mixed $value, string $key): DateTimeImmutable
+    {
+        $date = is_string($value) ? DateTimeImmutable::createFromFormat('!Y-m-d H:i:s', $value, new DateTimeZone('UTC')) : false;
+        if ($date === false || $date->format('Y-m-d H:i:s') !== $value) {
+            throw new InvalidArgumentException("Ongeldige UTC-datum in $key");
+        }
+        return $date;
+    }
+}
