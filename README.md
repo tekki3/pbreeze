@@ -34,6 +34,10 @@ slug and naming helpers, and cryptographic random strings.
 Read the complete [HTML user manual](docs/index.html) for beginner walkthroughs,
 every public function, CLI commands, and environment settings. Open it directly
 in a browser; its local search, styles, and print layout work offline.
+The contents are grouped into learning, building, deployment, and reference
+sections. Code examples include language labels and copy controls; if the
+browser blocks clipboard access, the manual selects the code for manual copying.
+All documentation remains readable without JavaScript.
 After changing framework APIs or documentation, run `php docs/build.php` to
 regenerate it and `php docs/build.php --check` to verify it is current.
 Application styles and scripts live in `public/assets/css/` and

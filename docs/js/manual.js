@@ -8,7 +8,7 @@
     const units = [...document.querySelectorAll('[data-search-unit]')].map(node => {
         const target = node.id || node.querySelector('[id]')?.id;
         const copy = node.cloneNode(true);
-        copy.querySelectorAll('[data-search-unit], .search').forEach(child => child.remove());
+        copy.querySelectorAll('[data-search-unit], .search, .code-toolbar').forEach(child => child.remove());
         return { id: target, title: node.dataset.title, text: copy.textContent.toLocaleLowerCase('en-US') };
     }).filter(unit => unit.id);
 
@@ -57,16 +57,77 @@
         input.focus();
     });
 
+    document.querySelectorAll('.copy-code').forEach(button => { button.hidden = false; });
+    document.addEventListener('click', async event => {
+        const button = event.target.closest('.copy-code');
+        if (!button) return;
+        const example = button.closest('.code-example');
+        const code = example.querySelector('pre code');
+        const feedback = example.querySelector('.copy-status');
+        button.disabled = true;
+        feedback.textContent = '';
+        try {
+            if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable.');
+            await navigator.clipboard.writeText(code.textContent);
+            feedback.textContent = 'Copied.';
+        } catch {
+            const selection = window.getSelection();
+            if (selection) {
+                const range = document.createRange();
+                range.selectNodeContents(code);
+                selection.removeAllRanges();
+                selection.addRange(range);
+                feedback.textContent = 'Clipboard unavailable. Code selected; use your browser\u2019s Copy command.';
+            } else {
+                feedback.textContent = 'Clipboard unavailable. Select the code and copy it manually.';
+            }
+        } finally {
+            button.disabled = false;
+        }
+    });
+
     const mobile = window.matchMedia('(max-width: 760px)');
     const contents = document.querySelector('.contents');
     const setContents = () => { contents.open = !mobile.matches; };
     setContents();
     mobile.addEventListener('change', setContents);
-    document.querySelectorAll('.sidebar a').forEach(link => {
+    const links = [...document.querySelectorAll('.sidebar a')];
+    const active = id => {
+        const link = links.find(item => item.hash === `#${id}`);
+        if (!link) return;
+        document.querySelector('.sidebar [aria-current]')?.removeAttribute('aria-current');
+        link.setAttribute('aria-current', 'location');
+    };
+    const revealLocation = () => {
+        const target = document.getElementById(location.hash.slice(1) || 'start');
+        if (!target) return;
+        const section = target.closest('section');
+        const id = section?.id || section?.querySelector('h2[id]')?.id;
+        const link = links.find(item => item.hash === `#${target.id}`)
+            || links.find(item => item.hash === `#${id}`);
+        if (!link) return;
+        active(link.hash.slice(1));
+        const group = link.closest('.nav-group, .class-nav');
+        if (group) group.open = true;
+    };
+    links.forEach(link => {
         link.addEventListener('click', () => {
-            document.querySelector('.sidebar [aria-current]')?.removeAttribute('aria-current');
-            link.setAttribute('aria-current', 'location');
+            active(link.hash.slice(1));
             if (mobile.matches) contents.open = false;
         });
     });
+    window.addEventListener('hashchange', revealLocation);
+    revealLocation();
+    if ('IntersectionObserver' in window) {
+        const visible = new Set();
+        const observer = new IntersectionObserver(entries => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) visible.add(entry.target);
+                else visible.delete(entry.target);
+            });
+            const section = [...visible].sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
+            if (section) active(section.id || section.querySelector('h2[id]')?.id);
+        }, { rootMargin: '-90px 0px -55% 0px' });
+        document.querySelectorAll('main > section').forEach(section => observer.observe(section));
+    }
 })();

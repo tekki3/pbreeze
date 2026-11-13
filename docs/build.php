@@ -22,7 +22,18 @@ function anchor(string $value): string
 
 function code(string $value, string $language = 'php'): string
 {
-    return '<pre tabindex="0"><code data-language="' . html($language) . '">' . html($value) . '</code></pre>';
+    $label = match ($language) {
+        'sh' => 'Terminal',
+        'php' => 'PHP',
+        'html' => 'HTML',
+        'ini' => 'Configuration',
+        'text' => 'Plain text',
+        'powershell' => 'PowerShell',
+        default => strtoupper($language),
+    };
+    return '<div class="code-example"><div class="code-toolbar"><span>' . html($label) . '</span>'
+        . '<span class="copy-status" role="status"></span><button type="button" class="copy-code" hidden>Copy code</button></div>'
+        . '<pre tabindex="0"><code data-language="' . html($language) . '">' . html($value) . '</code></pre></div>';
 }
 
 function inline(string $value): string
@@ -204,18 +215,49 @@ if ($readme === false) {
 }
 $readme = str_replace(["\r\n", "\r"], "\n", $readme);
 $ids = [];
-$navigation = '<a href="#start">Start here</a>'
-    . '<a href="#guide-start-here-your-first-steps">Beginner learning path</a>'
-    . '<a href="#guide-detailed-installation-guide">Install PBreeze</a>'
-    . '<a href="#guide-your-first-page">Your first page</a>'
-    . '<a href="#tutorial">Build your first feature</a>';
+$navigationGroups = [
+    'Learn the basics' => [
+        'start' => 'Manual overview',
+        'guide-start-here-your-first-steps' => 'Beginner learning path',
+        'guide-detailed-installation-guide' => 'Installation',
+        'guide-your-first-page' => 'Your first page',
+        'tutorial' => 'Build your first feature',
+    ],
+    'Build your application' => [],
+    'Deploy and maintain' => [],
+    'Look it up' => [
+        'cli-reference' => 'CLI commands',
+        'configuration-reference' => 'Environment settings',
+        'api-reference' => 'Function reference',
+        'global-functions' => 'Global helpers',
+        'troubleshooting' => 'Troubleshooting',
+    ],
+];
+$deploymentChapters = ['windows-and-linux', 'web-server-deployment', 'configuration',
+    'production-and-security-boundaries', 'tests', 'cli-utilities-and-custom-commands', 'application-logging'];
 $chapters = '';
 preg_match_all('/^## ([^\r\n]+)\r?\n(.*?)(?=^## |\z)/ms', $readme, $matches, PREG_SET_ORDER);
 foreach ($matches as $chapter) {
     $id = 'guide-' . anchor($chapter[1]);
-    $navigation .= '<a href="#' . $id . '">' . html($chapter[1]) . '</a>';
+    if ($chapter[1] === 'Getting Started') {
+        $navigationGroups['Learn the basics'][$id] = 'Quick start and requirements';
+    } elseif (in_array($chapter[1], ['License', 'Language Convention'], true)) {
+        $navigationGroups['Look it up'][$id] = $chapter[1];
+    } elseif (!isset($navigationGroups['Learn the basics'][$id])) {
+        $group = in_array(anchor($chapter[1]), $deploymentChapters, true)
+            ? 'Deploy and maintain' : 'Build your application';
+        $navigationGroups[$group][$id] = $chapter[1];
+    }
     $chapters .= '<section class="chapter" data-search-unit data-title="' . html($chapter[1]) . '">'
         . markdown('## ' . $chapter[1] . "\n" . $chapter[2], $ids) . '</section>';
+}
+$navigation = '';
+foreach ($navigationGroups as $label => $links) {
+    $navigation .= '<details class="nav-group" open><summary>' . html($label) . '</summary><div>';
+    foreach ($links as $target => $label) {
+        $navigation .= '<a href="#' . $target . '">' . html($label) . '</a>';
+    }
+    $navigation .= '</div></details>';
 }
 
 $api = '';
@@ -310,31 +352,32 @@ $html = '<!doctype html><html lang="en-US"><head><meta charset="utf-8">'
     . '<script src="js/manual.js" defer></script></head><body>'
     . '<a class="skip-link" href="#main">Skip to manual</a>'
     . '<header class="topbar"><a class="brand" href="#start">' . $logo . 'PBreeze <span>User manual</span></a>'
-    . '<a href="../README.md">Project README</a><button type="button" id="print" hidden>Print manual</button></header>'
+    . '<a href="../README.md" aria-label="Project README">README</a><button type="button" id="print" aria-label="Print manual" hidden>Print</button></header>'
     . '<div class="layout"><aside class="sidebar"><details class="contents" open><summary>Contents</summary>'
-    . '<nav aria-label="Manual chapters">' . $navigation
-    . '<a href="#cli-reference">Every CLI command</a><a href="#configuration-reference">Environment reference</a>'
-    . '<a href="#api-reference">Function reference</a><a href="#troubleshooting">Troubleshooting</a>'
-    . '<a href="#global-functions">Global helpers</a></nav>'
+    . '<nav aria-label="Manual chapters">' . $navigation . '</nav>'
     . '<details class="class-nav"><summary>Browse all ' . $classCount . ' classes</summary>'
     . '<nav aria-label="Classes">' . $referenceNavigation . '</nav></details></details></aside>'
     . '<main id="main"><section class="intro" id="start" data-search-unit data-title="Start here">'
     . '<h1>Learn PBreeze, one step at a time.</h1><p class="lead">Build your first PHP page, then learn to save form data. You do not need to learn every framework feature at once.</p>'
+    . '<div class="intro-actions"><a class="button-link" href="#guide-detailed-installation-guide">Install PBreeze <span aria-hidden="true">&rarr;</span></a>'
+    . '<a href="#api-reference">Explore the reference <span aria-hidden="true">&rarr;</span></a></div>'
     . '<div class="search" id="search-panel" hidden><label for="manual-search">Search chapters, functions, commands, and examples</label>'
     . '<div class="search-row"><input id="manual-search" type="search" placeholder="Try moneyMinor, uploads, SMTP, or migrations" autocomplete="off">'
     . '<button type="button" id="clear-search" hidden>Clear</button></div>'
     . '<p id="search-status" role="status" aria-live="polite"></p><ol id="search-results"></ol></div>'
-    . '<p>For PHP 8.3+ on Windows and Linux. No Composer, no PSR autoloading, and no external PHP packages. '
-    . 'All maintained explanations and examples are US English. This manual opens directly from disk and works offline; JavaScript only enhances search and printing.</p>'
-    . '<p><strong>Coverage:</strong> ' . $classCount . ' framework classes, ' . $methodCount
-    . ' declared public methods and protected relationship helpers, ' . $count . ' global helpers, all CLI commands, and every example environment setting.</p>'
-    . '<h2>New to frameworks? Start here</h2><ol>'
+    . '<p class="manual-meta">PHP 8.3+ <span aria-hidden="true">/</span> Windows &amp; Linux <span aria-hidden="true">/</span> Available offline</p>'
+    . '<h2>New to frameworks? Start here</h2><ol class="learning-path">'
     . '<li>Read the <a href="#guide-start-here-your-first-steps">beginner learning path</a> for basic terms and how to use code examples.</li>'
     . '<li>Follow <a href="#guide-detailed-installation-guide">Install PBreeze</a>. Choose SQLite and your computer&apos;s operating system.</li>'
     . '<li>Make <a href="#guide-your-first-page">your first page</a>. You will connect a URL to a template and display a name.</li>'
     . '<li>Continue with <a href="#tutorial">Build your first feature</a> to save and display notes.</li></ol>'
     . '<p>Already comfortable with PHP frameworks? Use the feature chapters for complete examples, the <a href="#cli-reference">CLI reference</a> to look up commands, '
     . 'or the <a href="#api-reference">function reference</a> to check method names, inputs, and return values. You do not need to read the reference from beginning to end.</p>'
+    . '<details class="manual-about"><summary>About this manual</summary>'
+    . '<p>No Composer, no PSR autoloading, and no external PHP packages. All maintained explanations and examples are US English. '
+    . 'Open this manual directly from disk; its styles, search, and printing work offline. JavaScript enhances navigation and code copying, but is not required to read it.</p>'
+    . '<p>Includes ' . $classCount . ' framework classes, ' . $methodCount
+    . ' declared public methods and protected relationship helpers, ' . $count . ' global helpers, all CLI commands, and every example environment setting.</p></details>'
     . '<p class="note">Examples are learning material, not commands to run blindly against production. Replace example IDs, domains, and owner checks with application-specific values. Back up before schema changes.</p></section>'
     . $tutorial . $chapters
     . '<section class="chapter" id="api-reference" data-search-unit data-title="Using the function reference"><h2>Function reference</h2>'
