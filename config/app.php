@@ -10,6 +10,8 @@ if (!in_array($environment, ['local', 'testing', 'production'], true)) {
 
 return [
     'name' => Env::get('APP_NAME', 'PBreeze'),
+    'locale' => Env::get('APP_LOCALE', 'en-US'),
+    'timezone' => Env::get('APP_TIMEZONE', 'UTC'),
     'url' => Env::get('APP_URL', 'http://127.0.0.1:8000'),
     'key' => Env::get('APP_KEY'),
     'environment' => $environment,

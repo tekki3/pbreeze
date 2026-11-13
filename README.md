@@ -18,6 +18,8 @@ The application, CLI, and tests are set up for both Windows and Linux.
 Includes a stateless JSON API with bearer tokens, OpenAPI 3, and CLI scaffolding.
 Creates PDF, Excel (`.xlsx`), Word (`.docx`), JSON, CSV, and XML files through
 a native PHP API, with local saving and HTTP downloads.
+Provides localized date/time, money, decimal, and percentage formatting through
+native Intl, with exact decimal-string rounding.
 
 ## Language Convention
 
@@ -32,6 +34,9 @@ The example greeting is `Hello, Ada!`. The CAPTCHA refresh action is
 `Show another code`, with the success message
 `New code loaded. Enter the code and submit the form again.`
 
+Applications may explicitly format user data in other locales with the
+formatter described below; this does not translate framework-maintained copy.
+
 ## Getting Started
 
 Requirements: PHP 8.3+, PDO, `pdo_sqlite` for SQLite or `pdo_mysql` for MySQL,
@@ -41,6 +46,7 @@ development server and tests; this function must be available for those tasks.
 Encryption requires the native `openssl` extension with AES-256-GCM support.
 Excel and Word creation require the native `zip` extension; PDF creation
 requires `iconv`. The document tests also use the native `dom` extension.
+Localized formatting requires the native `intl` extension and its ICU data.
 No package installation is required.
 
 ```sh
@@ -73,6 +79,7 @@ PHP for your web server may use a different configuration file.
 On Windows, enable the required extensions in `php.ini`: `pdo_sqlite` for SQLite,
 `pdo_mysql` for MySQL, and also `openssl` and `iconv` for email.
 Enable `zip` for Excel/Word creation and `dom` for the document tests.
+Enable `intl` for localized date/time and number formatting.
 Use the correct DLLs for your PHP distribution. OpenSSL requires a valid
 CA bundle; set `openssl.cafile` if needed or use the separate
 `SMTP_CA_FILE`/`IMAP_CA_FILE` settings. Do not disable certificate verification.
@@ -205,6 +212,181 @@ return \PBreeze\Response::redirect('/berichten');
 ```
 
 Redirects accept only local paths that start with a single `/`.
+
+## Date, Time, Money, and Decimal Formatting
+
+The shared `$app->format` service uses native PHP Intl/ICU without Composer
+or external packages. Defaults are `en-US` and `UTC`; configure them in
+your local `.env`:
+
+```dotenv
+APP_LOCALE=en-US
+APP_TIMEZONE=UTC
+```
+
+The application configuration uses `locale` and `timezone` keys. You can also
+create a standalone formatter:
+
+```php
+$format = new \PBreeze\Formatter(locale: 'de-DE', timezone: 'Europe/Berlin');
+```
+
+Use language tags such as `en-US`, `nl-NL`, `de-DE`, `fr-FR`, `hi-IN`, or
+`ar-EG`. Optional script and region subtags are supported; ICU extensions
+and locale keywords are not. ICU may fall back to a supported parent locale;
+an unsupported language throws instead of silently using the machine's default.
+Use IANA time zone identifiers such as `UTC`, `America/New_York`, or
+`Europe/Amsterdam`, not ambiguous abbreviations or numeric UTC offsets.
+Neither formatter creation nor individual calls change PHP's global time zone
+or Intl's global locale. Missing Intl is reported when formatting is requested,
+so unrelated framework features do not require it.
+
+### Dates and Times
+
+```php
+$date = new \DateTimeImmutable('2026-11-13T15:45:06+00:00');
+
+$app->format->date($date, 'short'); // 11/13/26
+$app->format->date($date);          // Nov 13, 2026
+$app->format->date($date, 'long');   // November 13, 2026
+$app->format->date($date, 'full');   // Friday, November 13, 2026
+$app->format->time($date, 'short');
+$app->format->dateTime($date);
+
+$app->format->date($date, 'short', locale: 'de-DE'); // 13.11.26
+$app->format->dateTime(
+    $date,
+    locale: 'en-US',
+    timezone: 'America/New_York',
+    pattern: 'yyyy-MM-dd HH:mm:ss XXX',
+); // 2026-11-13 10:45:06 -05:00
+
+$app->format->dateTime(0, pattern: 'yyyy-MM-dd HH:mm:ss'); // 1970-01-01 00:00:00
+```
+
+Inputs are `DateTimeInterface` objects or integer Unix timestamps in seconds.
+Strings are intentionally not parsed; construct and validate your dates
+explicitly. Dates are formatted in the configured or overridden time zone,
+not necessarily the input object's zone, without mutating that object.
+IANA daylight-saving rules apply.
+
+`date()` and `time()` default to `medium`. `dateTime()` defaults to a
+`medium` date and `short` time. Styles are `short`, `medium`, `long`, and `full`;
+for `dateTime()`, either part may be `none`. At least one part must be visible
+unless a custom pattern is supplied.
+
+The optional `pattern` uses **ICU syntax, not PHP `date()` syntax**.
+For example, `yyyy-MM-dd` is a numeric date and `HH:mm:ss` is 24-hour time.
+Quote literal text using ICU apostrophe rules. A pattern overrides the style
+layout and must contain 1 to 256 UTF-8 bytes without control characters.
+Localized punctuation, spacing, and names can vary with the installed ICU
+version. The calendar is explicitly Gregorian.
+
+### Decimal Numbers and Percentages
+
+```php
+$app->format->decimal('1234.5');                       // 1,234.50
+$app->format->decimal('1234.5', precision: 3);         // 1,234.500
+$app->format->decimal(1234, precision: 0);             // 1,234
+$app->format->decimal('1234.5', locale: 'de-DE');       // 1.234,50
+$app->format->decimal('12345678.5', locale: 'hi-IN');   // 1,23,45,678.50
+$app->format->decimal('1234.5', grouping: false);      // 1234.50
+$app->format->decimal('1.005');                        // 1.01
+$app->format->decimal('-1.005');                       // -1.01
+
+$app->format->percent('0.125');                       // 12.50%
+$app->format->percent('0.125', precision: 1);          // 12.5%
+$app->format->percent('0.125', locale: 'de-DE');        // 12,50 %
+```
+
+Decimal and percent inputs are integers or decimal strings. The precision
+range is 0 through 20, defaulting to exactly 2 fractional digits. Rounding
+is half away from zero, performed on strings without binary floating-point
+conversion. Negative values that round to zero display as positive zero.
+Percent inputs are **ratios**: `1` means 100%, not 1%.
+
+Grouping sizes, decimal/group separators, digits, signs, and percent
+placement follow ICU locale rules. Some locales use nonbreaking spaces or
+non-Latin digits, and some do not group four-digit numbers. Do not compare
+rendered values after replacing those characters with ordinary spaces.
+
+### Money
+
+```php
+$app->format->money('1234.565', 'USD');                 // $1,234.57
+$app->format->money('1.005', 'USD');                    // $1.01
+$app->format->money('1234.5', 'EUR', locale: 'de-DE');   // 1.234,50 €
+$app->format->money('1234.5', 'JPY');                   // ¥1,235
+$app->format->money('1.2345', 'KWD');                   // KWD 1.235
+$app->format->money('1234.5', grouping: false);         // $1234.50
+
+$app->format->moneyMinor(12345, 'USD');                 // $123.45
+$app->format->moneyMinor(-1, 'USD');                    // -$0.01
+$app->format->moneyMinor(12345, 'JPY');                 // ¥12,345
+$app->format->moneyMinor(12345, 'KWD');                 // KWD 12.345
+```
+
+`money()` accepts a decimal string in major currency units; `moneyMinor()`
+accepts an integer in the currency's minor units. Floats are not supported
+inputs: keep database decimal amounts as strings, and do not compute money
+with floating-point arithmetic before calling the formatter.
+The default currency is `USD`. Pass uppercase three-letter ISO 4217 codes;
+syntax is checked, but this is not a registry of currently active currencies.
+Unknown codes use ICU's generic currency formatting.
+
+ICU supplies standard currency precision: typically 2 digits for USD/EUR,
+0 for JPY, 3 for KWD, and 4 for CLF. This is not a universal cents conversion.
+String rounding remains exact even beyond PHP's integer range or Excel's
+numeric precision; integer minor units are limited to PHP's integer range.
+Currency position, symbol/code, spacing, negative sign, and digits follow
+the requested locale. Space characters in the examples above may actually
+be nonbreaking spaces. No currency conversion, accounting arithmetic, cash
+rounding increments, or localized-input parsing is performed.
+
+For all numeric methods, decimal strings use ASCII digits, an optional leading
+minus, and an optional period followed by fractional digits. No whitespace,
+leading plus, grouping separators, or exponent notation is accepted.
+Inputs are limited to 1,024 bytes. Decimal and percentage inputs also reject
+floats: use strings when fractional precision matters. For example, `"0.1"`
+is valid; `"1,25"`, `".5"`, and `"1e3"` are not.
+
+### Breeze Templates and Exports
+
+Every Breeze template and plain PHP view receives the same `$format` service
+as `$app->format`, including layouts, includes, and components:
+
+```blade
+{{ $format->date($createdAt, 'long') }}
+{{ $format->dateTime($createdAt, timezone: 'America/New_York') }}
+{{ $format->money($price, 'USD') }}
+{{ $format->moneyMinor($amountInCents, 'USD') }}
+{{ $format->decimal($quantity, precision: 3, locale: 'de-DE') }}
+{{ $format->percent($completionRatio, precision: 1) }}
+```
+
+Use normal escaped output. The view-data name `format` is reserved for this
+service and cannot override it. Formatting data does not alter template
+escaping or translate framework-maintained US English copy.
+
+For documents, pass formatted strings explicitly:
+
+```php
+$file = \PBreeze\Documents\Documents::excel()
+    ->sheet('Report', [
+        ['Date', 'Display total', 'Numeric total'],
+        [
+            $app->format->date($createdAt),
+            $app->format->money('1234.50', 'USD'),
+            1234.50,
+        ],
+    ])->build();
+```
+
+Formatted strings become literal Excel text, not numeric cells. Keep raw
+numeric cells separate when spreadsheet calculations are needed. JSON numbers
+must remain locale-independent; emit a separate display string if needed.
+PDF still has its documented Windows-1252 font limit, so localized digits or
+spacing outside that character set may require Word instead.
 
 ## Native File Creation
 

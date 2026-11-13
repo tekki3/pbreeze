@@ -9,6 +9,7 @@ require_once __DIR__ . '/framework/Env.php';
 require_once __DIR__ . '/framework/Filesystem.php';
 require_once __DIR__ . '/framework/Process.php';
 require_once __DIR__ . '/framework/Http.php';
+require_once __DIR__ . '/framework/Formatter.php';
 require_once __DIR__ . '/framework/documents/DocumentFile.php';
 require_once __DIR__ . '/framework/documents/Documents.php';
 require_once __DIR__ . '/framework/documents/PdfDocument.php';

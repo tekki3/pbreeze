@@ -9,10 +9,12 @@ use RuntimeException;
 final class View
 {
     private readonly string $cacheDirectory;
+    public readonly Formatter $format;
 
-    public function __construct(private readonly string $directory, ?string $cacheDirectory = null)
+    public function __construct(private readonly string $directory, ?string $cacheDirectory = null, ?Formatter $formatter = null)
     {
         $this->cacheDirectory = $cacheDirectory ?? dirname($directory, 2) . '/storage/views';
+        $this->format = $formatter ?? new Formatter();
     }
 
     /** @param array<string, mixed> $data */
@@ -28,7 +30,7 @@ final class View
         if (str_ends_with($file, '.breeze.php')) {
             $file = $this->compiled($file, $name);
         }
-        return (static function (string $__file, array $__data, TemplateContext $__engine): string {
+        return (static function (string $__file, array $__data, TemplateContext $__engine, Formatter $format): string {
             extract(array_filter(
                 $__data,
                 static fn (mixed $key): bool => is_string($key) && !str_starts_with($key, '__')
@@ -38,7 +40,7 @@ final class View
             ob_start();
             require $__file;
             return (string) ob_get_clean();
-        })($file, $data, $engine);
+        })($file, $data, $engine, $this->format);
     }
 
     public static function text(mixed $value): string

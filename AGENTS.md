@@ -27,12 +27,13 @@
 - Never commit credentials or overwrite local `.env` files or stored application data.
 - Use new migrations for schema changes; do not rewrite previously applied migrations.
 - When changing CLI generators, update and test their generated output as well as the generator.
+- Use `$app->format` (or `$format` in views) for localized display values. Money uses decimal strings or integer minor units, never floats; keep stored/API numeric data locale-independent.
 
 ## Validation
 
 - Run commands from the project root. Use `php breeze help` to inspect available commands.
 - Run `php breeze test` for the native regression suite; add coverage for changed behavior.
-- CI runs that suite on Ubuntu and Windows with PHP 8.3 and 8.5, using `pdo_sqlite`, `openssl`, `iconv`, `mbstring`, `zip`, and `dom`.
+- CI runs that suite on Ubuntu and Windows with PHP 8.3 and 8.5, using `pdo_sqlite`, `openssl`, `iconv`, `mbstring`, `zip`, `dom`, and `intl`.
 - Validate changed PHP syntax with `php -l path/to/file.php`. Breeze templates must be exercised through the template engine, not linted as ordinary PHP.
 - For UI changes, check rendered desktop/mobile layouts and relevant form states.
 - Do not run migrations, seeds, email sending, or other data-changing commands against a real application merely to validate code. Prefer the isolated test fixtures.

@@ -9,6 +9,7 @@ final class Application
 {
     public readonly Router $router;
     public readonly View $views;
+    public readonly Formatter $format;
     public readonly Session $session;
     public readonly Database $db;
     public readonly \PBreeze\Mail\Mailer $mail;
@@ -17,11 +18,12 @@ final class Application
     public readonly BotProtection $botProtection;
     public readonly Api $api;
 
-    /** @param array{name: string, url?: string, key?: string, api_docs?: bool, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}} $config */
+    /** @param array{name: string, locale?: string, timezone?: string, url?: string, key?: string, api_docs?: bool, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}} $config */
     public function __construct(public readonly string $root, #[\SensitiveParameter] public readonly array $config)
     {
         $this->router = new Router();
-        $this->views = new View($root . '/app/views');
+        $this->format = new Formatter($config['locale'] ?? 'en-US', $config['timezone'] ?? 'UTC');
+        $this->views = new View($root . '/app/views', formatter: $this->format);
         $this->session = new Session();
         $this->botProtection = new BotProtection($this->session);
         $this->encryption = new Encryption($config['key'] ?? '');
