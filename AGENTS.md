@@ -40,5 +40,6 @@
 - CI runs that suite on Ubuntu and Windows with PHP 8.3 and 8.5, using `pdo_sqlite`, `openssl`, `curl`, `iconv`, `mbstring`, `zip`, `dom`, `intl`, and `fileinfo`.
 - Validate changed PHP syntax with `php -l path/to/file.php`. Breeze templates must be exercised through the template engine, not linted as ordinary PHP.
 - For UI changes, check rendered desktop/mobile layouts and relevant form states.
+- Keep Apache, Nginx, FrankenPHP standard-mode, IIS, and development routing aligned: public-only roots, one executable front controller, static allowlists, and intact Authorization/error responses. Deployment changes need the native tests plus available real-server integration tests; do not claim IIS was run on Linux.
 - Do not run migrations, seeds, email sending, or other data-changing commands against a real application merely to validate code. Prefer the isolated test fixtures.
 - Documentation-only changes do not require a full test run.

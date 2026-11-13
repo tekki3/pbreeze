@@ -1,0 +1,36 @@
+{
+    # Standard request mode only: do not configure a FrankenPHP worker.
+    frankenphp
+}
+
+# Set PBREEZE_SERVER_NAME to a real domain for automatic HTTPS.
+# The loopback HTTP default is intended for local validation only.
+{$PBREEZE_SERVER_NAME:localhost:8080} {
+    root * {$PBREEZE_PUBLIC_ROOT:/srv/pbreeze/public}
+    request_body {
+        max_size 8MiB
+    }
+
+    route {
+        @private path_regexp private (?i)(^|/)\.|\.(env|sqlite[0-9]?|log|ini|config|sql|bak)$
+        respond @private 404
+
+        @otherPhp {
+            path_regexp php (?i)\.(php[0-9]?|phtml|phar)(/|$)
+            not path /index.php
+        }
+        respond @otherPhp 404
+
+        @asset {
+            path_regexp asset (?i)\.(css|js|png|jpg|jpeg|gif|webp|ico|svg|woff2?)$
+            file {path}
+        }
+        handle @asset {
+            file_server
+        }
+        handle {
+            rewrite * /index.php
+            php
+        }
+    }
+}

@@ -24,6 +24,81 @@ jobs:
       - name: Run native tests
         run: php breeze test
 
+  web-servers:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        server: [apache, nginx]
+        php: ['8.3', '8.5']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo_sqlite, openssl, intl, mbstring, fileinfo
+          coverage: none
+          tools: none
+      - name: Install web server and matching PHP-FPM
+        run: |
+          sudo apt-get update
+          if [ "${{ matrix.server }}" = apache ]; then package=apache2; else package=nginx; fi
+          sudo apt-get install -y "$package" php${{ matrix.php }}-fpm
+      - name: Run real web-server integration
+        run: php tests/web-server-integration.php ${{ matrix.server }}
+
+  frankenphp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: pdo_sqlite, openssl, intl, mbstring, fileinfo
+          coverage: none
+          tools: none
+      - name: Install checksum-verified FrankenPHP
+        run: |
+          curl -fL -o "$RUNNER_TEMP/frankenphp" https://github.com/php/frankenphp/releases/download/v1.13.5/frankenphp-linux-x86_64
+          echo "52d262be9b107a1a6f5f1d2945393dd838e89e4735c38a376b940e9fa9e1c881  $RUNNER_TEMP/frankenphp" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/frankenphp"
+      - name: Run standard-mode FrankenPHP integration
+        run: FRANKENPHP_BINARY="$RUNNER_TEMP/frankenphp" php tests/web-server-integration.php frankenphp
+
+  iis:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.3', '8.5']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo_sqlite, openssl, intl, mbstring, fileinfo
+          coverage: none
+          tools: none
+        env:
+          phpts: nts
+      - name: Enable IIS FastCGI and install Microsoft URL Rewrite
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Install-WindowsFeature Web-Server, Web-CGI, Web-Scripting-Tools -IncludeManagementTools
+          $installer = Join-Path $env:RUNNER_TEMP 'pbreeze-url-rewrite.msi'
+          Invoke-WebRequest 'https://download.microsoft.com/download/1/2/8/128E2E22-C1B9-44A4-BE2A-5859ED1D4592/rewrite_amd64_en-US.msi' -OutFile $installer
+          $signature = Get-AuthenticodeSignature $installer
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+            throw 'Microsoft URL Rewrite installer signature is not valid.'
+          }
+          $process = Start-Process msiexec.exe -ArgumentList "/i `"$installer`" /qn /norestart" -Wait -PassThru
+          if ($process.ExitCode -notin @(0, 3010)) { throw "URL Rewrite installation failed: $($process.ExitCode)" }
+          Start-Service W3SVC
+      - name: Run IIS FastCGI integration
+        shell: powershell
+        run: ./tests/web-server-iis.ps1
+
   cache:
     runs-on: ubuntu-latest
     strategy:

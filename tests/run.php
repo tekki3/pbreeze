@@ -123,6 +123,7 @@ function http(string $base, string $path, string $method = 'GET', string $body =
 
 try {
     require __DIR__ . '/platform.php';
+    require __DIR__ . '/web-servers.php';
     require __DIR__ . '/mail.php';
     require __DIR__ . '/ai.php';
     require __DIR__ . '/templates.php';

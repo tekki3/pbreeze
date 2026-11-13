@@ -136,12 +136,10 @@ Give the service user write access only where needed. On Windows, tests check
 read/write access, not Unix permission bits.
 
 For local development, `php breeze serve` works on both systems.
-In production, you can use Apache on either system with `public/` as the
-document root and the included `.htaccess` with `mod_rewrite`. For IIS,
-configure PHP through FastCGI, set the site root to `public/`, and
-configure URL Rewrite to `index.php` for nonexistent files.
-IIS does not read `.htaccess`. HTTPS and blocking hidden files must also be
-configured at the server level there.
+Deployment templates and integration tests cover Apache, Nginx, FrankenPHP
+standard request mode, and IIS FastCGI. Always set the document root to
+`public/`; see [Web Server Deployment](#web-server-deployment) for exact
+requirements, configuration, and validation boundaries.
 
 For scheduled email delivery, use cron on Linux and Task Scheduler on Windows.
 Choose the full path to `php`/`php.exe` as the program, provide the absolute
@@ -185,6 +183,231 @@ tests/run.php        Native tests, including real HTTP requests
 bootstrap.php        Explicit framework registration
 breeze               CLI, run with php breeze
 ```
+
+## Web Server Deployment
+
+PBreeze uses ordinary PHP requests, `REQUEST_URI`, standard HTTP headers,
+and explicit bootstrap files; it does not depend on Apache-specific APIs.
+The deployment scope is a **domain root**, not a subdirectory/virtual directory.
+FrankenPHP is configured in **standard request mode**, not persistent worker
+mode. Do not enable workers without implementing and testing a separate
+request-state lifecycle.
+
+| Server | Supplied configuration | PHP integration |
+|---|---|---|
+| Apache 2.4+ | `deploy/apache.conf` and `public/.htaccess` | PHP-FPM/FastCGI example; an administrator can use an equivalent mod_php setup |
+| Nginx | `deploy/nginx.conf` | PHP-FPM/FastCGI, only `/index.php` |
+| FrankenPHP | `deploy/Caddyfile` | Embedded PHP in standard request mode |
+| IIS 10+ on Windows | `public/web.config` | PHP NTS through FastCGI, with Microsoft URL Rewrite 2.x |
+
+These are supported deployment paths, not a promise that every upstream
+server version, module combination, OS build, proxy, or hosting policy will
+work without configuration. The framework remains Windows/Linux portable;
+server availability and production suitability follow each upstream project.
+In particular, IIS is Windows-only, and FrankenPHP builds/extensions must
+support your selected platform; do not assume native Windows FrankenPHP or
+production-grade Windows Nginx support from framework portability alone.
+
+### Shared deployment contract
+
+1. The document root/physical site path must be **only `public/`**. Never
+   expose the project root, even if a rewrite rule appears to hide it.
+2. `index.php` is the only public PHP entry point. The templates block direct
+   access to other PHP/PHAR/PHTML scripts, including the development router.
+   Existing directories must not bypass routing or expose directory listings.
+3. Only existing CSS, JS, PNG/JPEG/GIF/WebP/ICO/SVG, and WOFF/WOFF2 files are
+   served directly. Other paths go to the framework; hidden paths and common
+   secret/database/log/config/backup extensions are denied. This intentionally
+   tightens the previous Apache behavior that served any existing public file.
+   If your application needs another static type, update and test **all**
+   deployed server allowlists and the development router deliberately.
+4. Preserve the original URI/query string, method, raw request body,
+   `Authorization` header, status code, response body, and `Allow` header.
+   Do not replace framework JSON 4xx/5xx errors with HTML error pages.
+5. Install the same required PHP extensions in the **web runtime** as in CLI.
+   FrankenPHP has its own embedded PHP/extensions/INI configuration; a
+   successful `php -m` for CLI does not prove its extensions are available.
+6. Configure writable private storage, persistent SQLite/database access,
+   PHP session storage, and upload temporary storage for the actual service
+   identity. Keep application source read-only. Run `storage:prepare` and
+   migrations with a compatible deployment identity; run `php breeze doctor`.
+7. Terminate HTTPS at the server or a trusted edge. Set `APP_ENV=production`,
+   `APP_DEBUG=false`, and the real HTTPS `APP_URL`. Set
+   `SESSION_SECURE_COOKIE=true` behind TLS termination; the flag does not
+   encrypt HTTP or validate proxy identity. Never trust arbitrary forwarded
+   headers. Restore client IPs only using an allowlisted proxy configuration.
+
+The templates permit an 8 MiB server request body. Configure PHP
+`post_max_size=8M`, `upload_max_filesize=3M` (or values appropriate to your
+application), a writable `upload_tmp_dir`, and persistent `session.save_path`.
+The framework still enforces its independent 1 MiB JSON/API request limit and
+default 2 MiB per-file upload limit. Native server/PHP limits can reject a
+request before PHP runs; those responses may be server-generated, not JSON.
+Coordinate execution/FastCGI/proxy timeouts with long AI operations, and
+disable response buffering where your application requires streaming.
+Server-side URLs with encoded slashes, double escaping, or invalid characters
+may be rejected earlier by different servers; do not loosen these protections
+to make malformed requests behave identically.
+
+### Apache
+
+Start from [deploy/apache.conf](deploy/apache.conf). Replace the hostname,
+`/srv/pbreeze/public`, and PHP-FPM socket. Enable `mod_rewrite`, `mod_proxy`,
+and `mod_proxy_fcgi`, with the usual authorization, directory, and MIME
+modules. Permit the included `.htaccess` overrides for this trusted
+application directory, or move those rules into the equivalent directory
+configuration if your host disables overrides. Apache must be 2.4+ because
+the rewrite rules use `END`.
+
+The template's `CGIPassAuth On` plus rewrite authorization mapping preserves
+bearer tokens through FastCGI/internal rewrites. The PHP handler is scoped to
+`index.php`; do not add a generic executable-files directory.
+For Windows Apache/FastCGI, use forward-slash paths such as
+`C:/Sites/PBreeze/public` and replace the handler endpoint with, for example,
+`proxy:fcgi://127.0.0.1:9000`. Install and supervise a compatible FastCGI
+process manager; PHP-FPM itself is not a native Windows service.
+For mod_php, have your administrator replace the FPM handler with the
+installed module's PHP handler and appropriate MPM/thread-safety combination;
+keep the rewrite and access restrictions.
+
+Validate with `apachectl configtest` (or `httpd.exe -t`), then reload through
+your service manager. Add actual TLS certificates/bindings and HTTP-to-HTTPS
+redirection; the supplied port-80 virtual host alone is not a production TLS
+configuration.
+
+### Nginx
+
+Include [deploy/nginx.conf](deploy/nginx.conf) inside the `http` block.
+Replace the hostname, public path, and FPM socket; for a separately managed
+FastCGI service, a TCP endpoint such as `127.0.0.1:9000` can be used instead.
+Include your distribution's `fastcgi_params`, which must preserve
+`QUERY_STRING`, `REQUEST_METHOD`, `CONTENT_TYPE`, `CONTENT_LENGTH`,
+`REQUEST_URI`, `REMOTE_ADDR`, and `HTTPS` where applicable.
+
+The template explicitly sets `SCRIPT_FILENAME` to the front controller and
+forwards `HTTP_AUTHORIZATION`. It does not use `$uri/` directory fallbacks
+that bypass the router. Do not add a second broad PHP execution location.
+The location explicitly sets `fastcgi_intercept_errors off`; settings
+that replace application errors break API error behavior.
+Run `nginx -t`, configure TLS/listen directives and certificates, and reload
+through your service manager. Restrict any TCP FastCGI listener to trusted
+local/server networks.
+
+### FrankenPHP
+
+Use the [Caddyfile](deploy/Caddyfile) with a FrankenPHP build containing PHP
+8.3+ and all required extensions. It is not a configuration for plain Caddy:
+the `frankenphp`/`php` directives require FrankenPHP.
+
+For local HTTP validation on Linux:
+
+```sh
+PBREEZE_PUBLIC_ROOT=/absolute/path/to/pbreeze/public \
+PBREEZE_SERVER_NAME=http://127.0.0.1:8080 \
+frankenphp run --config deploy/Caddyfile
+```
+
+In production, set `PBREEZE_PUBLIC_ROOT` to the real public directory and
+`PBREEZE_SERVER_NAME` to your public domain, for example `app.example.com`.
+Caddy automatic HTTPS requires working DNS, reachable ports, permissions,
+and persistent certificate/configuration storage. Configure service
+environment variables rather than relying on an interactive shell.
+These two deployment variables are read by Caddy **before PHP starts**;
+putting them only in PBreeze's `.env` does not configure Caddy.
+
+Run `frankenphp validate --config deploy/Caddyfile` under the same service
+environment, then run/supervise it normally. The configuration preserves
+the original URI while internally executing only the front controller.
+It intentionally does not configure workers, an FPM backend, or directory
+indexes. Configure the Caddy administration endpoint appropriately and
+persist its HTTPS data when using containers.
+
+### IIS
+
+Install IIS 10+ with the CGI/FastCGI feature, Microsoft
+[URL Rewrite 2.x](https://www.iis.net/downloads/microsoft/url-rewrite), and a
+PHP 8.3+ **NTS** build matching the server architecture. Point the site's
+physical path to `C:\Sites\PBreeze\public`, not the project root.
+The supplied [web.config](public/web.config) provides rewrite rules, hidden
+file protection, static-file routing, disabled directory browsing, a default
+document, the request-body cap, and `httpErrors existingResponse=PassThrough`.
+IIS does not read `.htaccess`.
+
+In IIS Manager (administrator):
+
+1. Create a dedicated application pool with **No Managed Code** and a
+   compatible bitness, using a least-privilege application-pool identity.
+2. Add a FastCGI application pointing to the actual `php-cgi.exe`. Set
+   `PHPRC` to your PHP configuration directory and align
+   `PHP_FCGI_MAX_REQUESTS` with the FastCGI `instanceMaxRequests` setting.
+3. Add a handler mapping for `index.php`, verbs `*`, module `FastCgiModule`,
+   script processor `C:\PHP\php-cgi.exe`, and file resource type. A generic
+   `*.php` mapping is unnecessary; remove conflicting inherited handlers.
+   Place the PHP mapping **before** the catch-all StaticFile handler.
+4. Enable Anonymous Authentication using the application-pool identity
+   (empty anonymous username), so framework sessions/bearer tokens handle
+   application authentication. Disable IIS Windows/Basic authentication
+   unless deliberately integrating it separately.
+5. Remove/disable WebDAV handlers/modules for this site if installed:
+   otherwise they can intercept PUT/DELETE before the framework sees them.
+   Permit required verbs in IIS Request Filtering.
+6. Grant the pool identity read/execute access to source and PHP binaries,
+   and Modify access only to private storage, SQLite's directory/file when
+   used, session storage, and upload temporary storage. Restrict NTFS ACLs;
+   Unix-style `chmod` is not a Windows access-control substitute.
+7. Configure HTTPS bindings/certificates, request/activity timeouts, and PHP
+   error logging. Do not expose detailed PHP or IIS errors publicly.
+
+The PHP executable path, machine-level FastCGI registration, and credentials
+are intentionally not hardcoded in `web.config`. If IIS reports 500.19,
+install URL Rewrite and check delegation/locking for the referenced sections
+with your administrator; do not remove protections just to suppress it.
+If APIs return server HTML instead of JSON, inspect inherited `httpErrors`,
+authentication, WebDAV, and request-filtering settings.
+
+### Real-server compatibility tests
+
+The common smoke suite exercises actual routing (including UTF-8 paths and
+query strings), assets/MIME types, private-file denial, single-script
+execution, bearer-token authentication, POST/PUT/PATCH/DELETE JSON,
+request limits, cookies/CSRF, multipart uploads, readiness/HEAD probes,
+redirects, and application errors. It creates a new disposable application
+and database; it never uses the developer's `.env`, storage, or database.
+
+On Linux with the matching servers/PHP-FPM installed:
+
+```sh
+php tests/web-server-integration.php apache
+php tests/web-server-integration.php nginx
+php tests/web-server-integration.php frankenphp
+```
+
+Optional executable overrides are `APACHE_BINARY`, `APACHE_MODULE_DIR`,
+`NGINX_BINARY`, `NGINX_FASTCGI_PARAMS`, `NGINX_MIME_TYPES`, `PHP_FPM_BINARY`,
+and `FRANKENPHP_BINARY`. Apache's Linux harness assumes `/etc/mime.types`;
+Nginx defaults to distribution files under `/etc/nginx`. The harness uses
+loopback/ephemeral HTTP ports, starts its own child processes without changing
+running services, and cleans up its own fixtures. Test launcher requirements
+include native PHP `posix`, process, and socket functions on Linux.
+
+On a **disposable Windows IIS host**, run as administrator in Windows
+PowerShell with IIS CGI, URL Rewrite, and PHP installed:
+
+```powershell
+.\tests\web-server-iis.ps1
+```
+
+The IIS launcher creates a GUID-named loopback site/application pool, a
+distinct FastCGI registration, and a disposable database, then removes only
+its own resources. Do not use a production IIS machine as a test environment.
+
+CI defines Apache/Nginx/FPM jobs on Linux and IIS jobs on Windows for PHP
+8.3/8.5, plus a pinned, checksum-verified FrankenPHP integration job using
+its embedded PHP runtime. The native suite also validates the IIS XML and
+request/authorization mapping. A workflow definition is not proof of a
+successful run: require passing CI and real deployment smoke tests before
+claiming compatibility for your specific infrastructure. Linux testing
+cannot certify IIS or Windows-specific extension behavior.
 
 ## Redis and Memcached Cache
 
@@ -3155,26 +3378,10 @@ The script checks emptiness, creates/test-drops its schema, and sends no SMTP.
 - Never run the development server as a production server. Security measures
   are not a guarantee: have a real application reviewed before deployment.
 
-Apache can use the included `public/.htaccess` with `mod_rewrite`
-and permitted overrides. For Nginx, configure PHP-FPM for `/index.php` only,
-deny hidden files, and use, for example:
-
-```nginx
-root /path/to/pbreeze/public;
-index index.php;
-
-location ~ /\. { deny all; }
-location / { try_files $uri $uri/ /index.php?$query_string; }
-location = /index.php {
-    include fastcgi_params;
-    fastcgi_param SCRIPT_FILENAME $document_root/index.php;
-    fastcgi_pass unix:/run/php/php8.3-fpm.sock;
-}
-location ~ \.php$ { return 404; }
-```
-
-Adjust the socket path for your installation and configure HTTPS separately.
-Never put confidential files or uploads containing executable code in `public/`.
+Use the maintained [Web Server Deployment](#web-server-deployment) templates
+for Apache, Nginx, FrankenPHP, or IIS rather than ad hoc rewrite rules.
+Configure HTTPS for the actual service. Never put confidential files or
+uploads containing executable code in `public/`.
 
 ## Tests
 
