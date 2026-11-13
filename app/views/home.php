@@ -7,40 +7,116 @@ declare(strict_types=1);
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= e($name) ?> - Je applicatie draait</title>
+    <meta name="color-scheme" content="light">
+    <link rel="stylesheet" href="/assets/welcome.css">
 </head>
 <body>
-    <main>
-        <h1><?= e($name) ?></h1>
-        <p>Je applicatie draait. Native PHP, zonder Composer of autoloader.</p>
-        <h2>Probeer je eerste formulier</h2>
-        <p>Dit voorbeeld gebruikt servervalidatie, HTML-escaping en een CSRF-token.</p>
-        <?php if (!empty($greeting)): ?>
-            <p role="status"><?= e($greeting) ?></p>
-        <?php endif; ?>
-        <form action="/greet" method="post">
-            <?= csrf_field($session) ?>
-            <p>
-                <label for="name">Je naam</label><br>
-                <input id="name" name="name" autocomplete="given-name" required minlength="2" maxlength="80"
-                    value="<?= e($oldName ?? '') ?>"
-                    <?php if (!empty($errors['name'])): ?>aria-invalid="true" aria-describedby="name-error"<?php endif; ?>>
-            </p>
-            <?php if (!empty($errors['name'])): ?>
-                <p id="name-error" role="alert"><?= e(implode(' ', $errors['name'])) ?></p>
-            <?php endif; ?>
-            <button type="submit">Verstuur je naam</button>
-        </form>
-        <h2>Bouw verder</h2>
-        <p>Registreer je routes in <code>routes/web.php</code> en gebruik <code>php breeze help</code> voor de CLI.</p>
-        <ul>
-            <li><code>php breeze make:controller BerichtController</code></li>
-            <li><code>php breeze make:view berichten.index</code></li>
-            <li><code>php breeze make:migration create_berichten</code></li>
-            <li><code>php breeze migrate</code></li>
-            <li><code>php breeze db:seed</code></li>
-            <li><code>php breeze test</code></li>
-        </ul>
-        <p><a href="/health">Controleer de health-endpoint</a></p>
+    <a class="skip-link" href="#main">Ga naar de inhoud</a>
+    <header class="site-header page-width">
+        <a class="brand" href="/" aria-label="<?= e($name) ?> startpagina">
+            <svg class="brand-mark" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+                <rect width="36" height="36" rx="10" fill="currentColor"/>
+                <path d="M10 12h10a4 4 0 0 1 0 8H10m4-4h10M10 24h7" stroke="white" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <span><?= e($name) ?></span>
+        </a>
+        <nav aria-label="Paginanavigatie">
+            <a href="#proberen">Formulier testen</a>
+            <a href="#bouwen">Aan de slag</a>
+            <a class="health-link" href="/health">Healthcontrole <span aria-hidden="true">&rarr;</span></a>
+        </nav>
+    </header>
+    <main id="main" class="page-width">
+        <section class="intro" aria-labelledby="welcome-title">
+            <div class="intro-copy">
+                <h1 id="welcome-title">Een frisse start.<br><span>Klaar om te bouwen.</span></h1>
+                <p>Je applicatie draait. Een heldere basis in native PHP, met de controle in jouw handen. Zonder Composer of autoloader.</p>
+                <a class="text-link" href="#proberen">Probeer je eerste request <span aria-hidden="true">&darr;</span></a>
+            </div>
+            <aside class="project-map" aria-label="De structuur van je applicatie">
+                <div class="code-caption"><span class="file-dot" aria-hidden="true"></span> Jouw applicatie, overzichtelijk ingedeeld</div>
+                <dl>
+                    <div><dt>routes/web.php</dt><dd>Hier begint je request</dd></div>
+                    <div><dt>app/controllers/</dt><dd>Jouw applicatielogica</dd></div>
+                    <div><dt>app/views/</dt><dd>Gewoon PHP en HTML</dd></div>
+                    <div><dt>database/migrations/</dt><dd>Grip op je database</dd></div>
+                </dl>
+                <p><span aria-hidden="true">$ </span>php breeze serve</p>
+            </aside>
+        </section>
+
+        <div class="workspace">
+            <section id="proberen" class="form-section" aria-labelledby="form-title">
+                <h2 id="form-title">Van invoer naar antwoord.</h2>
+                <p>Test de volledige route: van dit formulier naar je controller en weer terug.</p>
+                <form action="/greet#proberen" method="post">
+                    <?= csrf_field($session) ?>
+                    <label for="name">Je naam</label>
+                    <input id="name" name="name" autocomplete="given-name" required minlength="2" maxlength="80"
+                        placeholder="Bijvoorbeeld Ada"
+                        value="<?= e($oldName ?? '') ?>"
+                        aria-describedby="name-hint<?= !empty($errors['name']) ? ' name-error' : '' ?>"
+                        <?php if (!empty($errors['name'])): ?>aria-invalid="true"<?php endif; ?>>
+                    <p id="name-hint" class="field-hint">Gebruik 2 tot 80 tekens. Je naam wordt niet opgeslagen.</p>
+                    <?php if (!empty($errors['name'])): ?>
+                        <p id="name-error" class="feedback feedback-error" role="alert"><?= e(implode(' ', $errors['name'])) ?></p>
+                    <?php endif; ?>
+                    <button type="submit">Verstuur je naam <span aria-hidden="true">&rarr;</span></button>
+                    <?php if (!empty($greeting)): ?>
+                        <div class="feedback feedback-success" role="status">
+                            <strong><?= e($greeting) ?></strong>
+                            <span>Je request is verwerkt. Het formulier werkt.</span>
+                        </div>
+                    <?php endif; ?>
+                </form>
+                <div class="request-details">
+                    <span class="method">POST</span><code>/greet</code>
+                    <span>Servervalidatie &middot; CSRF &middot; HTML-escaping</span>
+                </div>
+            </section>
+
+            <section id="bouwen" class="build-section" aria-labelledby="build-title">
+                <h2 id="build-title">Maak het jouw applicatie.</h2>
+                <p>Begin klein. Maak een controller en een view, en registreer je route in <code>routes/web.php</code>.</p>
+                <div class="terminal">
+                    <div class="terminal-header"><span>Je eerste bouwstenen</span><span>CLI</span></div>
+                    <pre aria-label="Commando's voor een nieuwe controller, view en model"><code><span class="code-comment"># Maak ruimte voor je eigen idee</span>
+<span class="prompt">$</span> php breeze make:controller BerichtController
+<span class="prompt">$</span> php breeze make:view berichten.index
+<span class="prompt">$</span> php breeze make:model Bericht
+
+<span class="code-comment"># Controleer je applicatie</span>
+<span class="prompt">$</span> php breeze test</code></pre>
+                </div>
+                <details class="more-commands">
+                    <summary>Database- en e-mailcommando's</summary>
+                    <div class="extra-commands">
+                        <p>Migraties en voorbeelddata</p>
+                        <pre><code>php breeze make:migration create_berichten
+php breeze migrate
+php breeze db:seed</code></pre>
+                        <p>Opgeslagen e-mails verzenden en je inbox ophalen</p>
+                        <pre><code>php breeze mail:work 50
+php breeze mail:fetch 50</code></pre>
+                        <p>Configureer eerst je SMTP- en IMAP-gegevens in <code>.env</code>.</p>
+                    </div>
+                </details>
+                <p class="help-note">Alle mogelijkheden bekijken? <code>php breeze help</code></p>
+            </section>
+        </div>
+
+        <section class="foundation" aria-labelledby="foundation-title">
+            <h2 id="foundation-title">Klein van opzet. Ruimte om te groeien.</h2>
+            <dl>
+                <div><dt>Native PHP</dt><dd>Expliciete bestanden. Geen verborgen autoloading of externe packages.</dd></div>
+                <div><dt>Veilige bouwstenen</dt><dd>CSRF, validatie en prepared statements als basis voor jouw applicatie.</dd></div>
+                <div><dt>Windows &amp; Linux</dt><dd>Dezelfde structuur en CLI, op je werkplek en op je server.</dd></div>
+            </dl>
+        </section>
     </main>
+    <footer class="site-footer page-width">
+        <span><?= e($name) ?> <span class="footer-divider">/</span> Native PHP. Jouw volgende idee.</span>
+        <a href="/health">Controleer de health-endpoint <span aria-hidden="true">&rarr;</span></a>
+    </footer>
 </body>
 </html>

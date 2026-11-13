@@ -26,6 +26,9 @@ php breeze serve
 Open <http://127.0.0.1:8000>. Het voorbeeldformulier demonstreert CSRF,
 validatie en veilige HTML-uitvoer. De ontwikkelserver blijft op localhost.
 Gebruik `php breeze serve 8080` voor een andere poort.
+De start-/testpagina heeft een responsive lichte vormgeving met lokale CSS
+in `public/assets/welcome.css`, een testformulier met fout- en succesmeldingen
+en uitklapbare CLI-voorbeelden. Er worden geen externe fonts of scripts geladen.
 
 `init` maakt een lokale `.env`, maar overschrijft nooit een bestaande.
 De standaard is SQLite in `database/app.sqlite`; de database wordt bij het
