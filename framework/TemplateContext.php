@@ -24,7 +24,7 @@ final class TemplateContext
     public function render(string $name, array $data = []): string
     {
         if (count($this->chain) >= 32 || in_array($name, $this->chain, true)) {
-            throw new LogicException("Cyclische of te diep geneste view: $name");
+            throw new LogicException("Cyclic or excessively nested view: $name");
         }
         $this->chain[] = $name;
         $this->frames[] = ['layout' => null, 'sections' => [], 'captures' => []];
@@ -33,11 +33,11 @@ final class TemplateContext
             $output = $this->views->evaluate($name, $data, $this);
             $frame = $this->frames[array_key_last($this->frames)];
             if ($frame['captures'] !== []) {
-                throw new LogicException("View $name bevat onafgesloten secties, componenten of slots.");
+                throw new LogicException("View $name contains unclosed sections, components, or slots.");
             }
             if ($frame['layout'] !== null) {
                 if (trim($output) !== '') {
-                    throw new LogicException("View $name: plaats inhoud binnen @section wanneer je @extends gebruikt.");
+                    throw new LogicException("View $name: put content inside @section when using @extends.");
                 }
                 return $this->render($frame['layout'], $data);
             }
@@ -55,7 +55,7 @@ final class TemplateContext
     {
         $index = array_key_last($this->frames);
         if ($this->frames[$index]['layout'] !== null) {
-            throw new LogicException('Een template kan maar een layout uitbreiden.');
+            throw new LogicException('A template can extend only one layout.');
         }
         $this->frames[$index]['layout'] = $name;
     }
@@ -63,11 +63,11 @@ final class TemplateContext
     public function startSection(string $name): void
     {
         if (!preg_match('/^[a-zA-Z][a-zA-Z0-9_.-]*$/D', $name)) {
-            throw new LogicException('Ongeldige sectienaam.');
+            throw new LogicException('Invalid section name.');
         }
         $frame = array_key_last($this->frames);
         if (in_array($name, $this->frames[$frame]['sections'], true)) {
-            throw new LogicException("Dubbele sectie in dezelfde template: $name");
+            throw new LogicException("Duplicate section in the same template: $name");
         }
         $this->frames[$frame]['sections'][] = $name;
         $this->start('section', ['name' => $name]);
@@ -108,16 +108,16 @@ final class TemplateContext
     public function startSlot(string $name): void
     {
         if (!preg_match('/^[a-zA-Z][a-zA-Z0-9_]*$/D', $name) || $name === 'slot') {
-            throw new LogicException('Gebruik een geldige slotnaam; slot is gereserveerd voor de hoofdinhoud.');
+            throw new LogicException('Use a valid slot name; slot is reserved for the main content.');
         }
         $captures = $this->frames[array_key_last($this->frames)]['captures'];
         $parentIndex = array_key_last($captures);
         $parent = $parentIndex === null ? null : $captures[$parentIndex];
         if ($parent === null || $parent['kind'] !== 'component') {
-            throw new LogicException('@slot moet rechtstreeks binnen een component staan.');
+            throw new LogicException('@slot must be directly inside a component.');
         }
         if (array_key_exists($name, $parent['slots'])) {
-            throw new LogicException("Dubbele slotnaam: $name");
+            throw new LogicException("Duplicate slot name: $name");
         }
         $this->start('slot', ['name' => $name]);
     }
@@ -143,7 +143,7 @@ final class TemplateContext
         $index = array_key_last($this->frames);
         $capture = array_pop($this->frames[$index]['captures']);
         if ($capture === null || $capture['kind'] !== $kind || ob_get_level() !== $capture['level'] + 1) {
-            throw new LogicException("Ongeldige afsluiting van $kind.");
+            throw new LogicException("Invalid closing directive for $kind.");
         }
         $capture['content'] = (string) ob_get_clean();
         return $capture;

@@ -33,7 +33,7 @@ final class Query
     public static function identifier(string $name): string
     {
         if (preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/D', $name) !== 1) {
-            throw new InvalidArgumentException('Gebruik een eenvoudige SQL-identifier zonder expressies of tabelprefix.');
+            throw new InvalidArgumentException('Use a simple SQL identifier without expressions or a table prefix.');
         }
         return '`' . $name . '`';
     }
@@ -45,14 +45,14 @@ final class Query
             $operator = '=';
         }
         if (!is_string($operator) || !in_array(strtoupper($operator), ['=', '!=', '<>', '<', '<=', '>', '>=', 'LIKE', 'NOT LIKE'], true)) {
-            throw new InvalidArgumentException('Ongeldige vergelijkingsoperator.');
+            throw new InvalidArgumentException('Invalid comparison operator.');
         }
         $operator = strtoupper($operator);
         if ($value === null) {
             return match ($operator) {
                 '=' => $this->whereNull($column),
                 '!=', '<>' => $this->whereNotNull($column),
-                default => throw new InvalidArgumentException('Gebruik = of != om met null te vergelijken.'),
+                default => throw new InvalidArgumentException('Use = or != to compare with null.'),
             };
         }
         self::value($value);
@@ -85,12 +85,12 @@ final class Query
             $this->model?->assertSearchable($column);
         }
         if (!array_is_list($values) || count($values) > 500) {
-            throw new InvalidArgumentException('whereIn verwacht een lijst van maximaal 500 waarden.');
+            throw new InvalidArgumentException('whereIn expects a list of up to 500 values.');
         }
         foreach ($values as $value) {
             self::value($value);
             if ($value === null) {
-                throw new InvalidArgumentException('Gebruik whereNull voor null-waarden.');
+                throw new InvalidArgumentException('Use whereNull for null values.');
             }
         }
         $query = clone $this;
@@ -104,7 +104,7 @@ final class Query
         $this->model?->assertSearchable($column);
         $direction = strtoupper($direction);
         if (!in_array($direction, ['ASC', 'DESC'], true)) {
-            throw new InvalidArgumentException('Sorteerrichting moet asc of desc zijn.');
+            throw new InvalidArgumentException('Sort direction must be asc or desc.');
         }
         $query = clone $this;
         $query->orders[] = self::identifier($column) . ' ' . $direction;
@@ -114,7 +114,7 @@ final class Query
     public function limit(int $limit): self
     {
         if ($limit < 1) {
-            throw new InvalidArgumentException('De limiet moet positief zijn.');
+            throw new InvalidArgumentException('The limit must be positive.');
         }
         $query = clone $this;
         $query->take = $limit;
@@ -124,7 +124,7 @@ final class Query
     public function offset(int $offset): self
     {
         if ($offset < 0) {
-            throw new InvalidArgumentException('De offset mag niet negatief zijn.');
+            throw new InvalidArgumentException('The offset must not be negative.');
         }
         $query = clone $this;
         $query->skip = $offset;
@@ -141,7 +141,7 @@ final class Query
         if ($this->take !== null) {
             $sql .= ' LIMIT ' . $this->take;
         } elseif ($this->skip !== 0) {
-            throw new LogicException('offset vereist een expliciete limit.');
+            throw new LogicException('offset requires an explicit limit.');
         }
         if ($this->skip !== 0) {
             $sql .= ' OFFSET ' . $this->skip;
@@ -159,7 +159,7 @@ final class Query
     /** @return T */
     public function firstOrFail(): Model|array
     {
-        return $this->first() ?? throw new RecordNotFoundException('Record niet gevonden.');
+        return $this->first() ?? throw new RecordNotFoundException('Record not found.');
     }
 
     /** @return T|null */
@@ -171,7 +171,7 @@ final class Query
     /** @return T */
     public function findOrFail(int|string $id): Model|array
     {
-        return $this->find($id) ?? throw new RecordNotFoundException('Record niet gevonden.');
+        return $this->find($id) ?? throw new RecordNotFoundException('Record not found.');
     }
 
     public function count(): int
@@ -188,7 +188,7 @@ final class Query
     public function paginate(int $perPage = 20, int $page = 1): array
     {
         if ($perPage < 1 || $perPage > 100 || $page < 1 || $page - 1 > intdiv(PHP_INT_MAX, $perPage)) {
-            throw new InvalidArgumentException('Gebruik een positieve pagina en 1 tot 100 records per pagina.');
+            throw new InvalidArgumentException('Use a positive page number and 1 to 100 records per page.');
         }
         $query = $this->orders === [] ? $this->orderBy($this->model?->keyName() ?? 'id') : $this;
         $total = $this->count();
@@ -203,7 +203,7 @@ final class Query
     public function insert(array $data): int|string
     {
         if ($this->model !== null) {
-            throw new LogicException('Gebruik create() voor een modelquery.');
+            throw new LogicException('Use create() for a model query.');
         }
         $this->assertInsert();
         $columns = $this->columns($data);
@@ -216,7 +216,7 @@ final class Query
         }
         $id = $this->db->pdo()->lastInsertId();
         if ($id === false) {
-            throw new RuntimeException('Kan het insert-ID niet ophalen.');
+            throw new RuntimeException('Cannot retrieve the insert ID.');
         }
         return filter_var($id, FILTER_VALIDATE_INT) !== false ? (int) $id : $id;
     }
@@ -228,7 +228,7 @@ final class Query
     {
         $this->assertInsert();
         if ($this->model === null) {
-            throw new LogicException('create vereist een modelquery; gebruik insert voor een tabel.');
+            throw new LogicException('create requires a model query; use insert for a table.');
         }
         return $this->model->create($data);
     }
@@ -239,12 +239,12 @@ final class Query
         $this->assertWrite();
         if ($this->model !== null) {
             if (array_key_exists($this->model->keyName(), $data)) {
-                throw new InvalidArgumentException('Een modelupdate mag de primaire sleutel niet wijzigen.');
+                throw new InvalidArgumentException('A model update cannot change the primary key.');
             }
             $data = $this->model->encodeFill($data);
         }
         if ($data === []) {
-            throw new InvalidArgumentException('Een update vereist minimaal een veld.');
+            throw new InvalidArgumentException('An update requires at least one field.');
         }
         $columns = $this->columns($data);
         return $this->execute('UPDATE ' . self::identifier($this->table) . ' SET '
@@ -261,17 +261,17 @@ final class Query
     private function assertInsert(): void
     {
         if ($this->conditions !== [] || $this->orders !== [] || $this->take !== null || $this->skip !== 0) {
-            throw new LogicException('insert/create accepteert geen filters, sortering of paginering.');
+            throw new LogicException('insert/create does not accept filters, sorting, or pagination.');
         }
     }
 
     private function assertWrite(): void
     {
         if ($this->conditions === []) {
-            throw new LogicException('Een update/delete vereist een expliciet filter.');
+            throw new LogicException('An update/delete requires an explicit filter.');
         }
         if ($this->orders !== [] || $this->take !== null || $this->skip !== 0) {
-            throw new LogicException('update/delete met sortering of paginering wordt niet ondersteund.');
+            throw new LogicException('update/delete with sorting or pagination is not supported.');
         }
     }
 
@@ -288,7 +288,7 @@ final class Query
         $columns = [];
         foreach ($data as $column => $value) {
             if (!is_string($column)) {
-                throw new InvalidArgumentException('Veldnamen moeten tekst zijn.');
+                throw new InvalidArgumentException('Field names must be strings.');
             }
             $columns[] = self::identifier($column);
             self::value($value);
@@ -299,7 +299,7 @@ final class Query
     private static function value(mixed $value): void
     {
         if (!is_scalar($value) && $value !== null || is_float($value) && !is_finite($value)) {
-            throw new InvalidArgumentException('SQL-waarden moeten scalars of null zijn; gebruik modelcasts voor JSON/datums.');
+            throw new InvalidArgumentException('SQL values must be scalars or null; use model casts for JSON/dates.');
         }
     }
 

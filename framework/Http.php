@@ -38,11 +38,11 @@ final class Request
     {
         $uri = explode('?', $_SERVER['REQUEST_URI'] ?? '/', 2)[0];
         if (preg_match('/%(?![0-9a-f]{2})/i', $uri)) {
-            throw new HttpException(400, 'Ongeldige URL.');
+            throw new HttpException(400, 'Invalid URL.');
         }
         $path = rawurldecode($uri);
         if (!str_starts_with($path, '/') || preg_match('/[\x00-\x20\x7f\\\\]/', $path)) {
-            throw new HttpException(400, 'Ongeldige URL.');
+            throw new HttpException(400, 'Invalid URL.');
         }
         $headers = [];
         foreach ($_SERVER as $key => $value) {
@@ -64,18 +64,18 @@ final class Request
         $raw = null;
         if ($api) {
             if ((int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 1048576) {
-                throw new HttpException(413, 'API-requestinhoud mag maximaal 1 MiB zijn.');
+                throw new HttpException(413, 'API request bodies must not exceed 1 MiB.');
             }
             $raw = file_get_contents('php://input', false, null, 0, 1048577);
             if ($raw === false) {
-                throw new RuntimeException('Kan requestinhoud niet lezen.');
+                throw new RuntimeException('Cannot read the request body.');
             }
             if (strlen($raw) > 1048576) {
-                throw new HttpException(413, 'API-requestinhoud mag maximaal 1 MiB zijn.');
+                throw new HttpException(413, 'API request bodies must not exceed 1 MiB.');
             }
             if ($contentType !== 'application/json'
                 && ($raw !== '' || (int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 0 || $_POST !== [] || $_FILES !== [])) {
-                throw new HttpException(415, 'Gebruik Content-Type: application/json.');
+                throw new HttpException(415, 'Use Content-Type: application/json.');
             }
             $body = [];
         }
@@ -83,15 +83,15 @@ final class Request
             try {
                 $raw ??= file_get_contents('php://input');
                 if ($raw === false) {
-                    throw new RuntimeException('Kan requestinhoud niet lezen.');
+                    throw new RuntimeException('Cannot read the request body.');
                 }
                 $decoded = json_decode($raw, false, 32, JSON_THROW_ON_ERROR);
                 if (!$decoded instanceof \stdClass) {
-                    throw new HttpException(400, 'De JSON-inhoud moet een object zijn.');
+                    throw new HttpException(400, 'The JSON body must be an object.');
                 }
                 $body = get_object_vars($decoded);
             } catch (JsonException) {
-                throw new HttpException(400, 'Ongeldige JSON-inhoud.');
+                throw new HttpException(400, 'Invalid JSON body.');
             }
         }
         return new self(strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET'), $path, $_GET, $body, $headers, $_SERVER['REMOTE_ADDR'] ?? 'unknown');
@@ -134,7 +134,7 @@ final class Request
     /** @return array{id: int, name: string, email: string, token_id: int} */
     public function apiUser(): array
     {
-        return $this->apiIdentity ?? throw new \LogicException('Deze request heeft geen API-identiteit.');
+        return $this->apiIdentity ?? throw new \LogicException('This request has no API identity.');
     }
 }
 
@@ -147,11 +147,11 @@ final class Response
         public readonly array $headers = ['Content-Type' => 'text/html; charset=UTF-8'],
     ) {
         if ($status < 100 || $status > 599) {
-            throw new \InvalidArgumentException('Ongeldige HTTP-status.');
+            throw new \InvalidArgumentException('Invalid HTTP status.');
         }
         foreach ($headers as $name => $value) {
             if (!preg_match('/^[A-Za-z0-9-]+$/D', $name) || preg_match('/[\r\n\x00]/', $value)) {
-                throw new \InvalidArgumentException('Ongeldige HTTP-header.');
+                throw new \InvalidArgumentException('Invalid HTTP header.');
             }
         }
     }
@@ -167,10 +167,10 @@ final class Response
     public static function redirect(string $path, int $status = 303): self
     {
         if (!str_starts_with($path, '/') || str_starts_with($path, '//') || preg_match('/[\x00-\x20\x7f\\\\]/', $path)) {
-            throw new \InvalidArgumentException('Redirects moeten lokale absolute paden zijn.');
+            throw new \InvalidArgumentException('Redirects must use local absolute paths.');
         }
         if (!in_array($status, [301, 302, 303, 307, 308], true)) {
-            throw new \InvalidArgumentException('Ongeldige redirectstatus.');
+            throw new \InvalidArgumentException('Invalid redirect status.');
         }
         return new self('', $status, ['Location' => $path]);
     }

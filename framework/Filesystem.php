@@ -14,11 +14,11 @@ final class Filesystem
             return $path;
         }
         if ($path === '' || str_contains($path, "\0")) {
-            throw new InvalidArgumentException('Het databasepad mag niet leeg zijn of NUL-bytes bevatten.');
+            throw new InvalidArgumentException('The database path must not be empty or contain NUL bytes.');
         }
         $path = str_replace('\\', '/', $path);
         if (preg_match('/^[a-zA-Z]:(?!\/)/', $path)) {
-            throw new InvalidArgumentException('Gebruik een volledig Windows-pad zoals C:/data/app.sqlite, geen schijfrelatief pad.');
+            throw new InvalidArgumentException('Use a full Windows path such as C:/data/app.sqlite, not a drive-relative path.');
         }
         if (str_starts_with($path, '/') || preg_match('/^[a-zA-Z]:\//', $path)) {
             return $path;
@@ -28,9 +28,9 @@ final class Filesystem
 
     public static function permissions(string $path, int $mode): void
     {
-        // Windows beschermt bestanden met geerfde NTFS-ACL's, niet met POSIX-modes.
+        // Windows protects files with inherited NTFS ACLs, not POSIX modes.
         if (PHP_OS_FAMILY !== 'Windows' && !chmod($path, $mode)) {
-            throw new RuntimeException("Kan bestandsrechten niet instellen: $path");
+            throw new RuntimeException("Cannot set file permissions: $path");
         }
     }
 
@@ -38,7 +38,7 @@ final class Filesystem
     {
         foreach (explode('.', $name) as $segment) {
             if (preg_match('/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/iD', $segment)) {
-                throw new InvalidArgumentException('Deze bestandsnaam is gereserveerd op Windows.');
+                throw new InvalidArgumentException('This filename is reserved on Windows.');
             }
         }
     }

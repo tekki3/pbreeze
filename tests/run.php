@@ -41,7 +41,7 @@ $config = [
 $app = new Application($temp, $config);
 $server = null;
 
-function check(bool $condition, string $message = 'Controle mislukt.'): void
+function check(bool $condition, string $message = 'Check failed.'): void
 {
     if (!$condition) {
         throw new RuntimeException($message);
@@ -50,7 +50,7 @@ function check(bool $condition, string $message = 'Controle mislukt.'): void
 
 function same(mixed $expected, mixed $actual): void
 {
-    check($expected === $actual, 'Verwacht ' . var_export($expected, true) . ', kreeg ' . var_export($actual, true));
+    check($expected === $actual, 'Expected ' . var_export($expected, true) . ', got ' . var_export($actual, true));
 }
 
 function raises(callable $work, string $class, ?int $status = null): void
@@ -58,13 +58,13 @@ function raises(callable $work, string $class, ?int $status = null): void
     try {
         $work();
     } catch (Throwable $error) {
-        check($error instanceof $class, 'Onverwachte exception: ' . $error::class . ' ' . $error->getMessage());
+        check($error instanceof $class, 'Unexpected exception: ' . $error::class . ' ' . $error->getMessage());
         if ($status !== null) {
-            check($error instanceof HttpException && $error->status === $status, 'Onverwachte HTTP-status.');
+            check($error instanceof HttpException && $error->status === $status, 'Unexpected HTTP status.');
         }
         return;
     }
-    throw new RuntimeException("Verwachte exception ontbreekt: $class");
+    throw new RuntimeException("Expected exception was not thrown: $class");
 }
 
 function test(string $name, callable $work): void
@@ -105,7 +105,7 @@ function http(string $base, string $path, string $method = 'GET', string $body =
     ]]);
     $stream = fopen($base . $path, 'r', false, $context);
     if ($stream === false) {
-        throw new RuntimeException('HTTP-verzoek mislukt.');
+        throw new RuntimeException('HTTP request failed.');
     }
     try {
         $content = stream_get_contents($stream);
@@ -114,7 +114,7 @@ function http(string $base, string $path, string $method = 'GET', string $body =
         fclose($stream);
     }
     if ($content === false) {
-        throw new RuntimeException('Kan HTTP-response niet lezen.');
+        throw new RuntimeException('Cannot read the HTTP response.');
     }
     $responseHeaders = $metadata['wrapper_data'];
     preg_match('/^HTTP\/\S+ (\d+)/', $responseHeaders[0], $match);
@@ -129,45 +129,46 @@ try {
     require __DIR__ . '/encryption.php';
     require __DIR__ . '/bot-protection.php';
     require __DIR__ . '/api.php';
+    require __DIR__ . '/english.php';
 
-    test('HTML-escaping behandelt quotes en ongeldige UTF-8', static function (): void {
+    test('HTML escaping handles quotes and invalid UTF-8', static function (): void {
         same('&lt;script&gt;&quot;&#039;&amp;', e('<script>"\'&'));
         check(str_contains(e("\xFF"), "\xEF\xBF\xBD"));
     });
 
-    test('Request houdt query en body gescheiden', static function (): void {
+    test('Request keeps query and body separate', static function (): void {
         $request = new Request('POST', '/', ['role' => 'admin'], ['name' => 'Ada']);
         same(null, $request->input('role'));
         same('admin', $request->query('role'));
         same('Ada', $request->input('name'));
     });
 
-    test('Router verwerkt parameters op volgorde en trailing slash', static function (): void {
+    test('Router handles parameters in order and trailing slashes', static function (): void {
         $router = new Router();
         $router->get('/notes/{id}', static fn (Request $r, string $id): Response => Response::json(['id' => $id]));
         same('{"id":"42"}', $router->dispatch(new Request('GET', '/notes/42/'))->body);
     });
 
-    test('Router behandelt statische regextekens letterlijk', static function (): void {
+    test('Router treats static regex characters literally', static function (): void {
         $router = new Router();
         $router->get('/file.json', static fn (): Response => new Response('ok'));
         raises(static fn () => $router->dispatch(new Request('GET', '/fileXjson')), HttpException::class, 404);
     });
 
-    test('Router geeft 404 en 405 met Allow-header', static function (): void {
+    test('Router returns 404 and 405 with an Allow header', static function (): void {
         $router = new Router();
         $router->get('/', static fn (): Response => new Response('ok'));
         raises(static fn () => $router->dispatch(new Request('GET', '/missing')), HttpException::class, 404);
         try {
             $router->dispatch(new Request('DELETE', '/'));
-            throw new RuntimeException('405 ontbreekt.');
+            throw new RuntimeException('Expected 405 response was not received.');
         } catch (HttpException $error) {
             same(405, $error->status);
             same('GET, HEAD', $error->headers['Allow']);
         }
     });
 
-    test('Router ondersteunt HEAD-terugval en expliciete HEAD', static function (): void {
+    test('Router supports HEAD fallback and explicit HEAD', static function (): void {
         $router = new Router();
         $router->get('/', static fn (): Response => new Response('GET'));
         same('GET', $router->dispatch(new Request('HEAD', '/'))->body);
@@ -175,15 +176,15 @@ try {
         same('HEAD', $router->dispatch(new Request('HEAD', '/'))->body);
     });
 
-    test('Router weigert dubbele of ongeldige routes en ongeldige responses', static function (): void {
+    test('Router rejects duplicate or invalid routes and invalid responses', static function (): void {
         $router = new Router();
-        $router->get('/{id}', static fn (): string => 'fout');
+        $router->get('/{id}', static fn (): string => 'wrong');
         raises(static fn () => $router->get('/{other}', static fn (): Response => new Response()), LogicException::class);
         raises(static fn () => $router->get('/{id}/{id}', static fn (): Response => new Response()), InvalidArgumentException::class);
         raises(static fn () => $router->dispatch(new Request('GET', '/1')), LogicException::class);
     });
 
-    test('Redirects weigeren externe URLs en headerinjectie', static function (): void {
+    test('Redirects reject external URLs and header injection', static function (): void {
         same('/notes', Response::redirect('/notes')->headers['Location']);
         foreach (['https://evil.test', '//evil.test', '/\\evil.test', "/ok\r\nX-Test: bad"] as $path) {
             raises(static fn () => Response::redirect($path), InvalidArgumentException::class);
@@ -191,7 +192,7 @@ try {
         raises(static fn () => new Response('', 200, ['X-Test' => "ok\r\nbad"]), InvalidArgumentException::class);
     });
 
-    test('CSRF accepteert alleen het juiste body- of headertoken', static function (): void {
+    test('CSRF accepts only the correct body or header token', static function (): void {
         $_SESSION = [];
         $session = new Session();
         $token = $session->token();
@@ -205,7 +206,7 @@ try {
         $session->verifyCsrf(new Request('GET', '/'));
     });
 
-    test('Validatie behandelt strings, arrays, Unicode en bevestiging', static function (): void {
+    test('Validation handles strings, arrays, Unicode, and confirmation', static function (): void {
         same([], Validator::errors(['name' => 'Zoë', 'email' => 'ada@example.test', 'age' => '0'], [
             'name' => 'required|string|min:3|max:3', 'email' => 'email', 'age' => 'integer',
         ]));
@@ -217,7 +218,7 @@ try {
         raises(static fn () => Validator::errors([], ['name' => 'max:bad']), InvalidArgumentException::class);
     });
 
-    test('Views weigeren traversal en kunnen interne variabelen niet overschrijven', static function () use ($temp): void {
+    test('Views reject traversal and cannot overwrite internal variables', static function () use ($temp): void {
         file_put_contents($temp . '/app/views/example.php', '<?= e($title) ?>');
         $view = new View($temp . '/app/views');
         same('&lt;Ada&gt;', $view->render('example', ['title' => '<Ada>', '__file' => '/missing']));
@@ -225,14 +226,14 @@ try {
         raises(static fn () => $view->render('missing'), RuntimeException::class);
     });
 
-    test('View-exceptions ruimen de outputbuffer op', static function () use ($temp): void {
+    test('View exceptions clean up the output buffer', static function () use ($temp): void {
         file_put_contents($temp . '/app/views/broken.php', '<?php echo "partial"; throw new RuntimeException("broken");');
         $level = ob_get_level();
         raises(static fn () => (new View($temp . '/app/views'))->render('broken'), RuntimeException::class);
         same($level, ob_get_level());
     });
 
-    test('Env leest quotes letterlijk en weigert kapotte regels', static function () use ($temp): void {
+    test('Env reads quotes literally and rejects malformed lines', static function () use ($temp): void {
         file_put_contents($temp . '/test.env', "PBREEZE_TEST_VALUE=\"hello # world\"\nPBREEZE_TEST_BOOL=false\n");
         Env::load($temp . '/test.env');
         same('hello # world', Env::get('PBREEZE_TEST_VALUE'));
@@ -248,7 +249,7 @@ try {
         Env::load($temp . '/absent.env');
     });
 
-    test('PDO gebruikt bindings en schakelt SQLite foreign keys in', static function () use ($app): void {
+    test('PDO uses bindings and enables SQLite foreign keys', static function () use ($app): void {
         $app->db->execute('CREATE TABLE bindings (value TEXT NOT NULL)');
         $payload = "'); DROP TABLE bindings; --";
         $app->db->execute('INSERT INTO bindings (value) VALUES (?)', [$payload]);
@@ -256,7 +257,7 @@ try {
         same(1, (int) $app->db->execute('PRAGMA foreign_keys')->fetchColumn());
     });
 
-    test('Database-transacties rollen terug bij fouten', static function () use ($app): void {
+    test('Database transactions roll back on errors', static function () use ($app): void {
         raises(static function () use ($app): void {
             $app->db->transaction(static function (PDO $pdo): void {
                 $pdo->exec("INSERT INTO bindings (value) VALUES ('rollback')");
@@ -266,12 +267,12 @@ try {
         same(1, (int) $app->db->execute('SELECT COUNT(*) FROM bindings')->fetchColumn());
     });
 
-    test('Database weigert onbekende drivers en MySQL DSN-injectie', static function () use ($temp): void {
+    test('Database rejects unknown drivers and MySQL DSN injection', static function () use ($temp): void {
         raises(static fn () => (new Database($temp, ['driver' => 'other', 'database' => 'x']))->pdo(), RuntimeException::class);
         raises(static fn () => (new Database($temp, ['driver' => 'mysql', 'database' => 'x;host=evil', 'host' => 'localhost', 'port' => '3306']))->pdo(), RuntimeException::class);
     });
 
-    test('CLI maakt alle generators en overschrijft geen bestaande bestanden', static function () use ($app, $temp): void {
+    test('CLI runs all generators and does not overwrite existing files', static function () use ($app, $temp): void {
         console($app, ['make:controller', 'Notes']);
         console($app, ['make:model', 'Article']);
         console($app, ['make:view', 'notes.index']);
@@ -284,14 +285,14 @@ try {
         $files = glob($temp . '/database/migrations/*.php');
         same(1, count($files));
         token_get_all((string) file_get_contents($files[0]), TOKEN_PARSE);
-        // De template faalt expliciet totdat de ontwikkelaar up/down implementeert.
+        // The template fails explicitly until the developer implements up/down.
         raises(static fn () => (new Migrator($app->db, $temp))->migrate(), LogicException::class);
         unlink($files[0]);
         raises(static fn () => console($app, ['make:view', 'notes.index']), RuntimeException::class);
         same(0, (int) $app->db->execute('SELECT COUNT(*) FROM migrations')->fetchColumn());
     });
 
-    test('CLI weigert traversal, onbekende opties en ontbrekende namen', static function () use ($app): void {
+    test('CLI rejects traversal, unknown options, and missing names', static function () use ($app): void {
         foreach ([
             ['make:view', '../escape'], ['make:controller', '../Escape'], ['make:model', '../Escape'], ['make:seeder', '../Escape'],
             ['make:migration', '../../escape'], ['make:view'], ['oops'], ['help', '--oops'],
@@ -302,7 +303,7 @@ try {
         }
     });
 
-    test('CLI beschermt productiedatabasewijzigingen', static function () use ($config, $temp): void {
+    test('CLI protects production database changes', static function () use ($config, $temp): void {
         $config['environment'] = 'production';
         $production = new Application($temp, $config);
         foreach (['migrate', 'migrate:rollback', 'db:seed'] as $command) {
@@ -311,7 +312,7 @@ try {
         console($production, ['migrate', '--force']);
     });
 
-    test('Migraties zijn herhaalbaar en rollback draait alleen de laatste batch terug', static function () use ($app, $root, $temp): void {
+    test('Migrations are repeatable and rollback reverts only the latest batch', static function () use ($app, $root, $temp): void {
         copy($root . '/database/migrations/20260101000000_create_notes.php', $temp . '/database/migrations/20260101000000_create_notes.php');
         $migrator = new Migrator($app->db, $temp);
         same(['20260101000000_create_notes'], $migrator->migrate());
@@ -331,14 +332,14 @@ PHP);
         unlink($temp . '/database/migrations/20260102000000_second.php');
     });
 
-    test('Migraties rollen SQLite DDL en registratie samen terug', static function () use ($app, $temp): void {
+    test('Migrations roll back SQLite DDL and registration together', static function () use ($app, $temp): void {
         $file = $temp . '/database/migrations/20260103000000_broken.php';
         file_put_contents($file, <<<'PHP'
 <?php
 return new class extends \PBreeze\Migration {
     public function up(PDO $db): void {
         $db->exec('CREATE TABLE broken (id INTEGER)');
-        throw new RuntimeException('bewust kapot');
+        throw new RuntimeException('intentionally broken');
     }
     public function down(PDO $db): void {}
 };
@@ -352,7 +353,7 @@ PHP);
         }
     });
 
-    test('Migraties weigeren een actief slot en ontbrekende toegepaste bestanden', static function () use ($app, $temp): void {
+    test('Migrations reject an active lock and missing applied files', static function () use ($app, $temp): void {
         $migrator = new Migrator($app->db, $temp);
         $lock = fopen($temp . '/storage/migrations.lock', 'c');
         flock($lock, LOCK_EX);
@@ -373,27 +374,27 @@ PHP);
         }
     });
 
-    test('Voorbeeldseeder is herhaalbaar', static function () use ($app, $temp, $root): void {
+    test('Example seeder is repeatable', static function () use ($app, $temp, $root): void {
         copy($root . '/database/seeders/DatabaseSeeder.php', $temp . '/database/seeders/DatabaseSeeder.php');
         console($app, ['db:seed']);
         console($app, ['db:seed']);
         same(1, (int) $app->db->execute('SELECT COUNT(*) FROM notes')->fetchColumn());
     });
 
-    test('Voorbeeldmodel maakt notities veilig aan en begrenst resultaten', static function () use ($app): void {
+    test('Example model creates notes safely and limits results', static function () use ($app): void {
         $notes = new \App\Models\Note($app->db);
-        $id = $notes->create("Een 'veilige' notitie");
+        $id = $notes->create("A 'safe' note");
         check($id > 0);
         $rows = $notes->latest(1);
         same(1, count($rows));
         same($id, $rows[0]['id']);
-        same("Een 'veilige' notitie", $rows[0]['title']);
+        same("A 'safe' note", $rows[0]['title']);
         raises(static fn () => $notes->latest(101), InvalidArgumentException::class);
         raises(static fn () => $notes->create(' '), InvalidArgumentException::class);
         raises(static fn () => $notes->create(str_repeat('a', 121)), InvalidArgumentException::class);
     });
 
-    test('SQLite-bestanden zijn bruikbaar met platformeigen bestandsrechten', static function () use ($temp): void {
+    test('SQLite files work with platform-native permissions', static function () use ($temp): void {
         $db = new Database($temp, ['driver' => 'sqlite', 'database' => 'private.sqlite']);
         $db->pdo();
         check(is_readable($temp . '/private.sqlite') && is_writable($temp . '/private.sqlite'));
@@ -402,7 +403,7 @@ PHP);
         }
     });
 
-    test('CLI init bewaart bestaande configuratie met platformeigen bestandsrechten', static function () use ($app, $root, $temp): void {
+    test('CLI init preserves existing configuration with platform-native permissions', static function () use ($app, $root, $temp): void {
         copy($root . '/.env.example', $temp . '/.env.example');
         console($app, ['init']);
         check(is_readable($temp . '/.env') && is_writable($temp . '/.env'));
@@ -414,13 +415,13 @@ PHP);
         same('APP_NAME=Eigen', file_get_contents($temp . '/.env'));
     });
 
-    test('Applicatie past CSRF toe voor de routehandler', static function () use ($app): void {
+    test('Application applies CSRF before the route handler', static function () use ($app): void {
         $app->router->post('/write', static fn (): Response => new Response('saved'));
         raises(static fn () => $app->handle(new Request('POST', '/write')), HttpException::class, 419);
         same('saved', $app->handle(new Request('POST', '/write', [], ['_token' => $app->session->token()]))->body);
     });
 
-    test('Native HTTP-server start en geeft health JSON terug', static function () use ($root, $temp, &$server, &$base): void {
+    test('Native HTTP server starts and returns health JSON', static function () use ($root, $temp, &$server, &$base): void {
         $socket = stream_socket_server('tcp://127.0.0.1:0', $errno, $error);
         if ($socket === false) {
             throw new RuntimeException($error);
@@ -457,13 +458,13 @@ PHP);
             2 => ['file', $temp . '/server.log', 'a'],
         ], $pipes, $root, $environment, ['bypass_shell' => true]);
         if (!is_resource($server)) {
-            throw new RuntimeException('Kan HTTP-server niet starten.');
+            throw new RuntimeException('Cannot start the HTTP server.');
         }
         $ready = false;
         for ($attempt = 0; $attempt < 60; $attempt++) {
             usleep(50000);
             if (!proc_get_status($server)['running']) {
-                throw new RuntimeException('HTTP-server gestopt: ' . file_get_contents($temp . '/server.log'));
+                throw new RuntimeException('HTTP server stopped: ' . file_get_contents($temp . '/server.log'));
             }
             try {
                 $response = http($base, '/health');
@@ -473,13 +474,13 @@ PHP);
                 continue;
             }
         }
-        check($ready, 'HTTP-server reageert niet.');
+        check($ready, 'HTTP server is not responding.');
         same(200, $response['status']);
         same(['status' => 'ok'], json_decode($response['body'], true, 512, JSON_THROW_ON_ERROR));
     });
 
     if (isset($base) && is_resource($server) && proc_get_status($server)['running']) {
-        test('HTTP-formulier heeft veilige cookie-attributen en CSP', static function () use ($base, &$cookie, &$token): void {
+        test('HTTP form has secure cookie attributes and CSP', static function () use ($base, &$cookie, &$token): void {
             $response = http($base, '/');
             same(200, $response['status']);
             $headers = implode("\n", $response['headers']);
@@ -498,7 +499,7 @@ PHP);
             $token = $match[1];
         });
 
-        test('HTTP weigert ontbrekende CSRF en accepteert een geldig token', static function () use ($base, &$cookie, &$token): void {
+        test('HTTP rejects missing CSRF and accepts a valid token', static function () use ($base, &$cookie, &$token): void {
             $headers = ['Content-Type: application/x-www-form-urlencoded', 'Cookie: ' . $cookie];
             same(419, http($base, '/greet', 'POST', 'name=Ada', $headers)['status']);
             $fields = captchaFields($cookie, http($base, '/', 'GET', '', ['Cookie: ' . $cookie])['body']);
@@ -510,7 +511,7 @@ PHP);
             same(422, http($base, '/greet', 'POST', http_build_query(['_token' => $token, 'name' => 'A'] + $fields), $headers)['status']);
         });
 
-        test('HTTP valideert JSON en ondersteunt CSRF-header', static function () use ($base, &$cookie, &$token): void {
+        test('HTTP validates JSON and supports the CSRF header', static function () use ($base, &$cookie, &$token): void {
             $headers = ['Content-Type: application/json', 'Cookie: ' . $cookie, 'X-CSRF-Token: ' . $token];
             same(400, http($base, '/greet', 'POST', '{', $headers)['status']);
             same(400, http($base, '/greet', 'POST', '[]', $headers)['status']);
@@ -521,7 +522,7 @@ PHP);
             same(422, http($base, '/greet', 'POST', json_encode(['name' => ['Ada']] + $fields, JSON_THROW_ON_ERROR), $headers)['status']);
         });
 
-        test('HTTP HEAD is leeg en privébestanden zijn onbereikbaar', static function () use ($base, &$cookie, &$token): void {
+        test('HTTP HEAD is empty and private files are inaccessible', static function () use ($base, &$cookie, &$token): void {
             same('', http($base, '/', 'HEAD')['body']);
             same(419, http($base, '/', 'DELETE', '', ['X-CSRF-Token: invalid'])['status']);
             same(405, http($base, '/', 'DELETE', '', ['Cookie: ' . $cookie, 'X-CSRF-Token: ' . $token])['status']);
@@ -530,7 +531,7 @@ PHP);
             same('body { color: black; }', $asset['body']);
             foreach (['/.env', '/bootstrap.php', '/database/app.sqlite', '/%2e%2e/.env', '/%00', '/%5c.env', '/assets%5c..%5c.env', '/.private.css', '/%5c.private.css'] as $path) {
                 $response = http($base, $path);
-                check(in_array($response['status'], [400, 404], true), 'Onverwachte status voor ' . $path);
+                check(in_array($response['status'], [400, 404], true), 'Unexpected status for ' . $path);
             }
             same(419, http($base, '/health', 'POST')['status']);
             same(405, http($base, '/health', 'POST', '', ['Cookie: ' . $cookie, 'X-CSRF-Token: ' . $token])['status']);
@@ -540,6 +541,7 @@ PHP);
         require __DIR__ . '/auth.php';
         require __DIR__ . '/bot-http.php';
         require __DIR__ . '/api-http.php';
+        englishHttp($base);
     }
 } finally {
     if (is_resource($server)) {
@@ -561,5 +563,5 @@ PHP);
     rmdir($temp);
 }
 
-echo "\n$passed geslaagd, $failed mislukt.\n";
+echo "\n$passed passed, $failed failed.\n";
 exit($failed === 0 ? 0 : 1);

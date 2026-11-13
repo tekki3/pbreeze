@@ -16,27 +16,27 @@ final class Imap
     }
 
     /**
-     * @param null|callable(string): bool $known Ontvangt de unieke bronhash.
+     * @param null|callable(string): bool $known Receives the unique source hash.
      * @return list<array{source_key: string, uid: string, uidvalidity: string, mailbox: string, raw: string, message: array<string, mixed>}>
      */
     public function fetch(int $limit = 50, ?callable $known = null): array
     {
         if ($limit < 1 || $limit > 1000) {
-            throw new InvalidArgumentException('Gebruik een IMAP-limiet tussen 1 en 1000.');
+            throw new InvalidArgumentException('Use an IMAP limit between 1 and 1000.');
         }
         $mailbox = $this->config['mailbox'] ?? 'INBOX';
         if (!preg_match('/^[\x20-\x7e]{1,255}$/D', $mailbox)) {
-            throw new InvalidArgumentException('Gebruik een ASCII- of IMAP modified UTF-7-mailboxnaam.');
+            throw new InvalidArgumentException('Use an ASCII or IMAP modified UTF-7 mailbox name.');
         }
         $maxBytes = $this->config['max_bytes'] ?? '10485760';
         if (!ctype_digit($maxBytes) || (int) $maxBytes < 1 || (int) $maxBytes > 52428800) {
-            throw new InvalidArgumentException('IMAP_MAX_BYTES moet tussen 1 en 52428800 liggen.');
+            throw new InvalidArgumentException('IMAP_MAX_BYTES must be between 1 and 52428800.');
         }
         $socket = new MailSocket($this->config);
         try {
             $greeting = $socket->line();
             if (!preg_match('/^\* (OK|PREAUTH)\b/i', $greeting, $greet)) {
-                throw new RuntimeException('Ongeldige IMAP-begroeting.');
+                throw new RuntimeException('Invalid IMAP greeting.');
             }
             if ($socket->encryption === 'starttls') {
                 $this->command($socket, 'STARTTLS');
@@ -44,17 +44,17 @@ final class Imap
             }
             if (strtoupper($greet[1]) !== 'PREAUTH') {
                 if ($socket->username === '' || $socket->password === '' || $socket->encryption === 'none') {
-                    throw new RuntimeException('IMAP-login vereist TLS, een gebruikersnaam en wachtwoord.');
+                    throw new RuntimeException('IMAP login requires TLS, a username, and a password.');
                 }
                 $this->command($socket, 'LOGIN ' . self::quote($socket->username) . ' ' . self::quote($socket->password));
             }
             $selected = $this->command($socket, 'EXAMINE ' . self::quote($mailbox));
             if (!preg_match('/\[UIDVALIDITY ([1-9][0-9]*)\]/i', implode("\n", $selected['lines']), $match)) {
-                throw new RuntimeException('IMAP-server geeft geen UIDVALIDITY terug.');
+                throw new RuntimeException('The IMAP server did not return UIDVALIDITY.');
             }
             $validity = $match[1];
             if (strlen($validity) > 10 || (int) $validity > 4294967295) {
-                throw new RuntimeException('Ongeldige IMAP UIDVALIDITY.');
+                throw new RuntimeException('Invalid IMAP UIDVALIDITY.');
             }
             $search = $this->command($socket, 'UID SEARCH ALL');
             $uids = [];
@@ -66,11 +66,11 @@ final class Imap
                 }
             }
             if (!$searchFound) {
-                throw new RuntimeException('IMAP-server geeft geen geldige SEARCH-respons terug.');
+                throw new RuntimeException('The IMAP server did not return a valid SEARCH response.');
             }
             foreach ($uids as $uid) {
                 if (!preg_match('/^[1-9][0-9]{0,9}$/D', $uid) || (int) $uid > 4294967295) {
-                    throw new RuntimeException('Ongeldige IMAP UID-lijst.');
+                    throw new RuntimeException('Invalid IMAP UID list.');
                 }
             }
             sort($uids, SORT_NUMERIC);
@@ -89,12 +89,12 @@ final class Imap
                 $fetched = $this->command($socket, "UID FETCH $uid (UID BODY.PEEK[])", (int) $maxBytes);
                 if (count($fetched['literals']) !== 1
                     || !preg_match('/\bUID ' . preg_quote($uid, '/') . '\b/i', implode("\n", $fetched['lines']))) {
-                    throw new RuntimeException("IMAP-bericht met UID $uid is niet volledig ontvangen.");
+                    throw new RuntimeException("IMAP message with UID $uid was not fully received.");
                 }
                 $raw = $fetched['literals'][0];
                 $totalBytes += strlen($raw);
                 if ($totalBytes > 52428800) {
-                    throw new RuntimeException('IMAP-batch is groter dan 50 MiB; gebruik een kleinere limiet.');
+                    throw new RuntimeException('The IMAP batch exceeds 50 MiB; use a smaller limit.');
                 }
                 $result[] = [
                     'source_key' => $key, 'uid' => $uid, 'uidvalidity' => $validity,
@@ -127,26 +127,26 @@ final class Imap
             $line = $socket->line(2097152);
             $bytes += strlen($line);
             if ($bytes > 2097152) {
-                throw new RuntimeException('IMAP-antwoord bevat te veel metadata.');
+                throw new RuntimeException('The IMAP response contains too much metadata.');
             }
             if (str_starts_with($line, "$tag ")) {
                 if (!preg_match('/^' . $tag . ' OK\b/i', $line)) {
-                    throw new RuntimeException('IMAP-server weigerde de opdracht.');
+                    throw new RuntimeException('The IMAP server rejected the command.');
                 }
                 return ['lines' => $lines, 'literals' => $literals];
             }
             if (preg_match('/^\* BYE\b/i', $line)) {
-                throw new RuntimeException('IMAP-server heeft de verbinding gesloten.');
+                throw new RuntimeException('The IMAP server closed the connection.');
             }
             $lines[] = $line;
             if (preg_match('/\{([0-9]+)\}$/D', $line, $match)) {
                 $length = (int) $match[1];
                 if ($length > $maxLiteral || $maxLiteral === 0 || $literals !== []) {
-                    throw new RuntimeException('IMAP-bericht overschrijdt de ingestelde limiet of bevat onverwachte literals.');
+                    throw new RuntimeException('The IMAP message exceeds the configured limit or contains unexpected literals.');
                 }
                 $literals[] = $socket->bytes($length);
             }
         }
-        throw new RuntimeException('IMAP-antwoord bevat te veel regels.');
+        throw new RuntimeException('The IMAP response contains too many lines.');
     }
 }

@@ -10,41 +10,41 @@ use RuntimeException;
 final class Console
 {
     private const HELP = <<<'TEXT'
-PBreeze - native PHP, zonder Composer of autoloader
+PBreeze - native PHP, without Composer or an autoloader
 
-Gebruik: php breeze <commando> [naam] [--force]
+Usage: php breeze <command> [name] [--force]
 
-  init                       Maak een lokale .env (bestaande blijft behouden)
-  key:generate               Toon een nieuwe APP_KEY; wijzigt geen bestanden
-  serve [poort]              Start op http://127.0.0.1:8000
-  routes                     Toon alle routes
-  make:controller Naam       Maak een controller in app/controllers
-  make:api Naam              Maak API-controller, routes en OpenAPI; registreer expliciet
-  api:token ID [naam] [dagen] Maak token voor bevestigde gebruiker (standaard 30 dagen)
-  api:tokens ID              Toon tokenmetadata voor een gebruiker, nooit de tokens
-  api:revoke ID              Trek een API-token in
-  api:openapi                Schrijf OpenAPI JSON naar stdout
-  make:model Naam            Maak een model in app/models
-  make:view map.naam         Maak een PHP-view in app/views
-  make:template map.naam     Maak een gecompileerde Breeze-template
-  view:clear                 Verwijder gecompileerde templates
-  make:migration naam        Maak een up/down-migratie
-  make:seeder Naam           Maak een seeder
-  migrate                    Voer openstaande migraties uit
-  migrate:status             Toon migraties en batchnummers
-  migrate:rollback           Draai de laatste batch terug
-  db:seed [Naam]             Voer een seeder uit (standaard DatabaseSeeder)
-  mail:queue bestand.json    Bewaar een uitgaande e-mail in de wachtrij
-  mail:list [limiet]          Toon de laatste e-mails (standaard 50)
-  mail:show ID                Toon een opgeslagen e-mail als JSON
-  mail:send ID                Verzend een queued e-mail via SMTP
-  mail:work [limiet]          Verzend queued e-mails, stopt bij eerste fout
-  mail:retry ID [--force]     Zet failed opnieuw klaar; force herstelt uncertain/sending
-  mail:fetch [limiet]         Lees IMAP zonder Seen-vlag of mailboxwijzigingen
-  test                       Voer de native tests uit
-  help                       Toon deze hulp
+  init                       Create a local .env (preserve an existing file)
+  key:generate               Print a new APP_KEY; do not modify any files
+  serve [port]               Start at http://127.0.0.1:8000
+  routes                     List all routes
+  make:controller Name       Create a controller in app/controllers
+  make:api Name              Create and explicitly register API controller, routes, OpenAPI
+  api:token ID [name] [days]  Create a token for a verified user (default: 30 days)
+  api:tokens ID              List token metadata for a user, never the tokens
+  api:revoke ID              Revoke an API token
+  api:openapi                Write OpenAPI JSON to stdout
+  make:model Name            Create a model in app/models
+  make:view folder.name      Create a PHP view in app/views
+  make:template folder.name  Create a compiled Breeze template
+  view:clear                 Remove compiled templates
+  make:migration name        Create an up/down migration
+  make:seeder Name           Create a seeder
+  migrate                    Run pending migrations
+  migrate:status             List migrations and batch numbers
+  migrate:rollback           Roll back the latest batch
+  db:seed [Name]             Run a seeder (default: DatabaseSeeder)
+  mail:queue message.json    Queue an outgoing email
+  mail:list [limit]          List recent emails (default: 50)
+  mail:show ID                Show a stored email as JSON
+  mail:send ID                Send a queued email via SMTP
+  mail:work [limit]          Send queued emails; stop on the first error
+  mail:retry ID [--force]     Requeue failed mail; force recovers uncertain/sending
+  mail:fetch [limit]         Read IMAP without setting Seen or changing the mailbox
+  test                       Run the native tests
+  help                       Show this help
 
-Databasewijzigingen in productie vereisen --force. Rollback verwijdert mogelijk data.
+Production database changes require --force. Rollback may delete data.
 TEXT;
 
     public function __construct(private readonly Application $app)
@@ -59,12 +59,12 @@ TEXT;
         $arguments = array_values(array_filter($arguments, static fn (string $arg): bool => $arg !== '--force'));
         foreach ($arguments as $argument) {
             if (str_starts_with($argument, '-')) {
-                throw new InvalidArgumentException("Onbekende optie: $argument");
+                throw new InvalidArgumentException("Unknown option: $argument");
             }
         }
         if (in_array($command, ['api:token', 'api:tokens', 'api:revoke', 'api:openapi'], true)) {
             if ($force) {
-                throw new InvalidArgumentException('API-commando accepteert geen --force.');
+                throw new InvalidArgumentException('API commands do not accept --force.');
             }
             $this->apiCommand($command, $arguments);
             return 0;
@@ -72,7 +72,7 @@ TEXT;
         $mailCommands = ['mail:queue', 'mail:list', 'mail:show', 'mail:send', 'mail:work', 'mail:retry', 'mail:fetch'];
         $allowsName = in_array($command, ['serve', 'make:controller', 'make:api', 'make:model', 'make:view', 'make:template', 'make:migration', 'make:seeder', 'db:seed', ...$mailCommands], true);
         if (count($arguments) > ($allowsName ? 1 : 0)) {
-            throw new InvalidArgumentException('Te veel argumenten. Gebruik php breeze help.');
+            throw new InvalidArgumentException('Too many arguments. Use php breeze help.');
         }
         $name = $arguments[0] ?? null;
         if (in_array($command, $mailCommands, true)) {
@@ -81,12 +81,12 @@ TEXT;
         }
         if (in_array($command, ['migrate', 'migrate:rollback', 'db:seed'], true)
             && $this->app->config['environment'] === 'production' && !$force) {
-            throw new RuntimeException('Productie is beschermd. Gebruik bewust --force na een back-up.');
+            throw new RuntimeException('Production is protected. Back up your data before explicitly using --force.');
         }
         switch ($command) {
             case 'key:generate':
                 if ($force) {
-                    throw new InvalidArgumentException('key:generate overschrijft geen sleutels en accepteert geen --force.');
+                    throw new InvalidArgumentException('key:generate does not overwrite keys and does not accept --force.');
                 }
                 echo 'APP_KEY=' . Encryption::generateKey() . PHP_EOL;
                 break;
@@ -96,21 +96,21 @@ TEXT;
             case 'init':
                 $target = $this->app->root . '/.env';
                 if (is_file($target)) {
-                    echo ".env bestaat al; niets gewijzigd.\n";
+                    echo ".env already exists; nothing changed.\n";
                     break;
                 }
                 $example = file_get_contents($this->app->root . '/.env.example');
                 if ($example === false) {
-                    throw new RuntimeException('Kan .env.example niet lezen.');
+                    throw new RuntimeException('Cannot read .env.example.');
                 }
                 $this->write($target, $example, 0600);
                 break;
             case 'serve':
                 $port = $name ?? '8000';
                 if (!ctype_digit($port) || (int) $port < 1024 || (int) $port > 65535) {
-                    throw new InvalidArgumentException('Gebruik een poort tussen 1024 en 65535.');
+                    throw new InvalidArgumentException('Use a port between 1024 and 65535.');
                 }
-                echo "Ontwikkelserver: http://127.0.0.1:$port (niet voor productie)\n";
+                echo "Development server: http://127.0.0.1:$port (not for production)\n";
                 return Process::run([
                     PHP_BINARY, '-S', "127.0.0.1:$port", '-t', $this->app->root . '/public',
                     $this->app->root . '/public/router.php',
@@ -129,12 +129,12 @@ TEXT;
             case 'make:migration':
             case 'make:seeder':
                 if ($name === null) {
-                    throw new InvalidArgumentException('Geef een naam op.');
+                    throw new InvalidArgumentException('Provide a name.');
                 }
                 $this->generate($command, $name);
                 break;
             case 'view:clear':
-                echo 'Gecompileerde templates verwijderd: ' . $this->app->views->clearCache() . "\n";
+                echo 'Compiled templates removed: ' . $this->app->views->clearCache() . "\n";
                 break;
             case 'migrate':
             case 'migrate:rollback':
@@ -146,18 +146,18 @@ TEXT;
                         echo ($batch === null ? 'OPEN' : "BATCH $batch") . "  $migration\n";
                     }
                     if ($rows === []) {
-                        echo "Geen migraties gevonden.\n";
+                        echo "No migrations found.\n";
                     }
                 } else {
                     if ($this->app->config['database']['driver'] === 'mysql') {
-                        fwrite(STDERR, "Let op: MySQL DDL is niet transactioneel. Maak eerst een back-up.\n");
+                        fwrite(STDERR, "Warning: MySQL DDL is not transactional. Create a backup first.\n");
                     }
                     $done = $command === 'migrate' ? $migrator->migrate() : $migrator->rollback();
                     foreach ($done as $migration) {
                         echo "$command: $migration\n";
                     }
                     if ($done === []) {
-                        echo "Geen wijzigingen nodig.\n";
+                        echo "No changes needed.\n";
                     }
                 }
                 break;
@@ -167,7 +167,7 @@ TEXT;
             case 'test':
                 return Process::run([PHP_BINARY, $this->app->root . '/tests/run.php'], $this->app->root);
             default:
-                throw new InvalidArgumentException("Onbekend commando: $command. Gebruik php breeze help.");
+                throw new InvalidArgumentException("Unknown command: $command. Use php breeze help.");
         }
         return 0;
     }
@@ -177,28 +177,28 @@ TEXT;
         Filesystem::portableName($name);
         if ($command === 'make:view' || $command === 'make:template') {
             if (!preg_match('/^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/D', $name)) {
-                throw new InvalidArgumentException('Gebruik een viewnaam zoals berichten.index.');
+                throw new InvalidArgumentException('Use a view name such as posts.index.');
             }
             $base = '/app/views/' . str_replace('.', '/', $name);
             foreach (['.php', '.breeze.php'] as $extension) {
                 if (file_exists($this->app->root . $base . $extension)) {
-                    throw new RuntimeException("View bestaat al: $name");
+                    throw new RuntimeException("View already exists: $name");
                 }
             }
             $path = $base . ($command === 'make:template' ? '.breeze.php' : '.php');
             $content = $command === 'make:template' ? <<<'TEMPLATE'
-<h1>{{ $title ?? 'Nieuwe pagina' }}</h1>
+<h1>{{ $title ?? 'New page' }}</h1>
 
 TEMPLATE : <<<'PHP'
 <?php
 declare(strict_types=1);
 ?>
-<h1><?= e($title ?? 'Nieuwe pagina') ?></h1>
+<h1><?= e($title ?? 'New page') ?></h1>
 
 PHP;
         } elseif ($command === 'make:migration') {
             if (!preg_match('/^[a-z][a-z0-9_]{0,100}$/D', $name)) {
-                throw new InvalidArgumentException('Gebruik snake_case voor migraties (maximaal 101 tekens).');
+                throw new InvalidArgumentException('Use snake_case for migrations (up to 101 characters).');
             }
             $stamp = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('YmdHisu');
             $path = "/database/migrations/{$stamp}_$name.php";
@@ -211,12 +211,12 @@ use PBreeze\Migration;
 return new class extends Migration {
     public function up(PDO $db): void
     {
-        throw new LogicException('Implementeer eerst up().');
+        throw new LogicException('Implement up() first.');
     }
 
     public function down(PDO $db): void
     {
-        throw new LogicException('Implementeer eerst down().');
+        throw new LogicException('Implement down() first.');
     }
 };
 
@@ -225,7 +225,7 @@ PHP;
             if (!preg_match('/^[A-Z][a-zA-Z0-9]{0,100}$/D', $name)
                 || token_get_all('<?php ' . $name)[1][0] !== T_STRING
                 || in_array(strtolower($name), ['class', 'trait', 'interface', 'enum', 'match', 'function', 'parent', 'self', 'static', 'readonly', 'namespace', 'use', 'new', 'default', 'return', 'abstract', 'final', 'extends', 'implements', 'echo', 'print', 'list', 'array', 'string', 'int', 'float', 'bool', 'true', 'false', 'null', 'object', 'mixed', 'never', 'void', 'iterable', 'callable', 'resource'], true)) {
-                throw new InvalidArgumentException('Gebruik een geldige PascalCase-naam zonder gereserveerde woorden.');
+                throw new InvalidArgumentException('Use a valid PascalCase name without reserved words.');
             }
             if ($command === 'make:api') {
                 $this->generateApi($name);
@@ -253,7 +253,7 @@ final class {{name}}
 
     public function index(Request $request): Response
     {
-        return Response::json(['message' => 'Vervang dit door je eigen actie.']);
+        return Response::json(['message' => 'Replace this with your own action.']);
     }
 }
 
@@ -283,7 +283,7 @@ PHP);
 declare(strict_types=1);
 
 return static function (PDO $db): void {
-    throw new LogicException('Implementeer eerst de seeder.');
+    throw new LogicException('Implement the seeder first.');
 };
 
 PHP;
@@ -291,9 +291,9 @@ PHP;
         }
         $this->write($this->app->root . $path, $content);
         if ($command === 'make:controller') {
-            echo "Laad de controller expliciet met require_once in routes/web.php en registreer de route.\n";
+            echo "Load the controller explicitly with require_once in routes/web.php and register the route.\n";
         } elseif ($command === 'make:model') {
-            echo "Controleer de tabelnaam en vul fillable/casts/hidden in. Laad het model expliciet met require_once.\n";
+            echo "Check the table name and configure fillable/casts/hidden. Load the model explicitly with require_once.\n";
         }
     }
 
@@ -301,18 +301,18 @@ PHP;
     {
         Filesystem::portableName($name);
         if (!preg_match('/^[A-Z][a-zA-Z0-9]*$/D', $name)) {
-            throw new InvalidArgumentException('Ongeldige seedernaam.');
+            throw new InvalidArgumentException('Invalid seeder name.');
         }
         $path = $this->app->root . "/database/seeders/$name.php";
         if (!is_file($path)) {
-            throw new RuntimeException("Seeder bestaat niet: $name");
+            throw new RuntimeException("Seeder does not exist: $name");
         }
         $seeder = require $path;
         if (!$seeder instanceof \Closure) {
-            throw new RuntimeException('Een seeder moet een Closure teruggeven.');
+            throw new RuntimeException('A seeder must return a Closure.');
         }
         $this->app->db->transaction($seeder);
-        echo "Seeder uitgevoerd: $name\n";
+        echo "Seeder completed: $name\n";
     }
 
     /** @param list<string> $arguments */
@@ -321,7 +321,7 @@ PHP;
         $count = count($arguments);
         if ($command === 'api:openapi') {
             if ($count !== 0) {
-                throw new InvalidArgumentException('Gebruik: php breeze api:openapi');
+                throw new InvalidArgumentException('Usage: php breeze api:openapi');
             }
             $this->app->routes();
             echo json_encode($this->app->api->openApi(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL;
@@ -329,22 +329,22 @@ PHP;
         }
         if ($count < 1 || $count > ($command === 'api:token' ? 3 : 1)
             || !ctype_digit($arguments[0]) || strlen($arguments[0]) > 18 || (int) $arguments[0] < 1) {
-            throw new InvalidArgumentException('Gebruik een positief ID en controleer php breeze help.');
+            throw new InvalidArgumentException('Use a positive ID and check php breeze help.');
         }
         $id = (int) $arguments[0];
         if ($command === 'api:token') {
             $days = $arguments[2] ?? '30';
             if (!ctype_digit($days) || strlen($days) > 3 || (int) $days < 1 || (int) $days > 365) {
-                throw new InvalidArgumentException('Tokenverval moet tussen 1 en 365 dagen liggen.');
+                throw new InvalidArgumentException('Token expiration must be between 1 and 365 days.');
             }
             $result = $this->app->api->tokens->create($id, $arguments[1] ?? 'cli', (int) $days);
-            echo "Bewaar dit bearer-token veilig: het wordt maar één keer getoond.\n";
+            echo "Store this bearer token securely: it is shown only once.\n";
             echo json_encode($result, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR) . PHP_EOL;
         } elseif ($command === 'api:tokens') {
             echo json_encode($this->app->api->tokens->listing($id), JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR) . PHP_EOL;
         } else {
             $this->app->api->tokens->revoke($id);
-            echo "API-token ingetrokken: $id\n";
+            echo "API token revoked: $id\n";
         }
     }
 
@@ -352,7 +352,7 @@ PHP;
     {
         $resource = strtolower((string) preg_replace('/(?<!^)[A-Z]/', '-$0', $name));
         if (in_array($resource, ['ping', 'me', 'token', 'docs'], true)) {
-            throw new InvalidArgumentException('Deze API-resourcenaam is gereserveerd.');
+            throw new InvalidArgumentException('This API resource name is reserved.');
         }
         $class = $name . 'ApiController';
         $controller = $this->app->root . "/app/controllers/api/$class.php";
@@ -360,47 +360,47 @@ PHP;
         $registry = $this->app->root . '/routes/api.php';
         foreach ([$controller, $module] as $path) {
             if (file_exists($path) || is_link($path)) {
-                throw new RuntimeException("Bestand bestaat al: $path");
+                throw new RuntimeException("File already exists: $path");
             }
         }
         if (!is_file($registry)) {
-            throw new RuntimeException('routes/api.php ontbreekt; herstel eerst het API-register.');
+            throw new RuntimeException('routes/api.php is missing; restore the API registry first.');
         }
         $handle = fopen($registry, 'r+');
         if ($handle === false) {
-            throw new RuntimeException('Kan API-register niet openen.');
+            throw new RuntimeException('Cannot open the API registry.');
         }
         $created = [];
         $original = null;
         $changed = false;
         try {
             if (!flock($handle, LOCK_EX)) {
-                throw new RuntimeException('Kan API-register niet vergrendelen.');
+                throw new RuntimeException('Cannot lock the API registry.');
             }
             $original = stream_get_contents($handle);
             if ($original === false) {
-                throw new RuntimeException('Kan API-register niet lezen.');
+                throw new RuntimeException('Cannot read the API registry.');
             }
             foreach (token_get_all($original, TOKEN_PARSE) as $token) {
                 if (is_array($token) && in_array($token[0], [T_CLOSE_TAG, T_INLINE_HTML, T_HALT_COMPILER], true)) {
-                    throw new RuntimeException('API-register moet een PHP-bestand zonder sluitende tag zijn.');
+                    throw new RuntimeException('The API registry must be a PHP file without a closing tag.');
                 }
             }
             $preview = new Application($this->app->root, $this->app->config);
             $preview->routes();
             if (class_exists("App\\Controllers\\Api\\$class", false)) {
-                throw new RuntimeException('API-controllerklasse bestaat al; PHP-klassen zijn hoofdletterongevoelig.');
+                throw new RuntimeException('The API controller class already exists; PHP class names are case-insensitive.');
             }
             foreach ($preview->api->listing() as $route) {
                 if ($route['path'] === "/api/$resource" || str_starts_with($route['path'], "/api/$resource/")) {
-                    throw new RuntimeException('API-resource heeft al routes.');
+                    throw new RuntimeException('The API resource already has routes.');
                 }
             }
             $ids = array_map(static fn (string $action): string => 'generated' . $name . ucfirst($action), ['index', 'store', 'show', 'update', 'destroy']);
             foreach ($preview->api->openApi()['paths'] as $operations) {
                 foreach ($operations as $operation) {
                     if (in_array($operation['operationId'], $ids, true)) {
-                        throw new RuntimeException('Een gegenereerd OpenAPI operationId bestaat al.');
+                        throw new RuntimeException('A generated OpenAPI operationId already exists.');
                     }
                 }
             }
@@ -423,27 +423,27 @@ final class {{class}}
 
     public function index(Request $request): Response
     {
-        throw new HttpException(501, 'Implementeer index(), inclusief toegangscontrole op je eigen gegevens.');
+        throw new HttpException(501, 'Implement index(), including authorization for your own data.');
     }
 
     public function store(Request $request): Response
     {
-        throw new HttpException(501, 'Implementeer store(), inclusief invoervalidatie en toegangscontrole.');
+        throw new HttpException(501, 'Implement store(), including input validation and authorization.');
     }
 
     public function show(Request $request, string $id): Response
     {
-        throw new HttpException(501, 'Implementeer show(), inclusief toegangscontrole op dit record.');
+        throw new HttpException(501, 'Implement show(), including authorization for this record.');
     }
 
     public function update(Request $request, string $id): Response
     {
-        throw new HttpException(501, 'Implementeer update(), inclusief invoervalidatie en toegangscontrole.');
+        throw new HttpException(501, 'Implement update(), including input validation and authorization.');
     }
 
     public function destroy(Request $request, string $id): Response
     {
-        throw new HttpException(501, 'Implementeer destroy(), inclusief toegangscontrole op dit record.');
+        throw new HttpException(501, 'Implement destroy(), including authorization for this record.');
     }
 }
 
@@ -471,18 +471,18 @@ PHP);
             $line = "\nrequire \$app->root . '/routes/api/$resource.php';\n";
             $changed = true;
             if (fwrite($handle, $line) !== strlen($line) || !fflush($handle)) {
-                throw new RuntimeException('Kan API-module niet registreren.');
+                throw new RuntimeException('Cannot register the API module.');
             }
-            echo "Geregistreerd: /api/$resource. Alle acties vereisen een bearer-token en geven 501 tot implementatie.\n";
+            echo "Registered: /api/$resource. All actions require a bearer token and return 501 until implemented.\n";
         } catch (\Throwable $error) {
             if ($changed && is_string($original)) {
                 if (!ftruncate($handle, strlen($original)) || !fflush($handle)) {
-                    throw new RuntimeException('Herstel van API-register mislukt; controleer routes/api.php.', 0, $error);
+                    throw new RuntimeException('Failed to restore the API registry; check routes/api.php.', 0, $error);
                 }
             }
             foreach (array_reverse($created) as $path) {
                 if (!unlink($path)) {
-                    throw new RuntimeException("Opruimen mislukt: $path", 0, $error);
+                    throw new RuntimeException("Cleanup failed: $path", 0, $error);
                 }
             }
             throw $error;
@@ -494,25 +494,25 @@ PHP);
     private function write(string $path, string $content, int $mode = 0644): void
     {
         if (file_exists($path) || is_link($path)) {
-            throw new RuntimeException("Bestand bestaat al: $path");
+            throw new RuntimeException("File already exists: $path");
         }
         $directory = dirname($path);
         if (!is_dir($directory) && !mkdir($directory, 0755, true) && !is_dir($directory)) {
-            throw new RuntimeException('Kan directory niet aanmaken.');
+            throw new RuntimeException('Cannot create the directory.');
         }
         $handle = fopen($path, 'x');
         if ($handle === false) {
-            throw new RuntimeException("Bestand bestaat al of is niet schrijfbaar: $path");
+            throw new RuntimeException("File already exists or is not writable: $path");
         }
         try {
             Filesystem::permissions($path, $mode);
             if (fwrite($handle, $content) !== strlen($content)) {
-                throw new RuntimeException("Kan bestand niet volledig schrijven: $path");
+                throw new RuntimeException("Cannot write the complete file: $path");
             }
         } catch (\Throwable $error) {
             fclose($handle);
             if (!unlink($path)) {
-                throw new RuntimeException("Kan onvolledig bestand niet verwijderen: $path", 0, $error);
+                throw new RuntimeException("Cannot remove the incomplete file: $path", 0, $error);
             }
             throw $error;
         } finally {
@@ -520,6 +520,6 @@ PHP);
                 fclose($handle);
             }
         }
-        echo "Aangemaakt: $path\n";
+        echo "Created: $path\n";
     }
 }

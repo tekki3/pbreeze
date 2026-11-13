@@ -16,11 +16,11 @@ final class ApiTokens
     {
         if ($userId < 1 || trim($name) === '' || strlen($name) > 80 || preg_match('//u', $name) !== 1 || preg_match('/[\x00-\x1f\x7f]/', $name)
             || $days < 1 || $days > 365) {
-            throw new InvalidArgumentException('Gebruik een positief gebruiker-ID, tokennaam van 1-80 bytes en 1-365 dagen.');
+            throw new InvalidArgumentException('Use a positive user ID, a token name of 1-80 bytes, and 1-365 days.');
         }
         $user = $this->db->execute('SELECT session_version, email_verified_at FROM users WHERE id = ?', [$userId])->fetch();
         if ($user === false || $user['email_verified_at'] === null) {
-            throw new InvalidArgumentException('API-tokens vereisen een bestaande gebruiker met bevestigd e-mailadres.');
+            throw new InvalidArgumentException('API tokens require an existing user with a verified email address.');
         }
         $token = 'pbz_' . bin2hex(random_bytes(32));
         $expires = time() + $days * 86400;
@@ -54,7 +54,7 @@ final class ApiTokens
     public function listing(int $userId): array
     {
         if ($userId < 1) {
-            throw new InvalidArgumentException('Gebruiker-ID moet positief zijn.');
+            throw new InvalidArgumentException('User ID must be positive.');
         }
         return $this->db->execute(
             'SELECT id, user_id, name, created_at, expires_at FROM api_tokens WHERE user_id = ? ORDER BY id DESC', [$userId],
@@ -64,15 +64,15 @@ final class ApiTokens
     public function revoke(int $id): void
     {
         if ($id < 1) {
-            throw new InvalidArgumentException('Token-ID moet positief zijn.');
+            throw new InvalidArgumentException('Token ID must be positive.');
         }
         if ($this->db->execute('DELETE FROM api_tokens WHERE id = ?', [$id])->rowCount() !== 1) {
-            throw new RecordNotFoundException('API-token bestaat niet.');
+            throw new RecordNotFoundException('API token does not exist.');
         }
     }
 
     private function unauthorized(): HttpException
     {
-        return new HttpException(401, 'Een geldig bearer-token is vereist.', ['WWW-Authenticate' => 'Bearer realm="api"']);
+        return new HttpException(401, 'A valid bearer token is required.', ['WWW-Authenticate' => 'Bearer realm="api"']);
     }
 }

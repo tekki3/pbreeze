@@ -28,12 +28,12 @@ final class Database
         if ($driver === 'sqlite') {
             $path = Filesystem::databasePath($this->root, $name);
             if ($path !== ':memory:' && !is_dir(dirname($path))) {
-                throw new RuntimeException('De databasedirectory bestaat niet.');
+                throw new RuntimeException('The database directory does not exist.');
             }
             if ($path !== ':memory:' && !file_exists($path)) {
                 $handle = fopen($path, 'c');
                 if ($handle === false) {
-                    throw new RuntimeException('Kan SQLite-database niet aanmaken.');
+                    throw new RuntimeException('Cannot create the SQLite database.');
                 }
                 try {
                     Filesystem::permissions($path, 0600);
@@ -45,15 +45,15 @@ final class Database
         } elseif ($driver === 'mysql') {
             foreach (['database', 'host', 'port'] as $key) {
                 if (!preg_match('/^[a-zA-Z0-9_.-]+$/D', $this->config[$key])) {
-                    throw new RuntimeException("Ongeldige databaseconfiguratie: $key");
+                    throw new RuntimeException("Invalid database configuration: $key");
                 }
             }
             if (!ctype_digit($this->config['port']) || (int) $this->config['port'] < 1 || (int) $this->config['port'] > 65535) {
-                throw new RuntimeException('Ongeldige databasepoort.');
+                throw new RuntimeException('Invalid database port.');
             }
             $dsn = "mysql:host={$this->config['host']};port={$this->config['port']};dbname=$name;charset=utf8mb4";
         } else {
-            throw new RuntimeException('DB_CONNECTION moet sqlite of mysql zijn.');
+            throw new RuntimeException('DB_CONNECTION must be sqlite or mysql.');
         }
         $pdo = new PDO($dsn, $this->config['username'] ?? '', $this->config['password'] ?? '', [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,

@@ -10,11 +10,11 @@ function captchaFields(string $cookie, string $html): array
 {
     global $temp;
     check(preg_match('/(?:^|; )pbreeze_session=([a-zA-Z0-9,-]+)/', $cookie, $session) === 1);
-    check(preg_match('/name="_captcha_id" value="([a-f0-9]{32})"/', $html, $match) === 1, 'CAPTCHA ontbreekt in het formulier.');
+    check(preg_match('/name="_captcha_id" value="([a-f0-9]{32})"/', $html, $match) === 1, 'CAPTCHA is missing from the form.');
     $file = $temp . '/http-sessions/sess_' . $session[1];
     $state = unserialize(file_get_contents($file), ['allowed_classes' => false]);
     check(is_array($state) && isset($state['_captchas'][$match[1]]));
-    // Alleen de geisoleerde testclient kent een vaste oplossing; de app heeft geen test-bypass.
+    // Only the isolated test client knows a fixed solution; the application has no test bypass.
     $state['_captchas'][$match[1]]['hash'] = hash('sha256', 'TEST23');
     file_put_contents($file, serialize($state));
     return ['_captcha_id' => $match[1], '_captcha_answer' => 'TEST23', 'website' => ''];
@@ -42,7 +42,7 @@ function botAnswer(BotProtection $bot, Session $session, string $purpose = 'regi
     return ['_captcha_id' => $challenge['id'], '_captcha_answer' => 'TEST23', 'website' => ''];
 }
 
-test('CAPTCHA is sessiegebonden, formuliergebonden, hoofdletterongevoelig en eenmalig', static function (): void {
+test('CAPTCHA is session-bound, form-bound, case-insensitive, and single-use', static function (): void {
     botFixture(static function (BotProtection $bot, Session $session): void {
         $data = botAnswer($bot, $session);
         $data['_captcha_answer'] = ' test23 ';
@@ -60,7 +60,7 @@ test('CAPTCHA is sessiegebonden, formuliergebonden, hoofdletterongevoelig en een
     });
 });
 
-test('Honeypot en ongeldige invoertypes falen en verbruiken ook een correct opgeloste CAPTCHA', static function (): void {
+test('Honeypots and invalid input types fail and consume even a correctly solved CAPTCHA', static function (): void {
     botFixture(static function (BotProtection $bot, Session $session): void {
         foreach ([
             ['website' => 'https://spam.example.test'], ['website' => ' '], ['website' => ['']],
@@ -80,7 +80,7 @@ test('Honeypot en ongeldige invoertypes falen en verbruiken ook een correct opge
     });
 });
 
-test('CAPTCHA verloopt exact na vijf minuten en ontbrekende afbeeldingen geven 404', static function (): void {
+test('CAPTCHA expires after exactly five minutes and missing images return 404', static function (): void {
     botFixture(static function (BotProtection $bot, Session $session): void {
         $data = botAnswer($bot, $session);
         $state = $session->get('_captchas');
@@ -93,7 +93,7 @@ test('CAPTCHA verloopt exact na vijf minuten en ontbrekende afbeeldingen geven 4
     });
 });
 
-test('SVG bevat alleen lokale vectorpaden en beeld ophalen verbruikt de uitdaging niet', static function (): void {
+test('SVG contains only local vector paths and fetching the image does not consume the challenge', static function (): void {
     botFixture(static function (BotProtection $bot, Session $session): void {
         $data = botAnswer($bot, $session);
         $image = $bot->image($data['_captcha_id']);
@@ -112,7 +112,7 @@ test('SVG bevat alleen lokale vectorpaden en beeld ophalen verbruikt de uitdagin
     });
 });
 
-test('Meerdere tabbladen blijven onafhankelijk en sessieopslag en aanmaakfrequentie zijn begrensd', static function (): void {
+test('Multiple tabs remain independent and session storage and creation rates are bounded', static function (): void {
     botFixture(static function (BotProtection $bot, Session $session): void {
         $first = botAnswer($bot, $session);
         $second = botAnswer($bot, $session);
@@ -130,7 +130,7 @@ test('Meerdere tabbladen blijven onafhankelijk en sessieopslag en aanmaakfrequen
     });
 });
 
-test('Vernieuwen verwijdert alleen de oude uitdaging voor hetzelfde formulier', static function (): void {
+test('Refresh removes only the old challenge for the same form', static function (): void {
     botFixture(static function (BotProtection $bot, Session $session): void {
         $data = botAnswer($bot, $session);
         $other = botAnswer($bot, $session, 'login');

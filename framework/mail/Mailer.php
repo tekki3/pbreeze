@@ -20,19 +20,19 @@ final class Mailer
     public function compose(array $data): Message
     {
         if (array_diff(array_keys($data), ['from', 'to', 'subject', 'text', 'html']) !== []) {
-            throw new InvalidArgumentException('Onbekend e-mailveld; toegestaan: from, to, subject, text, html.');
+            throw new InvalidArgumentException('Unknown email field; allowed: from, to, subject, text, html.');
         }
         foreach (['from', 'subject', 'text', 'html'] as $field) {
             if (array_key_exists($field, $data) && !is_string($data[$field])) {
-                throw new InvalidArgumentException("E-mailveld $field moet tekst zijn.");
+                throw new InvalidArgumentException("Email field $field must be a string.");
             }
         }
         if (!isset($data['to']) || !is_array($data['to'])) {
-            throw new InvalidArgumentException('E-mailveld to moet een lijst e-mailadressen zijn.');
+            throw new InvalidArgumentException('Email field to must be a list of email addresses.');
         }
         foreach ($data['to'] as $recipient) {
             if (!is_string($recipient)) {
-                throw new InvalidArgumentException('Elke ontvanger moet een e-mailadres als tekst zijn.');
+                throw new InvalidArgumentException('Each recipient must be an email address string.');
             }
         }
         return new Message(
@@ -46,7 +46,7 @@ final class Mailer
         return $this->store->queue($message);
     }
 
-    /** Geeft bij ingeschakelde logging het opgeslagen e-mail-ID terug. */
+    /** Returns the stored email ID when logging is enabled. */
     public function send(Message $message): ?int
     {
         if ($this->config['log'] ?? true) {
@@ -67,7 +67,7 @@ final class Mailer
             $this->store->fail($id, $error);
             throw $error;
         }
-        // Niet in de catch: een DB-fout na SMTP-acceptatie mag geen veilige retry suggereren.
+        // Outside the catch: a database error after SMTP acceptance must not suggest a safe retry.
         $this->store->complete($id);
     }
 

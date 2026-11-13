@@ -4,7 +4,7 @@ declare(strict_types=1);
 use PBreeze\Database;
 use PBreeze\Filesystem;
 
-test('Databasepaden ondersteunen Linux, Windows-schijven, UNC en relatieve paden', static function (): void {
+test('Database paths support Linux, Windows drives, UNC, and relative paths', static function (): void {
     foreach ([
         ['/app', ':memory:', ':memory:'],
         ['/app', 'database/app.sqlite', '/app/database/app.sqlite'],
@@ -21,7 +21,7 @@ test('Databasepaden ondersteunen Linux, Windows-schijven, UNC en relatieve paden
     }
 });
 
-test('SQLite opent een absoluut lokaal pad en relatieve backslashpaden correct', static function () use ($temp): void {
+test('SQLite correctly opens absolute local paths and relative backslash paths', static function () use ($temp): void {
     $db = new Database($temp, ['driver' => 'sqlite', 'database' => $temp . '/absolute.sqlite']);
     $db->execute('CREATE TABLE absolute_path (id INTEGER)');
     check(is_file($temp . '/absolute.sqlite'));
@@ -30,7 +30,7 @@ test('SQLite opent een absoluut lokaal pad en relatieve backslashpaden correct',
     check(is_file($temp . '/database/relative.sqlite'));
 });
 
-test('Generators weigeren Windows-apparaatnamen op beide platforms', static function () use ($app): void {
+test('Generators reject Windows device names on both platforms', static function () use ($app): void {
     foreach ([
         ['make:view', 'con'], ['make:view', 'pages.nul'], ['make:view', 'aux.index'],
         ['make:model', 'NUL'], ['make:seeder', 'COM1'], ['db:seed', 'LPT9'],
@@ -42,10 +42,10 @@ test('Generators weigeren Windows-apparaatnamen op beide platforms', static func
     Filesystem::portableName('Company');
 });
 
-test('CLI-processen behouden spaties, quotes, procenttekens en exitcodes zonder shell', static function () use ($root, $temp): void {
+test('CLI processes preserve spaces, quotes, percent signs, and exit codes without a shell', static function () use ($root, $temp): void {
     $fixture = $temp . "/process % ! & ' fixture.php";
     copy($root . '/tests/fixtures/process.php', $fixture);
-    $arguments = ['met spaties', '100%', '!PATH!', '%PATH%', '& whoami', 'een"quote', "een'quote", 'C:\\Sites\\app'];
+    $arguments = ['with spaces', '100%', '!PATH!', '%PATH%', '& whoami', 'a"quote', "a'quote", 'C:\\Sites\\app'];
     $output = $temp . '/process-output.json';
     $error = $temp . '/process-error.log';
     $process = proc_open([PHP_BINARY, $fixture, $root . '/bootstrap.php', 'nested', ...$arguments], [
@@ -53,7 +53,7 @@ test('CLI-processen behouden spaties, quotes, procenttekens en exitcodes zonder 
         1 => ['file', $output, 'w'],
         2 => ['file', $error, 'w'],
     ], $pipes, $temp, null, ['bypass_shell' => true]);
-    check(is_resource($process), 'Testproces kon niet starten.');
+    check(is_resource($process), 'Could not start the test process.');
     same(7, proc_close($process));
     same('', file_get_contents($error));
     $result = json_decode((string) file_get_contents($output), true, 32, JSON_THROW_ON_ERROR);
@@ -61,7 +61,7 @@ test('CLI-processen behouden spaties, quotes, procenttekens en exitcodes zonder 
     same(realpath($temp), $result['directory']);
 });
 
-test('Env ondersteunt CRLF-bestanden en Windows-paden zonder escapeverwerking', static function () use ($temp): void {
+test('Env supports CRLF files and Windows paths without escape processing', static function () use ($temp): void {
     $file = $temp . '/windows.env';
     file_put_contents($file, "PBREEZE_TEST_WINDOWS_PATH=\"C:\\Data\\mail\"\r\nPBREEZE_TEST_WINDOWS_BOOL=true\r\n");
     \PBreeze\Env::load($file);

@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-// Uitsluitend een lokale protocolfixture; wordt nooit door de applicatie geladen.
+// Local protocol fixture only; never loaded by the application.
 $settings = json_decode((string) file_get_contents($argv[1]), true, 32, JSON_THROW_ON_ERROR);
 $context = stream_context_create(['ssl' => [
     'local_cert' => $settings['certificate'] ?? '',
@@ -16,7 +16,7 @@ flush();
 $client = stream_socket_accept($server, 15);
 fclose($server);
 if ($client === false) {
-    throw new RuntimeException('Geen testclient verbonden.');
+    throw new RuntimeException('No test client connected.');
 }
 stream_set_timeout($client, 10);
 $transcript = ['commands' => [], 'data' => ''];
@@ -41,13 +41,13 @@ function fixtureWrite(string $value): void
 {
     global $client;
     set_error_handler(static function (): never {
-        throw new FixtureDisconnected('Client heeft de testverbinding gesloten.');
+        throw new FixtureDisconnected('Client closed the test connection.');
     });
     try {
         for ($offset = 0; $offset < strlen($value);) {
             $count = fwrite($client, substr($value, $offset));
             if ($count === false || $count === 0) {
-                throw new FixtureDisconnected('Client heeft de testverbinding gesloten.');
+                throw new FixtureDisconnected('Client closed the test connection.');
             }
             $offset += $count;
         }

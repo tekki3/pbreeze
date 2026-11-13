@@ -45,7 +45,7 @@ final class MailStore
                 ],
             );
         } catch (\PDOException $error) {
-            // Gelijktijdige import van dezelfde UID is toegestaan; andere DB-fouten blijven fouten.
+            // Concurrent imports of the same UID are allowed; other database errors remain errors.
             if (in_array((string) $error->getCode(), ['23000', '23505'], true)) {
                 $existing = $this->db->execute('SELECT id FROM emails WHERE source_key = ?', [$incoming['source_key']])->fetchColumn();
                 if ($existing !== false) {
@@ -66,11 +66,11 @@ final class MailStore
     public function find(int $id): array
     {
         if ($id < 1) {
-            throw new InvalidArgumentException('E-mail-ID moet positief zijn.');
+            throw new InvalidArgumentException('Email ID must be positive.');
         }
         $row = $this->db->execute('SELECT * FROM emails WHERE id = ?', [$id])->fetch();
         if ($row === false) {
-            throw new RuntimeException("E-mail bestaat niet: $id");
+            throw new RuntimeException("Email does not exist: $id");
         }
         return $row;
     }
@@ -79,7 +79,7 @@ final class MailStore
     {
         $row = $this->find($id);
         if ($row['direction'] !== 'outgoing' || $row['status'] !== 'queued') {
-            throw new RuntimeException('Alleen uitgaande e-mails met status queued kunnen worden verzonden.');
+            throw new RuntimeException('Only outgoing emails with queued status can be sent.');
         }
         $message = new Message(
             $row['from_address'], json_decode($row['to_addresses'], true, 32, JSON_THROW_ON_ERROR),
@@ -91,7 +91,7 @@ final class MailStore
             [self::now(), $id],
         )->rowCount();
         if ($changed !== 1) {
-            throw new RuntimeException('E-mail is inmiddels door een ander proces opgepakt.');
+            throw new RuntimeException('Another process has already claimed this email.');
         }
         return $message;
     }
@@ -111,13 +111,13 @@ final class MailStore
         $row = $this->find($id);
         $allowed = $force ? ['failed', 'uncertain', 'sending'] : ['failed'];
         if ($row['direction'] !== 'outgoing' || !in_array($row['status'], $allowed, true)) {
-            throw new RuntimeException('Alleen failed mag opnieuw in de wachtrij; uncertain/sending vereist bewust --force.');
+            throw new RuntimeException('Only failed messages can be requeued; uncertain/sending requires explicit --force.');
         }
         if ($this->db->execute(
             "UPDATE emails SET status = 'queued', updated_at = ? WHERE id = ? AND status = ? AND direction = 'outgoing'",
             [self::now(), $id, $row['status']],
         )->rowCount() !== 1) {
-            throw new RuntimeException('De e-mailstatus is gelijktijdig gewijzigd.');
+            throw new RuntimeException('The email status was changed concurrently.');
         }
     }
 
@@ -146,7 +146,7 @@ final class MailStore
             "UPDATE emails SET status = ?, last_error = ?, sent_at = ?, updated_at = ? WHERE id = ? AND status = 'sending'",
             [$status, $error, $sentAt, self::now(), $id],
         )->rowCount() !== 1) {
-            throw new RuntimeException('Kan de verzendstatus niet opslaan; controleer de SMTP-server voordat je opnieuw verzendt.');
+            throw new RuntimeException('Cannot save the delivery status; check the SMTP server before resending.');
         }
     }
 
@@ -158,7 +158,7 @@ final class MailStore
     private static function limit(int $limit): void
     {
         if ($limit < 1 || $limit > 1000) {
-            throw new InvalidArgumentException('Gebruik een limiet tussen 1 en 1000.');
+            throw new InvalidArgumentException('Use a limit between 1 and 1000.');
         }
     }
 }

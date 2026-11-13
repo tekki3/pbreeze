@@ -31,7 +31,7 @@ final class Smtp
             $capabilities = $this->command($socket, 'EHLO localhost', [250]);
             if ($socket->encryption === 'starttls') {
                 if (!preg_match('/^250[ -]STARTTLS\b/im', $capabilities)) {
-                    throw new RuntimeException('SMTP-server biedt geen STARTTLS aan.');
+                    throw new RuntimeException('The SMTP server does not offer STARTTLS.');
                 }
                 $this->command($socket, 'STARTTLS', [220]);
                 $socket->startTls();
@@ -39,7 +39,7 @@ final class Smtp
             }
             if ($socket->username !== '' || $socket->password !== '') {
                 if ($socket->username === '' || $socket->password === '') {
-                    throw new RuntimeException('SMTP-gebruikersnaam en wachtwoord zijn beide vereist.');
+                    throw new RuntimeException('Both SMTP username and password are required.');
                 }
                 if (preg_match('/^250[ -]AUTH[ =].*\bPLAIN\b/im', $capabilities)) {
                     $this->command($socket, 'AUTH PLAIN', [334]);
@@ -49,7 +49,7 @@ final class Smtp
                     $this->command($socket, base64_encode($socket->username), [334]);
                     $this->command($socket, base64_encode($socket->password), [235]);
                 } else {
-                    throw new RuntimeException('SMTP vereist AUTH PLAIN of LOGIN over TLS.');
+                    throw new RuntimeException('SMTP requires AUTH PLAIN or LOGIN over TLS.');
                 }
             }
             $this->command($socket, 'MAIL FROM:<' . $message->from . '>', [250]);
@@ -61,7 +61,7 @@ final class Smtp
             $uncertain = true;
             $socket->write(rtrim($wire, "\r\n") . "\r\n.\r\n");
             $this->reply($socket, [250], $uncertain);
-            // De 250 na DATA is doorslaggevend; een verloren QUIT mag geen retry veroorzaken.
+            // The 250 after DATA is decisive; a lost QUIT must not trigger a retry.
         } catch (Throwable $error) {
             throw new DeliveryException($error->getMessage(), $uncertain);
         } finally {
@@ -85,7 +85,7 @@ final class Smtp
             $line = $socket->line();
             if (!preg_match('/^([0-9]{3})([ -])(.*)$/D', $line, $match)
                 || ($code !== null && $code !== (int) $match[1])) {
-                throw new RuntimeException('Ongeldig SMTP-antwoord.');
+                throw new RuntimeException('Invalid SMTP response.');
             }
             $code = (int) $match[1];
             $lines[] = $line;
@@ -94,12 +94,12 @@ final class Smtp
                     if ($code >= 400 && $code <= 599) {
                         $uncertain = false;
                     }
-                    throw new RuntimeException("SMTP-server weigerde de opdracht (status $code).");
+                    throw new RuntimeException("The SMTP server rejected the command (status $code).");
                 }
                 $uncertain = false;
                 return implode("\r\n", $lines);
             }
         }
-        throw new RuntimeException('Te veel SMTP-antwoordregels.');
+        throw new RuntimeException('Too many SMTP response lines.');
     }
 }

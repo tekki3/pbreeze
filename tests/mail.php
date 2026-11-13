@@ -24,7 +24,7 @@ function mailFixture(array $options, callable $work): array
         2 => ['file', $name . '.log', 'a'],
     ], $pipes, null, null, ['bypass_shell' => true]);
     if (!is_resource($process)) {
-        throw new RuntimeException('Kan mailfixture niet starten.');
+        throw new RuntimeException('Cannot start the mail fixture.');
     }
     if (PHP_OS_FAMILY !== 'Windows') {
         stream_set_timeout($pipes[1], 10);
@@ -32,7 +32,7 @@ function mailFixture(array $options, callable $work): array
     try {
         $address = fgets($pipes[1]);
         if ($address === false) {
-            throw new RuntimeException('Mailfixture startte niet: ' . file_get_contents($name . '.log'));
+            throw new RuntimeException('Mail fixture did not start: ' . file_get_contents($name . '.log'));
         }
         $port = explode(':', trim($address))[1];
         $work([
@@ -45,7 +45,7 @@ function mailFixture(array $options, callable $work): array
         $exit = proc_close($process);
         $process = null;
         $log = file_get_contents($name . '.log');
-        check($exit === 0, "Mailfixture stopte met $exit: $log");
+        check($exit === 0, "Mail fixture exited with $exit: $log");
         same('', $log);
         return json_decode((string) file_get_contents($options['transcript']), true, 32, JSON_THROW_ON_ERROR);
     } finally {
@@ -80,15 +80,15 @@ CONFIG);
     $options = ['config' => $config, 'private_key_bits' => 2048, 'digest_alg' => 'sha256', 'x509_extensions' => 'server'];
     $key = openssl_pkey_new($options);
     if ($key === false) {
-        throw new RuntimeException('Kan testsleutel niet maken.');
+        throw new RuntimeException('Cannot create the test key.');
     }
     $csr = openssl_csr_new(['commonName' => '127.0.0.1'], $key, $options);
     if ($csr === false) {
-        throw new RuntimeException('Kan testcertificaataanvraag niet maken.');
+        throw new RuntimeException('Cannot create the test certificate request.');
     }
     $certificate = openssl_csr_sign($csr, null, $key, 1, $options);
     if ($certificate === false || !openssl_x509_export($certificate, $cert) || !openssl_pkey_export($key, $private, null, $options)) {
-        throw new RuntimeException('Kan testcertificaat niet maken.');
+        throw new RuntimeException('Cannot create the test certificate.');
     }
     file_put_contents($pem, $cert . $private);
     \PBreeze\Filesystem::permissions($pem, 0600);
@@ -108,7 +108,7 @@ function mailApp(array $mail = []): Application
     return $app;
 }
 
-test('Mailmigratie maakt tabel en index en rolt volledig terug', static function (): void {
+test('Mail migration creates the table and index and rolls back completely', static function (): void {
     global $temp, $root;
     $db = new Database($temp, ['driver' => 'sqlite', 'database' => ':memory:']);
     $migration = require $root . '/database/migrations/20261113150000_create_emails.php';
@@ -118,7 +118,7 @@ test('Mailmigratie maakt tabel en index en rolt volledig terug', static function
     same(0, (int) $db->execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'emails'")->fetchColumn());
 });
 
-test('Message valideert adressen, headerinjectie, lege body en ontvangers', static function (): void {
+test('Message validates addresses, header injection, empty bodies, and recipients', static function (): void {
     foreach ([
         ['from' => "sender@example.test\r\nBcc: other@example.test", 'to' => ['a@example.test'], 'subject' => 'ok', 'text' => 'ok'],
         ['from' => 'sender@example.test', 'to' => [], 'subject' => 'ok', 'text' => 'ok'],
@@ -130,25 +130,25 @@ test('Message valideert adressen, headerinjectie, lege body en ontvangers', stat
     }
 });
 
-test('MIME roundtrip bewaart Unicode, lange onderwerpregels en tekst/HTML', static function (): void {
-    $subject = str_repeat('Hallo Zoë ', 20);
-    $message = new Message('sender@example.test', ['a@example.test', 'b@example.test'], $subject, ".test\nHallo Zoë", '<p>Hallo Zoë</p>');
+test('MIME round trip preserves Unicode, long subjects, and text/HTML', static function (): void {
+    $subject = str_repeat('Hello Zoë ', 20);
+    $message = new Message('sender@example.test', ['a@example.test', 'b@example.test'], $subject, ".test\nHello Zoë", '<p>Hello Zoë</p>');
     $wire = $message->wire();
     foreach (explode("\r\n", $wire) as $line) {
         check(strlen($line) < 998, 'MIME-regel te lang.');
     }
     $parsed = Mime::parse($wire);
     same($subject, $parsed['subject']);
-    same(".test\nHallo Zoë", $parsed['text']);
-    same('<p>Hallo Zoë</p>', $parsed['html']);
+    same(".test\nHello Zoë", $parsed['text']);
+    same('<p>Hello Zoë</p>', $parsed['html']);
     same($message->messageId, $parsed['message_id']);
 });
 
-test('MIME decodeert quoted-printable en negeert bijlagen', static function (): void {
+test('MIME decodes quoted-printable and ignores attachments', static function (): void {
     $raw = "From: Sender <sender@example.test>\r\nSubject: =?ISO-8859-1?Q?Caf=E9?=\r\n"
         . "Content-Type: multipart/mixed; boundary=x\r\n\r\n"
         . "--x\r\nContent-Type: text/plain; charset=ISO-8859-1\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nCaf=E9\r\n"
-        . "--x\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=test.txt\r\n\r\nNiet importeren\r\n--x--\r\n";
+        . "--x\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=test.txt\r\n\r\nDo not import\r\n--x--\r\n";
     $parsed = Mime::parse($raw);
     same('Café', $parsed['subject']);
     same('Café', $parsed['text']);
@@ -157,7 +157,7 @@ test('MIME decodeert quoted-printable en negeert bijlagen', static function (): 
     raises(static fn () => Mime::parse("Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\nContent-Type: text/plain\r\n\r\none\r\n--x\r\nContent-Type: text/plain\r\n\r\ntwo"), RuntimeException::class);
 });
 
-test('MailSocket weigert onveilige authenticatie en ongeldige configuratie', static function (): void {
+test('MailSocket rejects unsafe authentication and invalid configuration', static function (): void {
     foreach ([
         ['host' => 'external.example', 'port' => '25', 'encryption' => 'none'],
         ['host' => '127.0.0.1', 'port' => '25', 'encryption' => 'none', 'username' => 'user'],
@@ -169,79 +169,79 @@ test('MailSocket weigert onveilige authenticatie en ongeldige configuratie', sta
     }
 });
 
-test('SMTP verstuurt alle ontvangers en MIME via echte lokale socket', static function (): void {
-    $message = new Message('sender@example.test', ['a@example.test', 'b@example.test'], 'Onderwerp', 'Hallo');
+test('SMTP sends all recipients and MIME through a real local socket', static function (): void {
+    $message = new Message('sender@example.test', ['a@example.test', 'b@example.test'], 'Subject', 'Hello');
     $transcript = mailFixture(['protocol' => 'smtp'], static function (array $settings) use ($message): void {
         (new Smtp($settings))->send($message);
     });
     check(in_array('RCPT TO:<a@example.test>', $transcript['commands'], true));
     check(in_array('RCPT TO:<b@example.test>', $transcript['commands'], true));
-    same('Hallo', Mime::parse($transcript['data'])['text']);
+    same('Hello', Mime::parse($transcript['data'])['text']);
 });
 
-test('SMTP ondersteunt geverifieerde impliciete TLS en AUTH PLAIN', static function (): void {
+test('SMTP supports verified implicit TLS and AUTH PLAIN', static function (): void {
     $transcript = mailFixture(['protocol' => 'smtp', 'encryption' => 'tls', 'certificate' => mailCertificate()], static function (array $settings): void {
         $settings['username'] = 'test-user';
         $settings['password'] = 'test-password';
-        (new Smtp($settings))->send(new Message('sender@example.test', ['a@example.test'], 'TLS', 'Veilig'));
+        (new Smtp($settings))->send(new Message('sender@example.test', ['a@example.test'], 'TLS', 'Secure'));
     });
     same("\0test-user\0test-password", $transcript['auth']);
 });
 
-test('SMTP ondersteunt STARTTLS met nieuwe EHLO en AUTH LOGIN', static function (): void {
+test('SMTP supports STARTTLS with a new EHLO and AUTH LOGIN', static function (): void {
     $transcript = mailFixture([
         'protocol' => 'smtp', 'encryption' => 'starttls', 'certificate' => mailCertificate(), 'auth' => 'LOGIN',
     ], static function (array $settings): void {
         $settings['username'] = 'test-user';
         $settings['password'] = 'test-password';
-        (new Smtp($settings))->send(new Message('sender@example.test', ['a@example.test'], 'TLS', 'Veilig'));
+        (new Smtp($settings))->send(new Message('sender@example.test', ['a@example.test'], 'TLS', 'Secure'));
     });
     same(2, count(array_filter($transcript['commands'], static fn (string $command): bool => $command === 'EHLO localhost')));
     same('test-user:test-password', $transcript['auth']);
 });
 
-test('SMTP weigert onbetrouwbare TLS-certificaten', static function (): void {
+test('SMTP rejects untrusted TLS certificates', static function (): void {
     $transcript = mailFixture(['protocol' => 'smtp', 'encryption' => 'tls', 'certificate' => mailCertificate()], static function (array $settings): void {
         $settings['ca_file'] = '';
-        raises(static fn () => (new Smtp($settings))->send(new Message('sender@example.test', ['a@example.test'], 'TLS', 'Veilig')), DeliveryException::class);
+        raises(static fn () => (new Smtp($settings))->send(new Message('sender@example.test', ['a@example.test'], 'TLS', 'Secure')), DeliveryException::class);
     });
     same(true, $transcript['tls_rejected']);
     same([], $transcript['commands']);
 });
 
-test('SMTP controleert ook de hostnaam bij een vertrouwd certificaat', static function (): void {
+test('SMTP also checks the hostname with a trusted certificate', static function (): void {
     $transcript = mailFixture([
         'protocol' => 'smtp', 'encryption' => 'tls', 'certificate' => mailCertificate(), 'expect_tls_rejection' => true,
     ], static function (array $settings): void {
         $settings['host'] = 'localhost';
         try {
-            (new Smtp($settings))->send(new Message('sender@example.test', ['a@example.test'], 'TLS', 'Veilig'));
-            throw new RuntimeException('Hostnaammismatch is niet geweigerd.');
+            (new Smtp($settings))->send(new Message('sender@example.test', ['a@example.test'], 'TLS', 'Secure'));
+            throw new RuntimeException('Hostname mismatch was not rejected.');
         } catch (DeliveryException $error) {
-            check(str_contains($error->getMessage(), 'TLS-certificaat'));
+            check(str_contains($error->getMessage(), 'TLS certificate'));
             same(false, $error->uncertain);
         }
     });
-    // De server kan de handshake afronden voordat de client de hostnaam afwijst.
+    // The server may complete the handshake before the client rejects the hostname.
     same([], $transcript['commands']);
     same('', $transcript['data']);
 });
 
-test('SMTP valt zonder STARTTLS-aanbod niet terug en verstuurt geen credentials', static function (): void {
+test('SMTP does not fall back or send credentials when STARTTLS is not offered', static function (): void {
     $transcript = mailFixture(['protocol' => 'smtp'], static function (array $settings): void {
         $settings['encryption'] = 'starttls';
         $settings['username'] = 'test-user';
         $settings['password'] = 'test-password';
-        raises(static fn () => (new Smtp($settings))->send(new Message('sender@example.test', ['a@example.test'], 'TLS', 'Veilig')), DeliveryException::class);
+        raises(static fn () => (new Smtp($settings))->send(new Message('sender@example.test', ['a@example.test'], 'TLS', 'Secure')), DeliveryException::class);
     });
     same(['EHLO localhost'], $transcript['commands']);
 });
 
-test('SMTP voert geen DATA uit als een ontvanger geweigerd is', static function (): void {
+test('SMTP does not send DATA when a recipient is rejected', static function (): void {
     $transcript = mailFixture(['protocol' => 'smtp', 'reject_recipient' => true], static function (array $settings): void {
         try {
             (new Smtp($settings))->send(new Message('sender@example.test', ['a@example.test', 'b@example.test'], 'x', 'x'));
-            throw new RuntimeException('Afwijzing ontbreekt.');
+            throw new RuntimeException('Expected rejection was not received.');
         } catch (DeliveryException $error) {
             same(false, $error->uncertain);
         }
@@ -249,16 +249,16 @@ test('SMTP voert geen DATA uit als een ontvanger geweigerd is', static function 
     check(!in_array('DATA', $transcript['commands'], true));
 });
 
-test('Databasewachtrij en CLI versturen opgeslagen mails en blokkeren herhaling', static function (): void {
+test('Database queue and CLI send stored emails and block repeats', static function (): void {
     global $temp;
     $transcript = mailFixture(['protocol' => 'smtp'], static function (array $settings) use ($temp): void {
         $app = mailApp(['smtp' => $settings, 'log' => false]);
         $file = $temp . '/outgoing.json';
-        file_put_contents($file, json_encode(['to' => ['a@example.test'], 'subject' => 'Wachtrij', 'text' => 'Bericht'], JSON_THROW_ON_ERROR));
-        check(str_contains(console($app, ['mail:queue', $file]), 'In wachtrij: 1'));
+        file_put_contents($file, json_encode(['to' => ['a@example.test'], 'subject' => 'Queue', 'text' => 'Message'], JSON_THROW_ON_ERROR));
+        check(str_contains(console($app, ['mail:queue', $file]), 'Queued: 1'));
         same('queued', $app->mail->store->find(1)['status']);
         same(1, count(json_decode(console($app, ['mail:list']), true, 32, JSON_THROW_ON_ERROR)));
-        check(str_contains(console($app, ['mail:show', '1']), 'Wachtrij'));
+        check(str_contains(console($app, ['mail:show', '1']), 'Queue'));
         console($app, ['mail:send', '1']);
         $row = $app->mail->store->find(1);
         same('sent', $row['status']);
@@ -268,20 +268,20 @@ test('Databasewachtrij en CLI versturen opgeslagen mails en blokkeren herhaling'
         raises(static fn () => console($app, ['mail:retry', '1']), RuntimeException::class);
         raises(static fn () => $app->mail->store->retry(1, true), RuntimeException::class);
     });
-    same('Bericht', Mime::parse($transcript['data'])['text']);
+    same('Message', Mime::parse($transcript['data'])['text']);
 });
 
-test('CLI mail:work verwerkt de wachtrij en rapporteert een lege wachtrij', static function (): void {
+test('CLI mail:work processes the queue and reports an empty queue', static function (): void {
     mailFixture(['protocol' => 'smtp'], static function (array $settings): void {
         $app = mailApp(['smtp' => $settings]);
         $id = $app->mail->queue($app->mail->compose(['to' => ['a@example.test'], 'text' => 'Worker']));
         console($app, ['mail:work', '1']);
         same('sent', $app->mail->store->find($id)['status']);
-        check(str_contains(console($app, ['mail:work']), 'Verwerkt: 0'));
+        check(str_contains(console($app, ['mail:work']), 'Processed: 0'));
     });
 });
 
-test('SMTP-afwijzing wordt failed zonder servertekst of credentials in het log', static function (): void {
+test('SMTP rejection becomes failed without server text or credentials in the log', static function (): void {
     mailFixture(['protocol' => 'smtp', 'reject_data' => true], static function (array $settings): void {
         $app = mailApp(['smtp' => $settings]);
         $id = $app->mail->queue($app->mail->compose(['to' => ['a@example.test'], 'text' => 'x']));
@@ -296,15 +296,15 @@ test('SMTP-afwijzing wordt failed zonder servertekst of credentials in het log',
     });
 });
 
-test('SMTP-loginfout bewaart geen credentials en worker stopt vóór het volgende bericht', static function (): void {
+test('SMTP login failure stores no credentials and the worker stops before the next message', static function (): void {
     mailFixture([
         'protocol' => 'smtp', 'encryption' => 'tls', 'certificate' => mailCertificate(), 'auth_fail' => true,
     ], static function (array $settings): void {
         $settings['username'] = 'test-user';
         $settings['password'] = 'test-password';
         $app = mailApp(['smtp' => $settings]);
-        $app->mail->queue($app->mail->compose(['to' => ['a@example.test'], 'text' => 'Eerste']));
-        $app->mail->queue($app->mail->compose(['to' => ['a@example.test'], 'text' => 'Tweede']));
+        $app->mail->queue($app->mail->compose(['to' => ['a@example.test'], 'text' => 'First']));
+        $app->mail->queue($app->mail->compose(['to' => ['a@example.test'], 'text' => 'Second']));
         raises(static fn () => console($app, ['mail:work']), DeliveryException::class);
         $failed = $app->mail->store->find(1);
         same('failed', $failed['status']);
@@ -314,7 +314,7 @@ test('SMTP-loginfout bewaart geen credentials en worker stopt vóór het volgend
     });
 });
 
-test('Een databasefout na SMTP-acceptatie laat sending staan en veroorzaakt geen retry', static function (): void {
+test('Database failure after SMTP acceptance leaves sending status and does not trigger a retry', static function (): void {
     mailFixture(['protocol' => 'smtp'], static function (array $settings): void {
         $app = mailApp(['smtp' => $settings]);
         $id = $app->mail->queue($app->mail->compose(['to' => ['a@example.test'], 'text' => 'x']));
@@ -327,7 +327,7 @@ test('Een databasefout na SMTP-acceptatie laat sending staan en veroorzaakt geen
     });
 });
 
-test('Verloren SMTP DATA-bevestiging wordt uncertain en wordt niet automatisch herhaald', static function (): void {
+test('Lost SMTP DATA acknowledgment becomes uncertain and is not retried automatically', static function (): void {
     mailFixture(['protocol' => 'smtp', 'drop_after_data' => true], static function (array $settings): void {
         $app = mailApp(['smtp' => $settings]);
         $id = $app->mail->queue($app->mail->compose(['to' => ['a@example.test'], 'text' => 'x']));
@@ -340,7 +340,7 @@ test('Verloren SMTP DATA-bevestiging wordt uncertain en wordt niet automatisch h
     });
 });
 
-test('Een geclaimd bericht kan niet door een tweede worker worden verzonden', static function (): void {
+test('A claimed message cannot be sent by a second worker', static function (): void {
     $app = mailApp();
     $id = $app->mail->queue($app->mail->compose(['to' => ['a@example.test'], 'text' => 'x']));
     $message = $app->mail->store->claim($id);
@@ -351,28 +351,28 @@ test('Een geclaimd bericht kan niet door een tweede worker worden verzonden', st
     same('queued', $app->mail->store->find($id)['status']);
 });
 
-test('MAIL_LOG=false verstuurt zonder e-mailtabel en logging true faalt vóór verzending zonder tabel', static function (): void {
+test('MAIL_LOG=false sends without an email table and logging true fails before sending without a table', static function (): void {
     global $temp;
     mailFixture(['protocol' => 'smtp'], static function (array $settings) use ($temp): void {
         $db = new Database($temp, ['driver' => 'sqlite', 'database' => ':memory:']);
         $mail = new Mailer($db, ['smtp' => $settings, 'log' => false]);
-        same(null, $mail->send(new Message('sender@example.test', ['a@example.test'], 'Geen log', 'x')));
+        same(null, $mail->send(new Message('sender@example.test', ['a@example.test'], 'No log', 'x')));
         $logged = new Mailer($db, ['smtp' => $settings, 'log' => true]);
         raises(static fn () => $logged->send(new Message('sender@example.test', ['a@example.test'], 'Log', 'x')), PDOException::class);
     });
 });
 
-test('MAIL_LOG=true bewaart een direct verzonden bericht met status sent', static function (): void {
+test('MAIL_LOG=true stores a directly sent message with sent status', static function (): void {
     mailFixture(['protocol' => 'smtp'], static function (array $settings): void {
         $app = mailApp(['smtp' => $settings, 'log' => true]);
-        $id = $app->mail->send($app->mail->compose(['to' => ['a@example.test'], 'html' => '<p>Hallo</p>']));
+        $id = $app->mail->send($app->mail->compose(['to' => ['a@example.test'], 'html' => '<p>Hello</p>']));
         same(1, $id);
         same('sent', $app->mail->store->find($id)['status']);
     });
 });
 
-test('IMAP importeert exacte raw mail, Unicode en UID-identiteit zonder berichten te wijzigen', static function (): void {
-    $raw = (new Message('sender@example.test', ['a@example.test'], 'Hallo Zoë', 'Tekst', '<p>HTML</p>'))->wire();
+test('IMAP imports exact raw mail, Unicode, and UID identity without modifying messages', static function (): void {
+    $raw = (new Message('sender@example.test', ['a@example.test'], 'Hello Zoë', 'Text', '<p>HTML</p>'))->wire();
     $transcript = mailFixture(['protocol' => 'imap', 'messages' => ['1' => base64_encode($raw)]], static function (array $settings) use ($raw): void {
         $app = mailApp(['imap' => $settings]);
         $rows = $app->mail->fetch(10);
@@ -380,7 +380,7 @@ test('IMAP importeert exacte raw mail, Unicode en UID-identiteit zonder berichte
         $row = $app->mail->store->find($rows[0]['id']);
         same('incoming', $row['direction']);
         same('received', $row['status']);
-        same('Hallo Zoë', $row['subject']);
+        same('Hello Zoë', $row['subject']);
         same($raw, base64_decode($row['raw_message'], true));
         same('1', $row['imap_uid']);
         same('777', $row['imap_uidvalidity']);
@@ -393,7 +393,7 @@ test('IMAP importeert exacte raw mail, Unicode en UID-identiteit zonder berichte
     check(in_array('P3 UID FETCH 1 (UID BODY.PEEK[])', $transcript['commands'], true));
 });
 
-test('IMAP slaat bekende UIDs over zodat een limiet de import niet blokkeert', static function (): void {
+test('IMAP skips known UIDs so a limit does not block imports', static function (): void {
     $raw = (new Message('sender@example.test', ['a@example.test'], 'UID', 'x'))->wire();
     $transcript = mailFixture(['protocol' => 'imap', 'messages' => ['1' => base64_encode($raw), '2' => base64_encode($raw)]], static function (array $settings): void {
         $calls = 0;
@@ -408,7 +408,7 @@ test('IMAP slaat bekende UIDs over zodat een limiet de import niet blokkeert', s
     check(in_array('P3 UID FETCH 2 (UID BODY.PEEK[])', $transcript['commands'], true));
 });
 
-test('IMAP ondersteunt TLS-login en importeert zonder logging geen tabel', static function (): void {
+test('IMAP supports TLS login and needs no table when logging is disabled', static function (): void {
     global $temp;
     $raw = (new Message('sender@example.test', ['a@example.test'], 'TLS IMAP', 'x'))->wire();
     $transcript = mailFixture([
@@ -424,7 +424,7 @@ test('IMAP ondersteunt TLS-login en importeert zonder logging geen tabel', stati
     same('P1 LOGIN "test\\"user" "test\\\\password"', $transcript['commands'][0]);
 });
 
-test('IMAP ondersteunt STARTTLS en mailboxnamen kunnen geen commando injecteren', static function (): void {
+test('IMAP supports STARTTLS and mailbox names cannot inject commands', static function (): void {
     $transcript = mailFixture([
         'protocol' => 'imap', 'encryption' => 'starttls', 'certificate' => mailCertificate(), 'messages' => [],
     ], static function (array $settings): void {
@@ -436,7 +436,7 @@ test('IMAP ondersteunt STARTTLS en mailboxnamen kunnen geen commando injecteren'
     raises(static fn () => (new Imap(['mailbox' => "INBOX\r\nDELETE X"]))->fetch(), InvalidArgumentException::class);
 });
 
-test('IMAP-loginfouten lekken geen credentials via exceptiontraces', static function (): void {
+test('IMAP login failures do not leak credentials through exception traces', static function (): void {
     mailFixture([
         'protocol' => 'imap', 'encryption' => 'tls', 'certificate' => mailCertificate(), 'auth_fail' => true,
     ], static function (array $settings): void {
@@ -446,9 +446,9 @@ test('IMAP-loginfouten lekken geen credentials via exceptiontraces', static func
         try {
             try {
                 (new Imap($settings))->fetch();
-                throw new LogicException('Loginfout ontbreekt.');
+                throw new LogicException('Expected login error was not received.');
             } catch (RuntimeException $error) {
-                same('IMAP-server weigerde de opdracht.', $error->getMessage());
+                same('The IMAP server rejected the command.', $error->getMessage());
                 check(!str_contains((string) $error, 'PRIVATE_TEST_PASSWORD'));
                 check(!str_contains((string) $error, 'SECRET_FROM_SERVER'));
             }
@@ -460,7 +460,7 @@ test('IMAP-loginfouten lekken geen credentials via exceptiontraces', static func
     });
 });
 
-test('IMAP weigert onbetrouwbare TLS en lege mailboxen geven een lege lijst', static function (): void {
+test('IMAP rejects untrusted TLS and empty mailboxes return an empty list', static function (): void {
     $transcript = mailFixture(['protocol' => 'imap', 'encryption' => 'tls', 'certificate' => mailCertificate()], static function (array $settings): void {
         $settings['ca_file'] = '';
         raises(static fn () => (new Imap($settings))->fetch(), RuntimeException::class);
@@ -471,13 +471,13 @@ test('IMAP weigert onbetrouwbare TLS en lege mailboxen geven een lege lijst', st
     });
 });
 
-test('IMAP weigert te grote literals voordat de berichtbody wordt gelezen', static function (): void {
+test('IMAP rejects oversized literals before reading the message body', static function (): void {
     mailFixture(['protocol' => 'imap', 'oversize' => true, 'messages' => ['1' => base64_encode('x')]], static function (array $settings): void {
         raises(static fn () => (new Imap($settings))->fetch(), RuntimeException::class);
     });
 });
 
-test('CLI mail:fetch bewaart binnenkomende mail en mailcommands valideren invoer', static function (): void {
+test('CLI mail:fetch stores incoming mail and mail commands validate input', static function (): void {
     $raw = (new Message('sender@example.test', ['a@example.test'], 'CLI IMAP', 'x'))->wire();
     mailFixture(['protocol' => 'imap', 'messages' => ['1' => base64_encode($raw)]], static function (array $settings): void {
         $app = mailApp(['imap' => $settings]);

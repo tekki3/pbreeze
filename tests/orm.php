@@ -65,14 +65,14 @@ function ormDatabase(): Database
     $db->execute('CREATE TABLE orm_authors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, secret TEXT NULL)');
     $db->execute('CREATE TABLE orm_posts (
         id INTEGER PRIMARY KEY AUTOINCREMENT, author_id INTEGER NULL REFERENCES orm_authors(id),
-        title TEXT NOT NULL DEFAULT \'Nieuw\', active INTEGER NOT NULL DEFAULT 0, score REAL NOT NULL DEFAULT 0,
+        title TEXT NOT NULL DEFAULT \'New\', active INTEGER NOT NULL DEFAULT 0, score REAL NOT NULL DEFAULT 0,
         metadata TEXT NULL, published_at TEXT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )');
     $db->execute('CREATE TABLE orm_keys (code TEXT PRIMARY KEY, value TEXT NULL)');
     return $db;
 }
 
-test('Querybuilder voert gebonden CRUD uit en bewaart nulls, booleans, quotes en Unicode', static function (): void {
+test('Query builder uses bound CRUD and preserves nulls, booleans, quotes, and Unicode', static function (): void {
     $db = ormDatabase();
     $id = $db->table('orm_authors')->insert(['name' => "Ada ' ; DROP TABLE orm_authors; --", 'secret' => null]);
     check(is_int($id));
@@ -80,7 +80,7 @@ test('Querybuilder voert gebonden CRUD uit en bewaart nulls, booleans, quotes en
     same(null, $db->table('orm_authors')->find($id)['secret']);
     same(1, $db->table('orm_authors')->where('id', $id)->update(['name' => 'Renée']));
     same('Renée', $db->table('orm_authors')->findOrFail($id)['name']);
-    same(0, $db->table('orm_authors')->where('id', 999)->update(['name' => 'Nooit']));
+    same(0, $db->table('orm_authors')->where('id', 999)->update(['name' => 'Never']));
     same(1, $db->table('orm_authors')->where('id', $id)->delete());
     same(null, $db->table('orm_authors')->find($id));
     same(false, $db->table('orm_authors')->exists());
@@ -88,10 +88,10 @@ test('Querybuilder voert gebonden CRUD uit en bewaart nulls, booleans, quotes en
     raises(fn () => $db->table('orm_authors')->firstOrFail(), RecordNotFoundException::class);
 });
 
-test('Queries zijn immutable en ondersteunen AND, vergelijking, IN, LIKE en null', static function (): void {
+test('Queries are immutable and support AND, comparisons, IN, LIKE, and null', static function (): void {
     $db = ormDatabase();
     foreach (['Ada', 'Grace', 'Linus'] as $name) {
-        $db->table('orm_authors')->insert(['name' => $name, 'secret' => $name === 'Grace' ? 'privé' : null]);
+        $db->table('orm_authors')->insert(['name' => $name, 'secret' => $name === 'Grace' ? 'private' : null]);
     }
     $base = $db->table('orm_authors');
     $filtered = $base->where('id', '>=', 2)->where('id', '<', 4);
@@ -112,7 +112,7 @@ test('Queries zijn immutable en ondersteunen AND, vergelijking, IN, LIKE en null
     same(true, $base->where('id', 1)->offset(10)->exists());
 });
 
-test('Identifiers, operatoren, richtingen en ongeldige bindings worden expliciet geweigerd', static function (): void {
+test('Identifiers, operators, directions, and invalid bindings are explicitly rejected', static function (): void {
     $db = ormDatabase();
     $base = $db->table('orm_authors');
     foreach (['users; DROP TABLE users', 'users.id', 'x`', '', 'name DESC', 'x/*a*/'] as $name) {
@@ -140,7 +140,7 @@ test('Identifiers, operatoren, richtingen en ongeldige bindings worden expliciet
     raises(fn () => $base->insert(['Ada']), InvalidArgumentException::class);
 });
 
-test('Updates en deletes vereisen filters en negeren geen limiet of sortering', static function (): void {
+test('Updates and deletes require filters and do not ignore limits or sorting', static function (): void {
     $db = ormDatabase();
     $base = $db->table('orm_authors');
     $base->insert(['name' => 'Ada']);
@@ -158,7 +158,7 @@ test('Updates en deletes vereisen filters en negeren geen limiet of sortering', 
     raises(fn () => $base->create(['name' => 'Grace']), LogicException::class);
 });
 
-test('Paginering geeft de exacte vorm, stabiele standaardvolgorde en lege pagina’s', static function (): void {
+test('Pagination returns the exact shape, stable default order, and empty pages', static function (): void {
     $db = ormDatabase();
     for ($i = 1; $i <= 5; $i++) {
         $db->table('orm_authors')->insert(['name' => "Auteur $i"]);
@@ -183,7 +183,7 @@ test('Paginering geeft de exacte vorm, stabiele standaardvolgorde en lege pagina
     raises(fn () => $query->offset(1)->get(), LogicException::class);
 });
 
-test('Modellen ondersteunen CRUD, defaults, refresh en strict dirty tracking', static function (): void {
+test('Models support CRUD, defaults, refresh, and strict dirty tracking', static function (): void {
     $db = ormDatabase();
     $repository = new OrmAuthor($db);
     $author = $repository->create(['name' => 'Ada']);
@@ -201,10 +201,10 @@ test('Modellen ondersteunen CRUD, defaults, refresh en strict dirty tracking', s
     same(null, $db->table('orm_authors')->find($author->id)['secret']);
     same(true, $author->update(['name' => 'Grace']));
     same('Grace', $repository->query()->findOrFail($author->id)->name);
-    $db->table('orm_authors')->where('id', $author->id)->update(['name' => 'Extern']);
+    $db->table('orm_authors')->where('id', $author->id)->update(['name' => 'External']);
     same('Grace', $author->name);
     same($author, $author->refresh());
-    same('Extern', $author->name);
+    same('External', $author->name);
     same([], $author->dirty());
     same(true, $author->save());
     same(true, $author->delete());
@@ -212,13 +212,13 @@ test('Modellen ondersteunen CRUD, defaults, refresh en strict dirty tracking', s
     raises(fn () => $author->save(), LogicException::class);
     raises(fn () => $author->delete(), LogicException::class);
     raises(fn () => $author->refresh(), LogicException::class);
-    raises(fn () => $repository->update(['name' => 'Nooit']), LogicException::class);
+    raises(fn () => $repository->update(['name' => 'Never']), LogicException::class);
 });
 
-test('Fillable blokkeert onbedoelde velden, primaire sleutels en timestamps zonder gedeeltelijke fill', static function (): void {
+test('Fillable blocks unintended fields, primary keys, and timestamps without partial fills', static function (): void {
     $db = ormDatabase();
     $author = (new OrmAuthor($db))->create(['name' => 'Ada']);
-    raises(fn () => $author->fill(['name' => 'Gewijzigd', 'is_admin' => true]), InvalidArgumentException::class);
+    raises(fn () => $author->fill(['name' => 'Updated', 'is_admin' => true]), InvalidArgumentException::class);
     same('Ada', $author->name);
     raises(fn () => $author->id = 42, InvalidArgumentException::class);
     raises(fn () => $author->missing, LogicException::class);
@@ -233,7 +233,7 @@ test('Fillable blokkeert onbedoelde velden, primaire sleutels en timestamps zond
     same('Via query', $author->refresh()->name);
 });
 
-test('Casts zetten JSON, UTC-datums, booleans en getallen betrouwbaar heen en terug', static function (): void {
+test('Casts reliably round-trip JSON, UTC dates, booleans, and numbers', static function (): void {
     $db = ormDatabase();
     $record = (new OrmPost($db))->create([
         'title' => 'Casts', 'active' => true, 'score' => 1.25, 'metadata' => ['a' => [1, 'é'], 'float' => 1.0],
@@ -263,12 +263,12 @@ test('Casts zetten JSON, UTC-datums, booleans en getallen betrouwbaar heen en te
     same(true, $record->refresh()->active);
     same(['bulk' => true], $record->metadata);
     $defaults = (new OrmPost($db))->create([]);
-    same('Nieuw', $defaults->title);
+    same('New', $defaults->title);
     same(false, $defaults->active);
     same(0.0, $defaults->score);
 });
 
-test('Ongeldige casts en corrupte databasewaarden falen expliciet', static function (): void {
+test('Invalid casts and corrupt database values fail explicitly', static function (): void {
     $db = ormDatabase();
     $model = new OrmPost($db);
     foreach ([
@@ -294,34 +294,34 @@ test('Ongeldige casts en corrupte databasewaarden falen expliciet', static funct
     raises(fn () => $bad->fill(['name' => 'Ada']), LogicException::class);
     raises(fn () => $model->hydrate(['id' => 1, 'author_id' => '92233720368547758080']), InvalidArgumentException::class);
     raises(fn () => $model->hydrate(['id' => 1, 'score' => 'one']), InvalidArgumentException::class);
-    raises(fn () => $model->hydrate(['title' => 'geen primaire sleutel']), LogicException::class);
+    raises(fn () => $model->hydrate(['title' => 'no primary key']), LogicException::class);
     raises(fn () => new class($db) extends Model {}, InvalidArgumentException::class);
 });
 
-test('Hidden-velden verdwijnen uit arrays, JSON en gepagineerde modellen', static function (): void {
+test('Hidden fields are excluded from arrays, JSON, and paginated models', static function (): void {
     $db = ormDatabase();
-    $author = (new OrmAuthor($db))->create(['name' => 'Ada', 'secret' => 'niet publiceren']);
-    same('niet publiceren', $author->secret);
+    $author = (new OrmAuthor($db))->create(['name' => 'Ada', 'secret' => 'do not publish']);
+    same('do not publish', $author->secret);
     same(['id' => $author->id, 'name' => 'Ada'], $author->toArray());
     $json = json_encode($author->query()->paginate(), JSON_THROW_ON_ERROR);
     check(!str_contains($json, 'secret'));
-    check(!str_contains($json, 'niet publiceren'));
+    check(!str_contains($json, 'do not publish'));
     $post = (new OrmPost($db))->create(['published_at' => new DateTimeImmutable('2026-01-01T00:00:00Z')]);
     same('2026-01-01T00:00:00Z', $post->toArray()['published_at']);
     check(!array_key_exists('metadata', $post->toArray()));
 });
 
-test('belongsTo en hasMany gebruiken dezelfde verbinding en ondersteunen expliciete filters', static function (): void {
+test('belongsTo and hasMany use the same connection and support explicit filters', static function (): void {
     $db = ormDatabase();
     $ada = (new OrmAuthor($db))->create(['name' => 'Ada']);
     $grace = (new OrmAuthor($db))->create(['name' => 'Grace']);
     $posts = new OrmPost($db);
-    $first = $posts->create(['author_id' => $ada->id, 'title' => 'Eerste', 'active' => true]);
-    $posts->create(['author_id' => $ada->id, 'title' => 'Tweede']);
-    $posts->create(['author_id' => $grace->id, 'title' => 'Anders']);
+    $first = $posts->create(['author_id' => $ada->id, 'title' => 'First', 'active' => true]);
+    $posts->create(['author_id' => $ada->id, 'title' => 'Second']);
+    $posts->create(['author_id' => $grace->id, 'title' => 'Different']);
     $orphan = $posts->create(['author_id' => null]);
     same(2, $ada->posts()->count());
-    same('Eerste', $ada->posts()->where('active', true)->firstOrFail()->title);
+    same('First', $ada->posts()->where('active', true)->firstOrFail()->title);
     same('Ada', $first->author()->firstOrFail()->name);
     same(null, $orphan->author()->first());
     check($ada->posts()->paginate(1)['data'][0] instanceof OrmPost);
@@ -332,39 +332,39 @@ test('belongsTo en hasMany gebruiken dezelfde verbinding en ondersteunen explici
     same(2, $ada->posts()->count());
 });
 
-test('Niet-incrementele primaire sleutels werken met find, updates en relaties', static function (): void {
+test('Nonincrementing primary keys work with find, updates, and relationships', static function (): void {
     $db = ormDatabase();
     $keys = new OrmKey($db);
-    raises(fn () => $keys->create(['value' => 'geen sleutel']), LogicException::class);
+    raises(fn () => $keys->create(['value' => 'no key']), LogicException::class);
     raises(fn () => $keys->create(['code' => null]), InvalidArgumentException::class);
-    $record = $keys->create(['code' => 'nl-NL', 'value' => 'Nederlands']);
-    same('nl-NL', $record->code);
-    same('Nederlands', $keys->query()->findOrFail('nl-NL')->value);
-    raises(fn () => $record->code = 'en-US', InvalidArgumentException::class);
-    raises(fn () => $keys->query()->where('code', 'nl-NL')->update(['code' => 'en-US']), InvalidArgumentException::class);
-    $record->update(['value' => 'Taal']);
-    same('Taal', $keys->query()->find('nl-NL')->value);
-    $author = (new OrmAuthor($db))->create(['name' => 'Taal']);
+    $record = $keys->create(['code' => 'en-US', 'value' => 'English']);
+    same('en-US', $record->code);
+    same('English', $keys->query()->findOrFail('en-US')->value);
+    raises(fn () => $record->code = 'en-GB', InvalidArgumentException::class);
+    raises(fn () => $keys->query()->where('code', 'en-US')->update(['code' => 'en-GB']), InvalidArgumentException::class);
+    $record->update(['value' => 'Language']);
+    same('Language', $keys->query()->find('en-US')->value);
+    $author = (new OrmAuthor($db))->create(['name' => 'Language']);
     same($author->id, $record->author()->firstOrFail()->id);
-    same('nl-NL', $author->keys()->firstOrFail()->code);
+    same('en-US', $author->keys()->firstOrFail()->code);
     same(1, $keys->query()->paginate()['total']);
     same(true, $record->delete());
     same(0, $keys->query()->count());
 });
 
-test('Verwijderde records en databasefouten worden niet als geslaagde modelwrites verborgen', static function (): void {
+test('Deleted records and database errors are not disguised as successful model writes', static function (): void {
     $db = ormDatabase();
     $model = new OrmAuthor($db);
     $record = $model->create(['name' => 'Ada']);
     $db->table('orm_authors')->where('id', $record->id)->delete();
     raises(fn () => $record->refresh(), RecordNotFoundException::class);
-    raises(fn () => $record->update(['name' => 'Verdwenen']), RecordNotFoundException::class);
+    raises(fn () => $record->update(['name' => 'Gone']), RecordNotFoundException::class);
     raises(fn () => $record->delete(), RecordNotFoundException::class);
     raises(fn () => $model->create([]), PDOException::class);
     same(0, $model->query()->count());
 });
 
-test('ORM-transacties gebruiken Database::transaction zonder globale verbinding', static function (): void {
+test('ORM transactions use Database::transaction without a global connection', static function (): void {
     $db = ormDatabase();
     raises(function () use ($db): void {
         $db->transaction(function () use ($db): void {
@@ -373,11 +373,11 @@ test('ORM-transacties gebruiken Database::transaction zonder globale verbinding'
         });
     }, RuntimeException::class);
     same(0, $db->table('orm_authors')->count());
-    $db->transaction(fn () => (new OrmAuthor($db))->query()->create(['name' => 'Blijft']));
+    $db->transaction(fn () => (new OrmAuthor($db))->query()->create(['name' => 'Remains']));
     same(1, $db->table('orm_authors')->count());
 });
 
-test('Modelgenerator produceert bruikbare ORM-modellen met een gesloten fillable-lijst', static function () use ($app, $temp): void {
+test('Model generator produces usable ORM models with a closed fillable list', static function () use ($app, $temp): void {
     console($app, ['make:model', 'OrmGenerated']);
     $file = $temp . '/app/models/OrmGenerated.php';
     $source = file_get_contents($file);
@@ -385,7 +385,7 @@ test('Modelgenerator produceert bruikbare ORM-modellen met een gesloten fillable
     require_once $file;
     $model = new \App\Models\OrmGenerated($app->db);
     check($model instanceof Model);
-    raises(fn () => $model->fill(['name' => 'Niet toegestaan']), InvalidArgumentException::class);
+    raises(fn () => $model->fill(['name' => 'Not allowed']), InvalidArgumentException::class);
     check($model->query() instanceof Query);
     console($app, ['make:model', 'Model']);
     require_once $temp . '/app/models/Model.php';

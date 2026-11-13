@@ -5,7 +5,7 @@ use PBreeze\ApiTokens;
 
 $apiHttpDb = new PBreeze\Database($root, ['driver' => 'sqlite', 'database' => $temp . '/http.sqlite']);
 
-test('HTTP API gebruikt JSON zonder sessiecookies, ook voor capture-fouten', static function () use ($base): void {
+test('HTTP API uses JSON without session cookies, including capture errors', static function () use ($base): void {
     foreach ([
         ['/api/ping', 'GET', '', [], 200],
         ['/api/me', 'GET', '', [], 401],
@@ -32,7 +32,7 @@ test('HTTP API gebruikt JSON zonder sessiecookies, ook voor capture-fouten', sta
     same(419, http($base, '/logout', 'POST')['status']);
 });
 
-test('HTTP bearer-token werkt zonder CSRF en cookies; DELETE trekt werkelijk in', static function () use ($base, $apiHttpDb): void {
+test('HTTP bearer tokens work without CSRF or cookies; DELETE revokes the token', static function () use ($base, $apiHttpDb): void {
     $apiHttpDb->execute('INSERT INTO users (name, email, password_hash, email_verified_at, created_at) VALUES (?, ?, ?, ?, ?)', ['HTTP API', 'api-http@example.test', 'unused', time(), time()]);
     $id = (int) $apiHttpDb->pdo()->lastInsertId();
     $tokens = new ApiTokens($apiHttpDb);
@@ -52,7 +52,7 @@ test('HTTP bearer-token werkt zonder CSRF en cookies; DELETE trekt werkelijk in'
     same(401, http($base, '/api/me', 'GET', '', ['Authorization: Bearer ' . $issued['token']])['status']);
 });
 
-test('HTTP Swagger laadt lokale assets en verzwakt de CSP van gewone webpaginas niet', static function () use ($base): void {
+test('HTTP Swagger loads local assets without weakening the CSP of regular web pages', static function () use ($base): void {
     $docs = http($base, '/api/docs');
     same(200, $docs['status']);
     $headers = strtolower(implode("\n", $docs['headers']));
@@ -68,7 +68,7 @@ test('HTTP Swagger laadt lokale assets en verzwakt de CSP van gewone webpaginas 
     check(str_contains(strtolower(implode("\n", $web['headers'])), "script-src 'none'"));
 });
 
-test('Echt HTTP-wachtwoordherstel trekt eerder uitgegeven API-tokens in', static function () use ($base, $apiHttpDb): void {
+test('Real HTTP password reset revokes previously issued API tokens', static function () use ($base, $apiHttpDb): void {
     $client = new AuthBrowser($base);
     $id = (int) $apiHttpDb->execute('SELECT id FROM users WHERE email = ?', ['api-http@example.test'])->fetchColumn();
     $issued = (new ApiTokens($apiHttpDb))->create($id, 'reset-integration');

@@ -55,7 +55,7 @@ final class BotProtection
             $window = ['started' => time(), 'count' => 0];
         }
         if ($window['count'] >= 60) {
-            throw new HttpException(429, 'Te veel beveiligingscodes aangevraagd. Wacht een minuut en probeer opnieuw.', [
+            throw new HttpException(429, 'Too many security codes requested. Wait a minute and try again.', [
                 'Retry-After' => (string) max(1, $window['started'] + 60 - time()),
             ]);
         }
@@ -89,7 +89,7 @@ final class BotProtection
         if (is_string($id)) {
             unset($challenges[$id]);
         }
-        // Ook een onjuist antwoord of gevulde honeypot verbruikt de uitdaging.
+        // An incorrect answer or filled honeypot also consumes the challenge.
         $this->session->put('_captchas', $challenges);
         $answer = $request->input('_captcha_answer');
         $trap = $request->input('website');
@@ -97,7 +97,7 @@ final class BotProtection
             || preg_match('/^[a-zA-Z2-9]{6}$/D', trim($answer)) !== 1
             || !is_string($trap) || $trap !== ''
             || !hash_equals($challenge['hash'], hash('sha256', strtoupper(trim($answer))))) {
-            return ['captcha' => ['De beveiligingscontrole is niet gelukt. Vul de nieuwe code in en probeer opnieuw.']];
+            return ['captcha' => ['The security check failed. Enter the new code and try again.']];
         }
         return [];
     }
@@ -117,7 +117,7 @@ final class BotProtection
     {
         $challenges = $this->active();
         if (preg_match('/^[a-f0-9]{32}$/D', $id) !== 1 || !isset($challenges[$id])) {
-            throw new HttpException(404, 'Beveiligingscode niet beschikbaar. Vernieuw het formulier.');
+            throw new HttpException(404, 'Security code unavailable. Refresh the form.');
         }
         return new Response($challenges[$id]['svg'], 200, [
             'Content-Type' => 'image/svg+xml; charset=UTF-8',
@@ -143,7 +143,7 @@ final class BotProtection
     private function purpose(string $purpose): void
     {
         if (preg_match('/^[a-z][a-z0-9_-]{0,63}$/D', $purpose) !== 1) {
-            throw new InvalidArgumentException('Gebruik een vaste formuliernaam voor botbescherming.');
+            throw new InvalidArgumentException('Use a fixed form name for bot protection.');
         }
     }
 

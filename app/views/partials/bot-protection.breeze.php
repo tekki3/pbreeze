@@ -1,14 +1,14 @@
 <div class="form-trap" aria-hidden="true">
-    <label for="website">Laat dit veld leeg</label>
+    <label for="website">Leave this field empty</label>
     <input id="website" name="website" type="text" value="" tabindex="-1" autocomplete="off">
 </div>
 <fieldset class="captcha-field">
-    <legend>Beveiligingscontrole</legend>
-    <p class="field-hint" id="captcha-hint">Neem de 6 tekens over. Hoofdletters of kleine letters maakt niet uit. De code is 5 minuten geldig.</p>
+    <legend>Security check</legend>
+    <p class="field-hint" id="captcha-hint">Enter the 6 characters shown. Letters are not case-sensitive. The code is valid for 5 minutes.</p>
     <img class="captcha-image" src="{{ $captcha['image'] }}" width="240" height="80"
-        alt="Beveiligingscode met zes tekens om hieronder over te nemen">
+        alt="Six-character security code to enter below">
     <input type="hidden" name="_captcha_id" value="{{ $captcha['id'] }}">
-    <label for="captcha-answer">Code uit de afbeelding</label>
+    <label for="captcha-answer">Code from the image</label>
     <input id="captcha-answer" name="_captcha_answer" type="text" required minlength="6" maxlength="6"
         autocomplete="off" autocapitalize="characters" spellcheck="false"
         aria-describedby="captcha-hint{{ !empty($errors['captcha']) ? ' captcha-error' : '' }}"
@@ -17,6 +17,6 @@
         <p class="field-error" id="captcha-error" role="alert">{{ implode(' ', $errors['captcha']) }}</p>
     @endif
     @if(!empty($captchaRefreshed))
-        <p class="field-hint" role="status">Nieuwe code geladen. Vul de code in en verstuur het formulier opnieuw.</p>
+        <p class="field-hint" role="status">New code loaded. Enter the code and submit the form again.</p>
     @endif
 </fieldset>

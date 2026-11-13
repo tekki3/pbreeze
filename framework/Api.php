@@ -13,7 +13,7 @@ final class ApiValidationException extends RuntimeException
     /** @param array<string, list<string>> $errors */
     public function __construct(public readonly array $errors)
     {
-        parent::__construct('Controleer je invoer.');
+        parent::__construct('Check your input.');
     }
 }
 
@@ -77,27 +77,27 @@ final class Api
         if (!str_starts_with($path, '/api/') || preg_match('~^/api/(?:[a-zA-Z0-9_-]+|\{[a-zA-Z][a-zA-Z0-9_]*\})(?:/(?:[a-zA-Z0-9_-]+|\{[a-zA-Z][a-zA-Z0-9_]*\}))*$~D', $path) !== 1
             || in_array($path, ['/api/docs', '/api/openapi.json'], true)
             || !in_array($method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'], true)) {
-            throw new InvalidArgumentException('Gebruik een API-pad onder /api/ en een geldige HTTP-methode.');
+            throw new InvalidArgumentException('Use an API path under /api/ and a valid HTTP method.');
         }
         if (!is_string($operation['summary'] ?? null) || trim($operation['summary']) === ''
             || !is_string($operation['operationId'] ?? null) || !preg_match('/^[a-zA-Z][a-zA-Z0-9_]*$/D', $operation['operationId'])
             || !is_array($operation['responses'] ?? null) || $operation['responses'] === []) {
-            throw new InvalidArgumentException('Een API-operatie vereist summary, uniek operationId en responses.');
+            throw new InvalidArgumentException('An API operation requires summary, a unique operationId, and responses.');
         }
         if (isset($this->operationIds[$operation['operationId']])) {
-            throw new LogicException('Dubbel OpenAPI operationId.');
+            throw new LogicException('Duplicate OpenAPI operationId.');
         }
         preg_match_all('/\{([a-zA-Z][a-zA-Z0-9_]*)\}/', $path, $parameters);
         $operation['parameters'] ??= [];
         if (!is_array($operation['parameters'])) {
-            throw new InvalidArgumentException('OpenAPI parameters moet een lijst zijn.');
+            throw new InvalidArgumentException('OpenAPI parameters must be a list.');
         }
         foreach ($parameters[1] as $parameter) {
             $found = false;
             foreach ($operation['parameters'] as $definition) {
                 if (($definition['in'] ?? null) === 'path' && ($definition['name'] ?? null) === $parameter) {
                     if (($definition['required'] ?? false) !== true) {
-                        throw new InvalidArgumentException('OpenAPI padparameters moeten required zijn.');
+                        throw new InvalidArgumentException('OpenAPI path parameters must be required.');
                     }
                     $found = true;
                 }
@@ -118,7 +118,7 @@ final class Api
             }
             $response = $handler($request, ...$values);
             if (!$response instanceof Response || !str_starts_with($response->headers['Content-Type'] ?? '', 'application/json')) {
-                throw new LogicException('API-acties moeten een JSON Response teruggeven.');
+                throw new LogicException('API actions must return a JSON Response.');
             }
             return $response;
         });
@@ -132,10 +132,10 @@ final class Api
             $path = rtrim($request->path, '/');
             if (in_array($path, ['/api/docs', '/api/openapi.json'], true)) {
                 if (!$this->docsEnabled) {
-                    throw new HttpException(404, 'API-documentatie is uitgeschakeld.');
+                    throw new HttpException(404, 'API documentation is disabled.');
                 }
                 if (!in_array($request->method, ['GET', 'HEAD'], true)) {
-                    throw new HttpException(405, 'HTTP-methode niet toegestaan.', ['Allow' => 'GET, HEAD']);
+                    throw new HttpException(405, 'HTTP method not allowed.', ['Allow' => 'GET, HEAD']);
                 }
                 return $path === '/api/openapi.json' ? Response::json($this->openApi()) : $this->documentation();
             }
@@ -159,8 +159,8 @@ final class Api
             error_log((string) $error);
         }
         $message = match (true) {
-            $status === 500 => 'Er ging iets mis. Probeer het later opnieuw.',
-            $error instanceof AuthException, $error instanceof ApiValidationException => 'Controleer je invoer.',
+            $status === 500 => 'Something went wrong. Please try again later.',
+            $error instanceof AuthException, $error instanceof ApiValidationException => 'Check your input.',
             default => $error->getMessage(),
         };
         $body = ['error' => ['status' => $status, 'message' => $message]];
@@ -222,7 +222,7 @@ final class Api
             ? 'INSERT INTO api_limits (bucket, expires_at) VALUES (?, ?) ON DUPLICATE KEY UPDATE bucket = bucket'
             : 'INSERT INTO api_limits (bucket, expires_at) VALUES (?, ?) ON CONFLICT(bucket) DO NOTHING', [$bucket, $expires]);
         if ($this->db->execute('UPDATE api_limits SET attempts = attempts + 1 WHERE bucket = ? AND attempts < 120', [$bucket])->rowCount() !== 1) {
-            throw new HttpException(429, 'Te veel API-verzoeken. Probeer het later opnieuw.', ['Retry-After' => (string) max(1, $expires - time())]);
+            throw new HttpException(429, 'Too many API requests. Please try again later.', ['Retry-After' => (string) max(1, $expires - time())]);
         }
     }
 

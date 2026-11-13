@@ -20,10 +20,10 @@ final class Validator
             foreach (explode('|', $definition) as $rule) {
                 [$name, $argument] = array_pad(explode(':', $rule, 2), 2, null);
                 if (!in_array($name, ['required', 'string', 'email', 'integer', 'min', 'max', 'confirmed'], true)) {
-                    throw new InvalidArgumentException("Onbekende validatieregel: $name");
+                    throw new InvalidArgumentException("Unknown validation rule: $name");
                 }
                 if (in_array($name, ['min', 'max'], true) && ($argument === null || !ctype_digit($argument))) {
-                    throw new InvalidArgumentException("$name vereist een niet-negatief geheel getal.");
+                    throw new InvalidArgumentException("$name requires a nonnegative integer.");
                 }
                 if ($name !== 'required' && ($value === null || $value === '')) {
                     continue;
@@ -40,13 +40,13 @@ final class Validator
                 };
                 if (!$valid) {
                     $errors[$field][] = match ($name) {
-                        'required' => 'Dit veld is verplicht.',
-                        'string' => 'Vul tekst in.',
-                        'email' => 'Vul een geldig e-mailadres in.',
-                        'integer' => 'Vul een geheel getal in.',
-                        'min' => "Gebruik minimaal $argument tekens.",
-                        'max' => "Gebruik maximaal $argument tekens.",
-                        'confirmed' => 'De bevestiging komt niet overeen.',
+                        'required' => 'This field is required.',
+                        'string' => 'Enter text.',
+                        'email' => 'Enter a valid email address.',
+                        'integer' => 'Enter an integer.',
+                        'min' => "Use at least $argument characters.",
+                        'max' => "Use no more than $argument characters.",
+                        'confirmed' => 'The confirmation does not match.',
                     };
                 }
             }

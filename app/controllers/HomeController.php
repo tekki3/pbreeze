@@ -39,7 +39,7 @@ final class HomeController
             'session' => $this->app->session,
             'user' => $this->app->auth->user(),
             'errors' => $errors,
-            'greeting' => !$refresh && $errors === [] ? 'Hallo, ' . $request->input('name') . '!' : null,
+            'greeting' => !$refresh && $errors === [] ? 'Hello, ' . $request->input('name') . '!' : null,
             'oldName' => is_string($request->input('name')) ? $request->input('name') : '',
             'captcha' => $this->app->botProtection->challenge('greet'),
             'captchaRefreshed' => $refresh,

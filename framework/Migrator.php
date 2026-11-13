@@ -27,7 +27,7 @@ final class Migrator
             $files = $this->files();
             foreach ($applied as $name => $batchNumber) {
                 if (!isset($files[$name])) {
-                    throw new RuntimeException("Toegepast migratiebestand ontbreekt: $name");
+                    throw new RuntimeException("Applied migration file is missing: $name");
                 }
             }
             $batch = (int) $this->db->execute('SELECT COALESCE(MAX(batch), 0) FROM migrations')->fetchColumn() + 1;
@@ -56,7 +56,7 @@ final class Migrator
             $files = $this->files();
             foreach ($rows as $row) {
                 if (!isset($files[$row['name']])) {
-                    throw new RuntimeException('Migratiebestand ontbreekt: ' . $row['name']);
+                    throw new RuntimeException('Migration file is missing: ' . $row['name']);
                 }
             }
             $done = [];
@@ -85,7 +85,7 @@ final class Migrator
             }
             foreach ($applied as $name => $batch) {
                 if (!array_key_exists($name, $result)) {
-                    throw new RuntimeException("Toegepast migratiebestand ontbreekt: $name");
+                    throw new RuntimeException("Applied migration file is missing: $name");
                 }
             }
             return $result;
@@ -112,14 +112,14 @@ final class Migrator
     {
         $files = glob($this->root . '/database/migrations/*.php');
         if ($files === false) {
-            throw new RuntimeException('Kan migratiebestanden niet vinden.');
+            throw new RuntimeException('Cannot find migration files.');
         }
         sort($files, SORT_STRING);
         $result = [];
         foreach ($files as $file) {
             $name = basename($file, '.php');
             if (!preg_match('/^[0-9]{14,20}_[a-z][a-z0-9_]*$/D', $name) || strlen($name) > 190) {
-                throw new RuntimeException("Ongeldige migratiebestandsnaam: $name");
+                throw new RuntimeException("Invalid migration filename: $name");
             }
             $result[$name] = $file;
         }
@@ -130,14 +130,14 @@ final class Migrator
     {
         $migration = require $file;
         if (!$migration instanceof Migration) {
-            throw new RuntimeException('Migratie moet een PBreeze\Migration teruggeven: ' . basename($file));
+            throw new RuntimeException('Migration must return a PBreeze\Migration: ' . basename($file));
         }
         return $migration;
     }
 
     private function atomic(callable $work): void
     {
-        // MySQL DDL commit impliciet; een transactie suggereert daar onterecht atomiciteit.
+        // MySQL DDL commits implicitly; a transaction would incorrectly suggest atomicity.
         if ($this->db->pdo()->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite') {
             $this->db->transaction($work);
         } else {
@@ -149,18 +149,18 @@ final class Migrator
     {
         $handle = fopen($this->root . '/storage/migrations.lock', 'c');
         if ($handle === false) {
-            throw new RuntimeException('Kan migratieslot niet openen.');
+            throw new RuntimeException('Cannot open the migration lock.');
         }
         $mysqlLock = null;
         try {
             if (!flock($handle, LOCK_EX | LOCK_NB)) {
-                throw new RuntimeException('Er draait al een migratieproces.');
+                throw new RuntimeException('A migration process is already running.');
             }
             if ($this->db->pdo()->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql') {
                 $mysqlLock = 'pbreeze:' . substr(hash('sha256', (string) $this->db->execute('SELECT DATABASE()')->fetchColumn()), 0, 40);
                 if ((int) $this->db->execute('SELECT GET_LOCK(?, 0)', [$mysqlLock])->fetchColumn() !== 1) {
                     $mysqlLock = null;
-                    throw new RuntimeException('De database is vergrendeld door een ander migratieproces.');
+                    throw new RuntimeException('The database is locked by another migration process.');
                 }
             }
             return $work();

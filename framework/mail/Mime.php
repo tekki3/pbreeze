@@ -30,7 +30,7 @@ final class Mime
         $raw = str_replace("\r\n", "\n", $raw);
         $offset = strpos($raw, "\n\n");
         if ($offset === false || $offset > 65536) {
-            throw new RuntimeException('Ongeldige of te grote MIME-headers.');
+            throw new RuntimeException('Invalid or oversized MIME headers.');
         }
         $head = substr($raw, 0, $offset);
         $body = substr($raw, $offset + 2);
@@ -38,7 +38,7 @@ final class Mime
         $headers = [];
         foreach (explode("\n", $head) as $line) {
             if (!preg_match('/^([!-9;-~]+):[ \t]*(.*)$/D', $line, $match)) {
-                throw new RuntimeException('Ongeldige MIME-header.');
+                throw new RuntimeException('Invalid MIME header.');
             }
             $name = strtolower($match[1]);
             $headers[$name] = isset($headers[$name]) ? $headers[$name] . ', ' . $match[2] : $match[2];
@@ -50,7 +50,7 @@ final class Mime
     private static function body(string $raw, int $depth, int &$parts): array
     {
         if ($depth > 10 || ++$parts > 100) {
-            throw new RuntimeException('MIME-bericht bevat te veel of te diep geneste onderdelen.');
+            throw new RuntimeException('The MIME message has too many parts or excessive nesting.');
         }
         [$headers, $body] = self::split($raw);
         $type = $headers['content-type'] ?? 'text/plain; charset=US-ASCII';
@@ -61,11 +61,11 @@ final class Mime
         if (str_starts_with($media, 'multipart/')) {
             $boundary = self::parameter($type, 'boundary');
             if ($boundary === null || $boundary === '' || strlen($boundary) > 200) {
-                throw new RuntimeException('Multipart MIME-boundary ontbreekt of is ongeldig.');
+                throw new RuntimeException('The multipart MIME boundary is missing or invalid.');
             }
             preg_match_all('/^--' . preg_quote($boundary, '/') . '(--)?[ \t]*(?:\n|$)/m', $body, $markers, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
             if (count($markers) < 2) {
-                throw new RuntimeException('Onvolledig multipart MIME-bericht.');
+                throw new RuntimeException('Incomplete multipart MIME message.');
             }
             $text = '';
             $html = '';
@@ -88,7 +88,7 @@ final class Mime
                 $start = $marker[0][1] + strlen($marker[0][0]);
             }
             if (!$closed) {
-                throw new RuntimeException('Afsluitende multipart MIME-boundary ontbreekt.');
+                throw new RuntimeException('The closing multipart MIME boundary is missing.');
             }
             return [$text, $html];
         }
@@ -100,10 +100,10 @@ final class Mime
             'base64' => base64_decode(preg_replace('/\s+/', '', $body), true),
             'quoted-printable' => quoted_printable_decode($body),
             '7bit', '8bit', 'binary' => $body,
-            default => throw new RuntimeException('Niet-ondersteunde MIME-transferencoding.'),
+            default => throw new RuntimeException('Unsupported MIME transfer encoding.'),
         };
         if ($decoded === false) {
-            throw new RuntimeException('Ongeldige MIME-base64.');
+            throw new RuntimeException('Invalid MIME base64.');
         }
         $charset = self::parameter($type, 'charset') ?? 'US-ASCII';
         $decoded = self::utf8($decoded, $charset);
@@ -121,7 +121,7 @@ final class Mime
     private static function decodeHeader(string $value): string
     {
         if (!function_exists('iconv_mime_decode')) {
-            throw new RuntimeException('De native iconv-extensie is nodig voor inkomende e-mail.');
+            throw new RuntimeException('The native iconv extension is required for incoming email.');
         }
         return self::convert(static fn () => iconv_mime_decode($value, ICONV_MIME_DECODE_STRICT, 'UTF-8'));
     }
@@ -129,7 +129,7 @@ final class Mime
     private static function utf8(string $body, string $charset): string
     {
         if (!preg_match('/^[a-zA-Z0-9._-]{1,60}$/D', $charset) || !function_exists('iconv')) {
-            throw new RuntimeException('Ongeldige charset of ontbrekende native iconv-extensie.');
+            throw new RuntimeException('Invalid charset or missing native iconv extension.');
         }
         return self::convert(static fn () => iconv($charset, 'UTF-8', $body));
     }
@@ -137,12 +137,12 @@ final class Mime
     private static function convert(callable $operation): string
     {
         set_error_handler(static function (): never {
-            throw new RuntimeException('Kan MIME-header of berichttekst niet naar UTF-8 omzetten.');
+            throw new RuntimeException('Cannot convert the MIME header or message body to UTF-8.');
         });
         try {
             $converted = $operation();
             if ($converted === false) {
-                throw new RuntimeException('Kan MIME-header of berichttekst niet naar UTF-8 omzetten.');
+                throw new RuntimeException('Cannot convert the MIME header or message body to UTF-8.');
             }
             return $converted;
         } finally {

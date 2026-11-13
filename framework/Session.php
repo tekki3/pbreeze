@@ -24,7 +24,7 @@ final class Session
             'samesite' => 'Lax',
         ]);
         if (!session_start()) {
-            throw new RuntimeException('Kan sessie niet starten.');
+            throw new RuntimeException('Cannot start the session.');
         }
     }
 
@@ -41,7 +41,7 @@ final class Session
     public function regenerate(): void
     {
         if (!session_regenerate_id(true)) {
-            throw new RuntimeException('Kan sessie-ID niet vernieuwen.');
+            throw new RuntimeException('Cannot regenerate the session ID.');
         }
     }
 
@@ -68,7 +68,7 @@ final class Session
         }
         $token = $request->header('x-csrf-token') ?? $request->input('_token');
         if (!is_string($token) || !hash_equals($this->token(), $token)) {
-            throw new HttpException(419, 'Sessiecontrole mislukt. Vernieuw de pagina en probeer opnieuw.');
+            throw new HttpException(419, 'Session verification failed. Refresh the page and try again.');
         }
     }
 }

@@ -18,7 +18,7 @@ final class Env
         }
         $lines = file($path, FILE_IGNORE_NEW_LINES);
         if ($lines === false) {
-            throw new RuntimeException('Kan .env niet lezen.');
+            throw new RuntimeException('Cannot read .env.');
         }
         foreach ($lines as $index => $line) {
             $line = trim($line);
@@ -26,12 +26,12 @@ final class Env
                 continue;
             }
             if (!preg_match('/^([A-Z][A-Z0-9_]*)=(.*)$/D', $line, $match)) {
-                throw new RuntimeException('Ongeldige .env-regel: ' . ($index + 1));
+                throw new RuntimeException('Invalid .env line: ' . ($index + 1));
             }
             $value = trim($match[2]);
             if ($value !== '' && ($value[0] === '"' || $value[0] === "'")) {
                 if (strlen($value) < 2 || $value[-1] !== $value[0]) {
-                    throw new RuntimeException('Ongesloten aanhalingsteken in .env.');
+                    throw new RuntimeException('Unclosed quotation mark in .env.');
                 }
                 $value = substr($value, 1, -1);
             }
@@ -49,6 +49,6 @@ final class Env
     {
         $value = self::get($key, $default ? 'true' : 'false');
         return filter_var($value, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE)
-            ?? throw new RuntimeException("$key moet true of false zijn.");
+            ?? throw new RuntimeException("$key must be true or false.");
     }
 }

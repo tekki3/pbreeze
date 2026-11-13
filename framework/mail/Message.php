@@ -20,22 +20,22 @@ final class Message
     ) {
         self::address($from);
         if ($to === [] || count($to) > 100 || !array_is_list($to)) {
-            throw new InvalidArgumentException('Gebruik 1 tot 100 ontvangers.');
+            throw new InvalidArgumentException('Use 1 to 100 recipients.');
         }
         foreach ($to as $recipient) {
             self::address($recipient);
         }
         if (strlen($subject) > 500 || preg_match('/[\x00-\x1f\x7f]/', $subject)
             || preg_match('//u', $subject) !== 1) {
-            throw new InvalidArgumentException('Ongeldig onderwerp (maximaal 500 UTF-8-bytes, geen stuurtekens).');
+            throw new InvalidArgumentException('Invalid subject (up to 500 UTF-8 bytes, no control characters).');
         }
         if (($text === '' && $html === '') || strlen($text) + strlen($html) > 5 * 1024 * 1024
             || preg_match('//u', $text . $html) !== 1 || str_contains($text . $html, "\0")) {
-            throw new InvalidArgumentException('Gebruik UTF-8 tekst of HTML, samen maximaal 5 MiB, zonder NUL-bytes.');
+            throw new InvalidArgumentException('Use UTF-8 text or HTML, up to 5 MiB combined, without NUL bytes.');
         }
         $messageId ??= '<' . bin2hex(random_bytes(16)) . '@' . substr(strrchr($from, '@'), 1) . '>';
         if (!preg_match('/^<[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+>$/D', $messageId) || strlen($messageId) > 250) {
-            throw new InvalidArgumentException('Ongeldig Message-ID.');
+            throw new InvalidArgumentException('Invalid Message-ID.');
         }
         $this->messageId = $messageId;
     }
@@ -44,7 +44,7 @@ final class Message
     {
         if (strlen($address) > 254 || !preg_match('/^[\x21-\x7e]+$/D', $address)
             || strpbrk($address, '<>') !== false || filter_var($address, FILTER_VALIDATE_EMAIL) === false) {
-            throw new InvalidArgumentException('Gebruik een geldig ASCII-e-mailadres zonder weergavenaam.');
+            throw new InvalidArgumentException('Use a valid ASCII email address without a display name.');
         }
     }
 

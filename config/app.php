@@ -5,7 +5,7 @@ use PBreeze\Env;
 
 $environment = Env::get('APP_ENV', 'production');
 if (!in_array($environment, ['local', 'testing', 'production'], true)) {
-    throw new RuntimeException('APP_ENV moet local, testing of production zijn.');
+    throw new RuntimeException('APP_ENV must be local, testing, or production.');
 }
 
 return [

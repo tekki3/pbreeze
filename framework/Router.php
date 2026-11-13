@@ -27,7 +27,7 @@ final class Router
         $method = strtoupper($method);
         if (!in_array($method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'], true)
             || !str_starts_with($path, '/') || str_contains($path, '?') || str_contains($path, '#')) {
-            throw new InvalidArgumentException('Ongeldige routedefinitie.');
+            throw new InvalidArgumentException('Invalid route definition.');
         }
         $path = self::normalize($path);
         $names = [];
@@ -35,13 +35,13 @@ final class Router
         foreach ($segments as &$segment) {
             if (preg_match('/^\{([a-zA-Z][a-zA-Z0-9_]*)\}$/D', $segment, $match)) {
                 if (in_array($match[1], $names, true)) {
-                    throw new InvalidArgumentException('Dubbele routeparameter.');
+                    throw new InvalidArgumentException('Duplicate route parameter.');
                 }
                 $names[] = $match[1];
                 $segment = '([^/]+)';
             } else {
                 if (str_contains($segment, '{') || str_contains($segment, '}')) {
-                    throw new InvalidArgumentException('Parameters moeten een volledig padsegment vormen.');
+                    throw new InvalidArgumentException('Parameters must occupy a complete path segment.');
                 }
                 $segment = preg_quote($segment, '~');
             }
@@ -50,7 +50,7 @@ final class Router
         $regex = '~^' . implode('/', $segments) . '$~D';
         foreach ($this->routes as $route) {
             if ($route['method'] === $method && $route['regex'] === $regex) {
-                throw new LogicException("Route bestaat al: $method $path");
+                throw new LogicException("Route already exists: $method $path");
             }
         }
         $this->routes[] = ['method' => $method, 'path' => $path, 'regex' => $regex, 'names' => $names, 'handler' => Closure::fromCallable($handler)];
@@ -61,7 +61,7 @@ final class Router
         $allowed = [];
         $method = $request->method;
         $matches = array_filter($this->routes, static fn (array $route): bool => preg_match($route['regex'], self::normalize($request->path)) === 1);
-        // Een expliciete HEAD-route heeft voorrang op de GET-terugval.
+        // An explicit HEAD route takes precedence over the GET fallback.
         if ($method === 'HEAD' && !array_filter($matches, static fn (array $route): bool => $route['method'] === 'HEAD')) {
             $method = 'GET';
         }
@@ -77,14 +77,14 @@ final class Router
             array_shift($values);
             $response = ($route['handler'])($request, ...$values);
             if (!$response instanceof Response) {
-                throw new LogicException('Een route moet een Response teruggeven.');
+                throw new LogicException('A route must return a Response.');
             }
             return $response;
         }
         if ($allowed !== []) {
-            throw new HttpException(405, 'HTTP-methode niet toegestaan.', ['Allow' => implode(', ', array_unique($allowed))]);
+            throw new HttpException(405, 'HTTP method not allowed.', ['Allow' => implode(', ', array_unique($allowed))]);
         }
-        throw new HttpException(404, 'Pagina niet gevonden.');
+        throw new HttpException(404, 'Page not found.');
     }
 
     /** @return list<array{method: string, path: string}> */

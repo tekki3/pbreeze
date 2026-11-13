@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-// Alleen dit document root wordt door de ontwikkelserver bediend.
+// The development server serves only this document root.
 $path = rawurldecode(explode('?', $_SERVER['REQUEST_URI'] ?? '/', 2)[0]);
 $validPath = str_starts_with($path, '/') && !preg_match('/[\x00-\x20\x7f\\\\:]/', $path);
 $file = $validPath ? realpath(__DIR__ . $path) : false;

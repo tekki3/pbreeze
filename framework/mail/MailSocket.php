@@ -27,14 +27,14 @@ final class MailSocket
             || !ctype_digit($port) || (int) $port < 1 || (int) $port > 65535
             || !ctype_digit($timeout) || (int) $timeout < 1 || (int) $timeout > 300
             || !in_array($this->encryption, ['tls', 'starttls', 'none'], true)) {
-            throw new InvalidArgumentException('Ongeldige mailhost, poort, timeout of versleuteling.');
+            throw new InvalidArgumentException('Invalid mail host, port, timeout, or encryption.');
         }
         if ($this->encryption === 'none' && (!in_array($host, ['127.0.0.1', 'localhost'], true)
             || $this->username !== '' || $this->password !== '')) {
-            throw new InvalidArgumentException('Onversleutelde mail is uitsluitend toegestaan zonder login op localhost.');
+            throw new InvalidArgumentException('Unencrypted mail is allowed only without authentication on localhost.');
         }
         if (strpbrk($this->username . $this->password, "\r\n\0") !== false) {
-            throw new InvalidArgumentException('Ongeldige mail-inloggegevens.');
+            throw new InvalidArgumentException('Invalid mail credentials.');
         }
         $ssl = [
             'verify_peer' => true,
@@ -46,7 +46,7 @@ final class MailSocket
         ];
         if (($config['ca_file'] ?? '') !== '') {
             if (!is_readable($config['ca_file'])) {
-                throw new InvalidArgumentException('Het CA-bestand is niet leesbaar.');
+                throw new InvalidArgumentException('The CA file is not readable.');
             }
             $ssl['cafile'] = $config['ca_file'];
         }
@@ -55,7 +55,7 @@ final class MailSocket
             "tcp://$host:$port", $errno, $error, (int) $timeout, STREAM_CLIENT_CONNECT, $context,
         ));
         if ($stream === false) {
-            throw new RuntimeException('Verbinding met de mailserver mislukt.');
+            throw new RuntimeException('Failed to connect to the mail server.');
         }
         $this->stream = $stream;
         stream_set_timeout($this->stream, (int) $timeout);
@@ -75,7 +75,7 @@ final class MailSocket
             $this->stream, true, STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT | STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT,
         ));
         if ($enabled !== true) {
-            throw new RuntimeException('TLS-onderhandeling met de mailserver mislukt.');
+            throw new RuntimeException('TLS negotiation with the mail server failed.');
         }
     }
 
@@ -85,7 +85,7 @@ final class MailSocket
         for ($offset = 0; $offset < $length;) {
             $written = self::network(fn () => fwrite($this->stream, substr($data, $offset, 65536)));
             if ($written === false || $written === 0) {
-                throw new RuntimeException('Schrijven naar de mailserver mislukt.');
+                throw new RuntimeException('Failed to write to the mail server.');
             }
             $offset += $written;
         }
@@ -95,7 +95,7 @@ final class MailSocket
     {
         $line = self::network(fn () => fgets($this->stream, $maxBytes + 2));
         if ($line === false || !str_ends_with($line, "\r\n")) {
-            throw new RuntimeException('Mailserververbinding gesloten, timeout of te lange protocolregel.');
+            throw new RuntimeException('Mail server connection closed, timed out, or protocol line too long.');
         }
         return substr($line, 0, -2);
     }
@@ -106,7 +106,7 @@ final class MailSocket
         while (strlen($data) < $length) {
             $chunk = self::network(fn () => fread($this->stream, min(65536, $length - strlen($data))));
             if ($chunk === false || $chunk === '') {
-                throw new RuntimeException('Onvolledig bericht van de mailserver.');
+                throw new RuntimeException('Incomplete message from the mail server.');
             }
             $data .= $chunk;
         }
@@ -127,9 +127,9 @@ final class MailSocket
 
     private static function network(callable $operation): mixed
     {
-        // Serverantwoorden en credentials mogen niet in PHP-warnings of logs belanden.
+        // Server responses and credentials must not appear in PHP warnings or logs.
         set_error_handler(static function (): never {
-            throw new RuntimeException('Mailnetwerkfout: controleer verbinding, timeout en TLS-certificaat.');
+            throw new RuntimeException('Mail network error: check the connection, timeout, and TLS certificate.');
         });
         try {
             return $operation();

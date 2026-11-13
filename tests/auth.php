@@ -53,16 +53,16 @@ final class AuthBrowser
 /** @return array{name: string, email: string, password: string, password_confirmation: string} */
 function authData(string $email = 'ada@example.test'): array
 {
-    return ['name' => '<Ada>', 'email' => $email, 'password' => 'Een lang wachtwoord 42!', 'password_confirmation' => 'Een lang wachtwoord 42!'];
+    return ['name' => '<Ada>', 'email' => $email, 'password' => 'A long password 42!', 'password_confirmation' => 'A long password 42!'];
 }
 
 function authToken(Database $db, string $email, string $purpose): string
 {
-    $subject = $purpose === 'reset' ? 'Stel je wachtwoord opnieuw in' : 'Bevestig je e-mailadres';
+    $subject = $purpose === 'reset' ? 'Reset your password' : 'Verify your email address';
     $body = $db->execute('SELECT text_body FROM emails WHERE to_addresses = ? AND subject = ? ORDER BY id DESC', [
         json_encode([$email], JSON_THROW_ON_ERROR), $subject,
     ])->fetchColumn();
-    check(is_string($body), 'Geen authenticatiemail in de wachtrij.');
+    check(is_string($body), 'No authentication email in the queue.');
     check(preg_match('/\?token=([a-f0-9]{64})/', $body, $match) === 1);
     return $match[1];
 }
@@ -70,14 +70,14 @@ function authToken(Database $db, string $email, string $purpose): string
 $authDb = new Database($root, ['driver' => 'sqlite', 'database' => $temp . '/http.sqlite']);
 (new Migrator($authDb, $root))->migrate();
 
-test('Registratie valideert invoer en slaat geen ongeldige accounts op', static function () use ($base, $authDb): void {
+test('Registration validates input and does not store invalid accounts', static function () use ($base, $authDb): void {
     $client = new AuthBrowser($base);
     $invalid = authData();
-    $invalid['name'] = ['geen tekst'];
-    $invalid['password'] = 'kort';
+    $invalid['name'] = ['not text'];
+    $invalid['password'] = 'short';
     same(422, $client->request('/register', 'POST', $invalid)['status']);
     $invalid = authData();
-    $invalid['password_confirmation'] = 'anders';
+    $invalid['password_confirmation'] = 'different';
     same(422, $client->request('/register', 'POST', $invalid)['status']);
     $invalid = authData();
     $invalid['password'] = $invalid['password_confirmation'] = str_repeat('a', 73);
@@ -85,19 +85,19 @@ test('Registratie valideert invoer en slaat geen ongeldige accounts op', static 
     same(0, (int) $authDb->execute('SELECT COUNT(*) FROM users')->fetchColumn());
 });
 
-test('Alle authenticatieacties vereisen CSRF, ook verificatie en uitloggen', static function () use ($base): void {
+test('All authentication actions require CSRF, including verification and logout', static function () use ($base): void {
     foreach (['/register', '/login', '/logout', '/forgot-password', '/reset-password', '/verify-email', '/email/verification-notification'] as $path) {
         same(419, http($base, $path, 'POST')['status']);
     }
 });
 
-test('Registratie bewaart bcrypt en gehashte tokens met een atomair gequeuede verificatiemail', static function () use ($base, $authDb, &$verifyToken): void {
+test('Registration stores bcrypt and hashed tokens with an atomically queued verification email', static function () use ($base, $authDb, &$verifyToken): void {
     $client = new AuthBrowser($base);
     $data = authData();
     $data['email'] = ' ADA@EXAMPLE.TEST ';
     $response = $client->request('/register', 'POST', $data, ['Host: evil.example.test', 'X-Forwarded-Host: evil.example.test']);
     same(200, $response['status']);
-    check(str_contains($response['body'], 'staat de verificatiemail klaar'));
+    check(str_contains($response['body'], 'a verification email has been queued'));
     check(!str_contains($response['body'], $data['password']));
     $user = $authDb->execute('SELECT * FROM users WHERE email = ?', ['ada@example.test'])->fetch();
     check(is_array($user));
@@ -116,27 +116,27 @@ test('Registratie bewaart bcrypt en gehashte tokens met een atomair gequeuede ve
     check(in_array('Location: /login', $account['headers'], true));
 });
 
-test('Bestaande registratie heeft dezelfde melding zonder duplicaat of nieuwe mail', static function () use ($base, $authDb): void {
+test('Existing registration returns the same message without duplicates or new email', static function () use ($base, $authDb): void {
     $client = new AuthBrowser($base);
     $before = (int) $authDb->execute('SELECT COUNT(*) FROM emails')->fetchColumn();
     $response = $client->request('/register', 'POST', authData());
     same(200, $response['status']);
-    check(str_contains($response['body'], 'staat de verificatiemail klaar'));
+    check(str_contains($response['body'], 'a verification email has been queued'));
     same(1, (int) $authDb->execute('SELECT COUNT(*) FROM users')->fetchColumn());
     same($before, (int) $authDb->execute('SELECT COUNT(*) FROM emails')->fetchColumn());
 });
 
-test('Login geeft generieke fouten, vernieuwt sessie en CSRF en blokkeert onbevestigde accounts', static function () use ($base, &$authClient): void {
+test('Login returns generic errors, rotates session and CSRF, and blocks unverified accounts', static function () use ($base, &$authClient): void {
     $authClient = new AuthBrowser($base);
     $bad = authData();
-    $bad['password'] = 'Verkeerd wachtwoord';
+    $bad['password'] = 'Incorrect password';
     $known = $authClient->request('/login', 'POST', $bad);
     same(422, $known['status']);
     $bad['email'] = 'missing@example.test';
     $unknown = $authClient->request('/login', 'POST', $bad);
     same(422, $unknown['status']);
-    check(str_contains($known['body'], 'E-mailadres of wachtwoord is onjuist.'));
-    check(str_contains($unknown['body'], 'E-mailadres of wachtwoord is onjuist.'));
+    check(str_contains($known['body'], 'The email address or password is incorrect.'));
+    check(str_contains($unknown['body'], 'The email address or password is incorrect.'));
     $cookie = $authClient->cookie;
     $csrf = $authClient->csrf;
     same(303, $authClient->request('/login', 'POST', authData())['status']);
@@ -150,7 +150,7 @@ test('Login geeft generieke fouten, vernieuwt sessie en CSRF en blokkeert onbeve
     same(405, $authClient->request('/logout')['status']);
 });
 
-test('Verificatie consumeert niet op GET of HEAD, weigert verkeerde tokens en werkt eenmalig', static function () use ($base, $authDb, &$verifyToken, &$authClient): void {
+test('Verification does not consume on GET or HEAD, rejects invalid tokens, and works once', static function () use ($base, $authDb, &$verifyToken, &$authClient): void {
     $client = new AuthBrowser($base);
     $path = '/verify-email?token=' . $verifyToken;
     same(200, $client->request($path)['status']);
@@ -172,7 +172,7 @@ test('Verificatie consumeert niet op GET of HEAD, weigert verkeerde tokens en we
     same(303, $authClient->request('/email/verify')['status']);
 });
 
-test('Wachtwoordherstel is generiek, vervangt eerdere tokens en stuurt geen wachtwoorden', static function () use ($base, $authDb, &$resetToken): void {
+test('Password recovery is generic, replaces previous tokens, and does not send passwords', static function () use ($base, $authDb, &$resetToken): void {
     $client = new AuthBrowser($base);
     $before = (int) $authDb->execute('SELECT COUNT(*) FROM emails')->fetchColumn();
     $unknown = $client->request('/forgot-password', 'POST', ['email' => 'unknown@example.test']);
@@ -194,10 +194,10 @@ test('Wachtwoordherstel is generiek, vervangt eerdere tokens en stuurt geen wach
     same(1, (int) $authDb->execute("SELECT COUNT(*) FROM auth_tokens WHERE purpose = 'reset'")->fetchColumn());
 });
 
-test('Reset weigert verlopen tokens en bevestigingsfouten zonder het token te verbruiken', static function () use ($base, $authDb, &$resetToken): void {
+test('Reset rejects expired tokens and confirmation errors without consuming the token', static function () use ($base, $authDb, &$resetToken): void {
     $client = new AuthBrowser($base);
     $data = authData() + ['token' => $resetToken];
-    $data['password_confirmation'] = 'anders';
+    $data['password_confirmation'] = 'different';
     same(422, $client->request('/reset-password', 'POST', $data)['status']);
     $authDb->execute("UPDATE auth_tokens SET expires_at = ? WHERE purpose = 'reset'", [time() - 1]);
     $data = authData() + ['token' => $resetToken];
@@ -206,14 +206,14 @@ test('Reset weigert verlopen tokens en bevestigingsfouten zonder het token te ve
     $resetToken = authToken($authDb, 'ada@example.test', 'reset');
 });
 
-test('Reset wijzigt het wachtwoord eenmalig en maakt alle bestaande sessies ongeldig', static function () use ($base, $authDb, &$resetToken, &$authClient): void {
+test('Reset changes the password once and invalidates all existing sessions', static function () use ($base, $authDb, &$resetToken, &$authClient): void {
     $other = new AuthBrowser($base);
     same(303, $other->request('/login', 'POST', authData())['status']);
     same(200, $other->request('/account')['status']);
     $client = new AuthBrowser($base);
     same(200, $client->request('/reset-password?token=' . $resetToken)['status']);
     $data = authData() + ['token' => $resetToken];
-    $data['password'] = $data['password_confirmation'] = 'Een heel nieuw wachtwoord!';
+    $data['password'] = $data['password_confirmation'] = 'A completely new password!';
     same(200, $client->request('/reset-password', 'POST', $data)['status']);
     same(200, $client->request('/reset-password?token=' . $resetToken)['status']);
     same(400, $client->request('/reset-password', 'POST', $data)['status']);
@@ -229,7 +229,7 @@ test('Reset wijzigt het wachtwoord eenmalig en maakt alle bestaande sessies onge
     same(0, (int) $authDb->execute("SELECT COUNT(*) FROM auth_tokens WHERE purpose = 'reset'")->fetchColumn());
 });
 
-test('Resend vereist login en maakt alleen de nieuwste verificatielink geldig', static function () use ($base, $authDb): void {
+test('Resend requires login and leaves only the latest verification link valid', static function () use ($base, $authDb): void {
     $authDb->execute('DELETE FROM auth_limits');
     $client = new AuthBrowser($base);
     same(303, $client->request('/email/verification-notification', 'POST')['status']);
@@ -248,7 +248,7 @@ test('Resend vereist login en maakt alleen de nieuwste verificatielink geldig', 
     same(200, $client->request('/verify-email', 'POST', ['token' => $new])['status']);
 });
 
-test('De guard weigert verlopen sessies, een oude versie en verwijderde gebruikers', static function () use ($base, $authDb, $temp): void {
+test('The guard rejects expired sessions, old versions, and deleted users', static function () use ($base, $authDb, $temp): void {
     foreach (['idle', 'absolute', 'version', 'deleted'] as $case) {
         $client = new AuthBrowser($base);
         same(303, $client->request('/login', 'POST', authData('grace@example.test'))['status']);
@@ -274,7 +274,7 @@ test('De guard weigert verlopen sessies, een oude versie en verwijderde gebruike
     }
 });
 
-test('Rate limits blijven actief over sessies en vertrouwen geen vervalste proxyheaders', static function () use ($base, $authDb): void {
+test('Rate limits persist across sessions and do not trust forged proxy headers', static function () use ($base, $authDb): void {
     $authDb->execute('DELETE FROM auth_limits');
     for ($i = 0; $i < 5; $i++) {
         $client = new AuthBrowser($base);
@@ -293,7 +293,7 @@ test('Rate limits blijven actief over sessies en vertrouwen geen vervalste proxy
     $authDb->execute('DELETE FROM auth_limits');
 });
 
-test('Mislukte mailqueue rolt registratie terug en onveilige APP_URL wordt geweigerd', static function () use ($root): void {
+test('Mail queue failure rolls back registration and unsafe APP_URL is rejected', static function () use ($root): void {
     $config = [
         'name' => 'Test', 'environment' => 'testing', 'debug' => false, 'secure_cookie' => false,
         'url' => 'https://example.test', 'database' => ['driver' => 'sqlite', 'database' => ':memory:'],

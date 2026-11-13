@@ -12,11 +12,11 @@ final class Process
     {
         $process = proc_open($command, [STDIN, STDOUT, STDERR], $pipes, $directory, null, ['bypass_shell' => true]);
         if (!is_resource($process)) {
-            throw new RuntimeException('Kan het CLI-proces niet starten.');
+            throw new RuntimeException('Cannot start the CLI process.');
         }
         $status = proc_close($process);
         if ($status < 0) {
-            throw new RuntimeException('Kan de exitcode van het CLI-proces niet bepalen.');
+            throw new RuntimeException('Cannot determine the CLI process exit code.');
         }
         return $status;
     }

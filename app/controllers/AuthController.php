@@ -11,13 +11,13 @@ use PBreeze\Response;
 final class AuthController
 {
     private const PAGES = [
-        'login' => ['Inloggen', 'Welkom terug. Log in met je e-mailadres en wachtwoord.', '/login', 'Inloggen'],
-        'register' => ['Maak je account', 'Na registratie bevestig je eerst je e-mailadres.', '/register', 'Account aanmaken'],
-        'forgot' => ['Wachtwoord vergeten?', 'Vul je e-mailadres in. Als er een account bestaat, ontvang je een herstellink.', '/forgot-password', 'Herstellink aanvragen'],
-        'reset' => ['Kies een nieuw wachtwoord', 'Na het wijzigen worden alle bestaande inlogsessies beëindigd.', '/reset-password', 'Wachtwoord wijzigen'],
-        'verify' => ['Bevestig je e-mailadres', 'Bevestig hieronder dat dit e-mailadres van jou is.', '/verify-email', 'E-mailadres bevestigen'],
-        'notice' => ['Controleer je inbox', 'Bevestig je e-mailadres via de link in onze e-mail om verder te gaan.', '/email/verification-notification', 'Nieuwe verificatiemail aanvragen'],
-        'account' => ['Je account', 'Je bent ingelogd en je e-mailadres is bevestigd.', '', ''],
+        'login' => ['Log in', 'Welcome back. Log in with your email address and password.', '/login', 'Log in'],
+        'register' => ['Create your account', 'After registering, verify your email address to continue.', '/register', 'Create account'],
+        'forgot' => ['Forgot your password?', 'Enter your email address. If an account exists, you will receive a reset link.', '/forgot-password', 'Request reset link'],
+        'reset' => ['Choose a new password', 'Changing your password ends all existing login sessions and invalidates API tokens.', '/reset-password', 'Change password'],
+        'verify' => ['Verify your email address', 'Confirm below that this email address belongs to you.', '/verify-email', 'Verify email address'],
+        'notice' => ['Check your inbox', 'To continue, verify your email address using the link in our email.', '/email/verification-notification', 'Request new verification email'],
+        'account' => ['Your account', 'You are logged in and your email address is verified.', '', ''],
     ];
 
     public function __construct(private readonly Application $app)
@@ -46,7 +46,7 @@ final class AuthController
 
     public function verificationLink(Request $request): Response
     {
-        // GET/HEAD consumeert niets: mail-scanners mogen de link niet opgebruiken.
+        // GET/HEAD must not consume the link when email scanners open it.
         return $this->page('verify', ['token' => $this->token($request->query('token'))]);
     }
 
@@ -64,7 +64,7 @@ final class AuthController
     public function register(Request $request): Response
     {
         return $this->submit($request, 'register', fn () => $this->app->auth->register($request->all(), $request->clientIp()),
-            'Als registratie mogelijk is, staat de verificatiemail klaar voor verzending. Controleer je inbox en log daarna in.');
+            'If registration is possible, a verification email has been queued. Check your inbox, then log in.');
     }
 
     public function login(Request $request): Response
@@ -81,25 +81,25 @@ final class AuthController
     public function forgot(Request $request): Response
     {
         return $this->submit($request, 'forgot', fn () => $this->app->auth->forgotPassword($request->all(), $request->clientIp()),
-            'Als er een account bestaat, staat een herstellink klaar voor verzending. Controleer je inbox.');
+            'If an account exists, a reset link has been queued. Check your inbox.');
     }
 
     public function reset(Request $request): Response
     {
         return $this->submit($request, 'reset', fn () => $this->app->auth->resetPassword($request->all(), $request->clientIp()),
-            'Je wachtwoord is gewijzigd. Je kunt nu opnieuw inloggen.');
+            'Your password has been changed. You can now log in again.');
     }
 
     public function verify(Request $request): Response
     {
         return $this->submit($request, 'verify', fn () => $this->app->auth->verifyEmail($request->input('token'), $request->clientIp()),
-            'Je e-mailadres is bevestigd. Je kunt verder naar je account.');
+            'Your email address has been verified. You can continue to your account.');
     }
 
     public function resend(Request $request): Response
     {
         return $this->submit($request, 'notice', fn () => $this->app->auth->resendVerification($request->clientIp()),
-            'Als verificatie nog nodig is, staat een nieuwe verificatiemail klaar voor verzending. Eerdere links zijn niet meer geldig.');
+            'If verification is still needed, a new verification email has been queued. Previous links are no longer valid.');
     }
 
     private function submit(Request $request, string $mode, callable $work, ?string $message = null, ?string $redirect = null): Response

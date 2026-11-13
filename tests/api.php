@@ -21,7 +21,7 @@ function apiApplication(): Application
     return $application;
 }
 
-test('API-tokens vereisen bevestigde gebruikers en slaan uitsluitend hashes op', static function (): void {
+test('API tokens require verified users and store only hashes', static function (): void {
     $application = apiApplication();
     $tokens = $application->api->tokens;
     raises(static fn () => $tokens->create(999), InvalidArgumentException::class);
@@ -46,7 +46,7 @@ test('API-tokens vereisen bevestigde gebruikers en slaan uitsluitend hashes op',
     check($tokens->create(1)['token'] !== $issued['token']);
 });
 
-test('Bearer-authenticatie weigert ontbrekende, afwijkende en verlopen tokens', static function (): void {
+test('Bearer authentication rejects missing, malformed, and expired tokens', static function (): void {
     $application = apiApplication();
     $tokens = $application->api->tokens;
     $issued = $tokens->create(1);
@@ -58,7 +58,7 @@ test('Bearer-authenticatie weigert ontbrekende, afwijkende en verlopen tokens', 
     raises(static fn () => $tokens->authenticate('Bearer ' . $issued['token']), HttpException::class, 401);
 });
 
-test('Tokens worden ingetrokken na revoke, wachtwoordreset-versiewijziging en verlies verificatie', static function (): void {
+test('Tokens are invalidated by revocation, password-reset version changes, and lost verification', static function (): void {
     $application = apiApplication();
     $tokens = $application->api->tokens;
     $issued = $tokens->create(1);
@@ -72,7 +72,7 @@ test('Tokens worden ingetrokken na revoke, wachtwoordreset-versiewijziging en ve
     raises(static fn () => $tokens->revoke($issued['id']), PBreeze\RecordNotFoundException::class);
 });
 
-test('API is stateless, negeert querytokens en gebruikt JSON 401/404/405 met headers', static function (): void {
+test('API is stateless, ignores query tokens, and returns JSON 401/404/405 with headers', static function (): void {
     $application = apiApplication();
     $issued = $application->api->tokens->create(1);
     same(200, $application->handle(new Request('GET', '/api/ping'))->status);
@@ -90,11 +90,11 @@ test('API is stateless, negeert querytokens en gebruikt JSON 401/404/405 met hea
     same(401, $application->handle(new Request('GET', '/api/me', [], [], $headers))->status);
 });
 
-test('API-validatie retourneert 422-details en alleen gevalideerde velden', static function (): void {
+test('API validation returns 422 details and only validated fields', static function (): void {
     same(['name' => 'Ada'], Api::validate(new Request('POST', '/api/test', [], ['name' => 'Ada', 'admin' => true]), ['name' => 'required|string|min:2|max:80']));
     try {
         Api::validate(new Request('POST', '/api/test', [], ['name' => ['bad']]), ['name' => 'required|string']);
-        throw new RuntimeException('Validatie ontbreekt.');
+        throw new RuntimeException('Expected validation error was not thrown.');
     } catch (ApiValidationException $error) {
         $response = Api::errorResponse($error);
         same(422, $response->status);
@@ -102,7 +102,7 @@ test('API-validatie retourneert 422-details en alleen gevalideerde velden', stat
     }
 });
 
-test('API verbergt onverwachte fouten, logt de oorzaak en weigert niet-JSON-acties', static function () use ($temp): void {
+test('API hides unexpected errors, logs the cause, and rejects non-JSON actions', static function () use ($temp): void {
     $application = apiApplication();
     $log = $temp . '/api-errors.log';
     $previous = ini_set('error_log', $log);
@@ -118,13 +118,13 @@ test('API verbergt onverwachte fouten, logt de oorzaak en weigert niet-JSON-acti
         $operation['operationId'] = 'wrongResponseType';
         $application->api->add('GET', '/api/wrong-response', static fn (): Response => new Response('<h1>wrong</h1>'), $operation, false);
         same(500, $application->handle(new Request('GET', '/api/wrong-response'))->status);
-        same(404, Api::errorResponse(new PBreeze\RecordNotFoundException('Record niet gevonden.'))->status);
+        same(404, Api::errorResponse(new PBreeze\RecordNotFoundException('Record not found.'))->status);
     } finally {
         ini_set('error_log', $previous);
     }
 });
 
-test('OpenAPI is gekoppeld aan runtime-routes, bearer-beleid en padparameters', static function (): void {
+test('OpenAPI matches runtime routes, bearer policy, and path parameters', static function (): void {
     $application = apiApplication();
     $api = $application->api;
     $operation = ['summary' => 'Test endpoint', 'operationId' => 'testEntry', 'responses' => ['200' => ['description' => 'Entry']]];
@@ -147,7 +147,7 @@ test('OpenAPI is gekoppeld aan runtime-routes, bearer-beleid en padparameters', 
     raises(static fn () => $api->add('GET', '/api/missing-summary', static fn (): Response => Response::json([]), []), InvalidArgumentException::class);
 });
 
-test('API-rate limit staat precies 120 verzoeken per IP per minuut toe', static function (): void {
+test('API rate limit allows exactly 120 requests per IP per minute', static function (): void {
     $application = apiApplication();
     $expires = (intdiv(time(), 60) + 1) * 60;
     $bucket = hash('sha256', 'rate-test|' . $expires);
@@ -160,7 +160,7 @@ test('API-rate limit staat precies 120 verzoeken per IP per minuut toe', static 
     same(200, $application->handle(new Request('GET', '/api/openapi.json', [], [], [], 'rate-test'))->status);
 });
 
-test('Swagger heeft lokale assets, eigen CSP en is standaard uitgeschakeld in productie', static function () use ($root, $config): void {
+test('Swagger has local assets and an isolated CSP and is disabled by default in production', static function () use ($root, $config): void {
     $application = new Application($root, $config);
     $docs = $application->handle(new Request('GET', '/api/docs'));
     same(200, $docs->status);
@@ -176,7 +176,7 @@ test('Swagger heeft lokale assets, eigen CSP en is standaard uitgeschakeld in pr
     same(405, $application->handle(new Request('POST', '/api/docs'))->status);
 });
 
-test('CLI maakt werkende API-controller, expliciete routes en OpenAPI samen', static function () use ($root, $temp, $config): void {
+test('CLI creates a working API controller, explicit routes, and OpenAPI together', static function () use ($root, $temp, $config): void {
     $fixture = $temp . '/api scaffold';
     mkdir($fixture . '/routes', 0700, true);
     file_put_contents($fixture . '/routes/web.php', '<?php');
@@ -216,7 +216,7 @@ test('CLI maakt werkende API-controller, expliciete routes en OpenAPI samen', st
     check(str_contains($routeOutput, '/api/widgets/{id}'));
 });
 
-test('CLI beheert API-tokens zonder hashes of bestaande tokens te tonen', static function (): void {
+test('CLI manages API tokens without showing hashes or existing tokens', static function (): void {
     $application = apiApplication();
     $result = console($application, ['api:token', '1', 'deploy', '2']);
     preg_match('/"token": "(pbz_[a-f0-9]{64})"/', $result, $match);

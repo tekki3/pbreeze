@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 if (PHP_VERSION_ID < 80300) {
-    throw new RuntimeException('PBreeze vereist PHP 8.3 of nieuwer.');
+    throw new RuntimeException('PBreeze requires PHP 8.3 or later.');
 }
 
 require_once __DIR__ . '/framework/Env.php';

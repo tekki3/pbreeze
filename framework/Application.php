@@ -57,7 +57,7 @@ final class Application
         try {
             $https = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
             if ($this->config['environment'] === 'production' && !$this->config['secure_cookie'] && !$https) {
-                throw new \RuntimeException('Productie vereist HTTPS of SESSION_SECURE_COOKIE=true achter een HTTPS-proxy.');
+                throw new \RuntimeException('Production requires HTTPS or SESSION_SECURE_COOKIE=true behind an HTTPS proxy.');
             }
             if (!$apiRequest) {
                 $this->session->start($https || $this->config['secure_cookie']);
@@ -76,7 +76,7 @@ final class Application
             return new Response($error->getMessage(), $error->status, $error->headers + ['Content-Type' => 'text/plain; charset=UTF-8']);
         }
         error_log((string) $error);
-        return new Response($debug ? (string) $error : 'Er ging iets mis. Probeer het later opnieuw.', 500, [
+        return new Response($debug ? (string) $error : 'Something went wrong. Please try again later.', 500, [
             'Content-Type' => 'text/plain; charset=UTF-8',
         ]);
     }

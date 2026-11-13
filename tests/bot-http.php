@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 use PBreeze\Database;
 
-test('Alle gekozen publieke formulieren weigeren ontbrekende CAPTCHA en een gevulde honeypot zonder neveneffecten', static function () use ($root, $temp, $base): void {
+test('All selected public forms reject missing CAPTCHA and filled honeypots without side effects', static function () use ($root, $temp, $base): void {
     $db = new Database($root, ['driver' => 'sqlite', 'database' => $temp . '/http.sqlite']);
     $client = new AuthBrowser($base);
     $client->solveCaptcha = false;
@@ -19,15 +19,15 @@ test('Alle gekozen publieke formulieren weigeren ontbrekende CAPTCHA en een gevu
         $fields = captchaFields($client->cookie, $form['body']);
         $response = $client->request($path, 'POST', authData('bots@example.test') + array_replace($fields, ['website' => 'spam']));
         same(422, $response['status']);
-        check(str_contains($response['body'], 'De beveiligingscontrole is niet gelukt.'));
-        check(!str_contains($response['body'], 'Hallo,'));
+        check(str_contains($response['body'], 'The security check failed.'));
+        check(!str_contains($response['body'], 'Hello,'));
         same(303, $client->request('/account')['status']);
     }
     same($users, (int) $db->execute('SELECT COUNT(*) FROM users')->fetchColumn());
     same($emails, (int) $db->execute('SELECT COUNT(*) FROM emails')->fetchColumn());
 });
 
-test('CAPTCHA-afbeeldingen vereisen dezelfde sessie, HEAD consumeert niets en vernieuwen trekt alleen de oude code in', static function () use ($base): void {
+test('CAPTCHA images require the same session, HEAD consumes nothing, and refresh revokes only the old code', static function () use ($base): void {
     $client = new AuthBrowser($base);
     $client->solveCaptcha = false;
     $form = $client->request('/register');
@@ -44,8 +44,8 @@ test('CAPTCHA-afbeeldingen vereisen dezelfde sessie, HEAD consumeert niets en ve
     same(404, (new AuthBrowser($base))->request($path)['status']);
     $response = $client->request('/register', 'POST', authData('refresh@example.test') + $fields + ['_captcha_refresh' => '1']);
     same(200, $response['status']);
-    check(str_contains($response['body'], 'Nieuwe code geladen.'));
-    check(!str_contains($response['body'], 'staat de verificatiemail klaar'));
+    check(str_contains($response['body'], 'New code loaded.'));
+    check(!str_contains($response['body'], 'a verification email has been queued'));
     check(!str_contains($response['body'], authData()['password']));
     check(str_contains($response['body'], 'value="refresh@example.test"'));
     same(404, $client->request($path)['status']);
@@ -55,29 +55,29 @@ test('CAPTCHA-afbeeldingen vereisen dezelfde sessie, HEAD consumeert niets en ve
     same(419, $client->request('/register', 'POST', $fields + ['_token' => 'bad', '_captcha_refresh' => '1'])['status']);
 });
 
-test('Voorbeeldformulier vernieuwt zonder begroeting en verbruikt oplossingen ook bij invoerfouten', static function () use ($base): void {
+test('Example form refreshes without a greeting and consumes solutions even on input errors', static function () use ($base): void {
     $client = new AuthBrowser($base);
     $client->solveCaptcha = false;
     $form = $client->request('/');
     $fields = captchaFields($client->cookie, $form['body']);
     $response = $client->request('/greet', 'POST', $fields + ['_captcha_refresh' => '1', 'name' => '<Ada>']);
     same(200, $response['status']);
-    check(str_contains($response['body'], 'Nieuwe code geladen.'));
-    check(!str_contains($response['body'], 'Hallo,'));
+    check(str_contains($response['body'], 'New code loaded.'));
+    check(!str_contains($response['body'], 'Hello,'));
     check(str_contains($response['body'], 'value="&lt;Ada&gt;"'));
     $fields = captchaFields($client->cookie, $response['body']);
     $response = $client->request('/greet', 'POST', $fields + ['name' => 'A']);
     same(422, $response['status']);
-    check(str_contains($response['body'], 'Gebruik minimaal 2 tekens.'));
+    check(str_contains($response['body'], 'Use at least 2 characters.'));
     same(422, $client->request('/greet', 'POST', $fields + ['name' => 'Ada'])['status']);
     $fields = captchaFields($client->cookie, $response['body']);
     $response = $client->request('/greet', 'POST', $fields + ['name' => '<Ada>']);
     same(200, $response['status']);
-    check(str_contains($response['body'], 'Hallo, &lt;Ada&gt;!'));
+    check(str_contains($response['body'], 'Hello, &lt;Ada&gt;!'));
     same(422, $client->request('/greet', 'POST', $fields + ['name' => 'Ada'])['status']);
 });
 
-test('Verificatiemail opnieuw aanvragen vereist beide botcontroles en vernieuwen verstuurt geen mail', static function () use ($root, $temp, $base): void {
+test('Resending verification requires both bot checks and refreshing sends no email', static function () use ($root, $temp, $base): void {
     $db = new Database($root, ['driver' => 'sqlite', 'database' => $temp . '/http.sqlite']);
     $db->execute('DELETE FROM auth_limits');
     $client = new AuthBrowser($base);
@@ -101,7 +101,7 @@ test('Verificatiemail opnieuw aanvragen vereist beide botcontroles en vernieuwen
     same(422, $client->request($path, 'POST', $fields)['status']);
 });
 
-test('Een verlopen inlogsessie roteert voordat een nieuwe bruikbare CAPTCHA wordt uitgegeven', static function () use ($temp, $base): void {
+test('An expired login session rotates before a new usable CAPTCHA is issued', static function () use ($temp, $base): void {
     $client = new AuthBrowser($base);
     same(303, $client->request('/login', 'POST', authData('captcha-resend@example.test'))['status']);
     $form = $client->request('/email/verify');

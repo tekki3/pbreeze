@@ -25,9 +25,9 @@ function encryptedDatabase(?Encryption $encryption = null): Database
     return $db;
 }
 
-test('AES-256-GCM roundtrip ondersteunt lege tekst, Unicode, binary en grote berichten', static function (): void {
+test('AES-256-GCM round trip supports empty text, Unicode, binary data, and large messages', static function (): void {
     $encryption = new Encryption(Encryption::generateKey());
-    foreach (['', '0', 'Hallo wereld!', 'Geheim: café 日本語', "\0\xff\xfe\n\r", str_repeat('abc', 350000)] as $text) {
+    foreach (['', '0', 'Hello world!', 'Secret: café 日本語', "\0\xff\xfe\n\r", str_repeat('abc', 350000)] as $text) {
         $ciphertext = $encryption->encrypt($text);
         check(str_starts_with($ciphertext, 'pbreeze:v1:'));
         same($text, $encryption->decrypt($ciphertext));
@@ -35,7 +35,7 @@ test('AES-256-GCM roundtrip ondersteunt lege tekst, Unicode, binary en grote ber
     }
 });
 
-test('Decryptie weigert elke gewijzigde nonce, tag of ciphertext en verkeerde context of sleutel', static function (): void {
+test('Decryption rejects every modified nonce, tag, or ciphertext and incorrect contexts or keys', static function (): void {
     $encryption = new Encryption(Encryption::generateKey());
     $ciphertext = $encryption->encrypt('Vertrouwelijke testinhoud', 'orders:notes');
     $bytes = base64_decode(substr($ciphertext, strlen('pbreeze:v1:')), true);
@@ -50,7 +50,7 @@ test('Decryptie weigert elke gewijzigde nonce, tag of ciphertext en verkeerde co
     same('Vertrouwelijke testinhoud', $encryption->decrypt($ciphertext, 'orders:notes'));
 });
 
-test('Encryptieformaat werkt rechtstreeks met native OpenSSL AES-256-GCM', static function (): void {
+test('Encryption format works directly with native OpenSSL AES-256-GCM', static function (): void {
     $configured = Encryption::generateKey();
     $key = base64_decode(substr($configured, 7), true);
     $encryption = new Encryption($configured);
@@ -62,27 +62,27 @@ test('Encryptieformaat werkt rechtstreeks met native OpenSSL AES-256-GCM', stati
     ));
     $nonce = random_bytes(12);
     $tag = '';
-    $ciphertext = openssl_encrypt('Andersom', 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $nonce, $tag, 'pbreeze:v1:interop', 16);
+    $ciphertext = openssl_encrypt('Reverse', 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $nonce, $tag, 'pbreeze:v1:interop', 16);
     check(is_string($ciphertext));
-    same('Andersom', $encryption->decrypt('pbreeze:v1:' . base64_encode($nonce . $tag . $ciphertext), 'interop'));
+    same('Reverse', $encryption->decrypt('pbreeze:v1:' . base64_encode($nonce . $tag . $ciphertext), 'interop'));
 });
 
-test('Encryptie weigert ongeldige enveloppen en alle ontbrekende of verkeerd gevormde sleutels', static function (): void {
+test('Encryption rejects invalid envelopes and all missing or malformed keys', static function (): void {
     $valid = new Encryption(Encryption::generateKey());
     foreach (['', 'plaintext', 'pbreeze:v2:AAAA', 'pbreeze:v1:!', 'pbreeze:v1:', 'pbreeze:v1:' . base64_encode(str_repeat('x', 27))] as $payload) {
         raises(fn () => $valid->decrypt($payload), EncryptionException::class);
     }
-    $ciphertext = $valid->encrypt('inhoud');
+    $ciphertext = $valid->encrypt('content');
     raises(fn () => $valid->decrypt($ciphertext . "\n"), EncryptionException::class);
     raises(fn () => $valid->decrypt(substr($ciphertext, 0, -1)), EncryptionException::class);
-    foreach (['', 'een-wachtwoord', str_repeat('a', 32), 'base64:!', 'base64:' . base64_encode(random_bytes(31)), 'base64:' . base64_encode(random_bytes(33))] as $key) {
+    foreach (['', 'a-password', str_repeat('a', 32), 'base64:!', 'base64:' . base64_encode(random_bytes(31)), 'base64:' . base64_encode(random_bytes(33))] as $key) {
         $invalid = new Encryption($key);
         raises(fn () => $invalid->encrypt('test'), EncryptionException::class);
         raises(fn () => $invalid->decrypt($ciphertext), EncryptionException::class);
     }
 });
 
-test('Encryptiesleutels worden niet gedumpt of geserialiseerd en parameters zijn gevoelig', static function (): void {
+test('Encryption keys are not dumped or serialized and parameters are sensitive', static function (): void {
     $key = Encryption::generateKey();
     $encryption = new Encryption($key);
     ob_start();
@@ -95,16 +95,16 @@ test('Encryptiesleutels worden niet gedumpt of geserialiseerd en parameters zijn
         $parameter = (new ReflectionMethod(Encryption::class, $method))->getParameters()[0];
         same(1, count($parameter->getAttributes(SensitiveParameter::class)));
     }
-    $marker = 'niet-in-foutmelding';
+    $marker = 'not-in-error-message';
     try {
         (new Encryption($marker))->encrypt($marker);
-        throw new LogicException('Verwachte fout ontbreekt.');
+        throw new LogicException('Expected error was not thrown.');
     } catch (EncryptionException $error) {
         check(!str_contains((string) $error, $marker));
     }
 });
 
-test('APP-configuratie deelt dezelfde encryptieservice met de ORM zonder verplichte sleutel bij normaal gebruik', static function () use ($root): void {
+test('Application configuration shares encryption with the ORM without requiring a key for normal use', static function () use ($root): void {
     $config = [
         'name' => 'Test', 'environment' => 'testing', 'debug' => false, 'secure_cookie' => false,
         'key' => Encryption::generateKey(), 'database' => ['driver' => 'sqlite', 'database' => ':memory:'],
@@ -120,7 +120,7 @@ test('APP-configuratie deelt dezelfde encryptieservice met de ORM zonder verplic
     raises(fn () => $app->encryption->encrypt('test'), EncryptionException::class);
 });
 
-test('key:generate maakt geldige unieke sleutels zonder configuratiebestanden te wijzigen', static function () use ($app, $temp): void {
+test('key:generate creates valid unique keys without changing configuration files', static function () use ($app, $temp): void {
     $file = $temp . '/.env';
     $before = is_file($file) ? file_get_contents($file) : null;
     $first = trim(console($app, ['key:generate']));
@@ -134,12 +134,12 @@ test('key:generate maakt geldige unieke sleutels zonder configuratiebestanden te
     raises(fn () => console($app, ['key:generate', 'extra']), InvalidArgumentException::class);
 });
 
-test('Encrypted ORM-casts bewaren alleen ciphertext en hydrateren zonder hersleutelen of dirty wijzigingen', static function (): void {
+test('Encrypted ORM casts store only ciphertext and hydrate without re-encryption or dirty changes', static function (): void {
     $db = encryptedDatabase(new Encryption(Encryption::generateKey()));
     $model = new EncryptedEntry($db);
     $record = $model->create([
-        'title' => 'Voorbeeld', 'secret' => 'Geheim met Unicode: café', 'other_secret' => '',
-        'details' => ['lijst' => [1, false, 'é'], 'float' => 1.0],
+        'title' => 'Example', 'secret' => 'Secret with Unicode: café', 'other_secret' => '',
+        'details' => ['list' => [1, false, 'é'], 'float' => 1.0],
     ]);
     $raw = $db->table('encrypted_entries')->findOrFail($record->id);
     $wrongKey = new EncryptedEntry(encryptedDatabase(new Encryption(Encryption::generateKey())));
@@ -152,31 +152,31 @@ test('Encrypted ORM-casts bewaren alleen ciphertext en hydrateren zonder hersleu
     foreach (['secret', 'other_secret', 'details'] as $field) {
         check(str_starts_with($raw[$field], 'pbreeze:v1:'));
     }
-    check(!str_contains($raw['secret'], 'Geheim'));
-    same('Geheim met Unicode: café', $record->secret);
+    check(!str_contains($raw['secret'], 'Secret'));
+    same('Secret with Unicode: café', $record->secret);
     same('', $record->other_secret);
-    same(['lijst' => [1, false, 'é'], 'float' => 1.0], $record->details);
+    same(['list' => [1, false, 'é'], 'float' => 1.0], $record->details);
     same([], $record->dirty());
     $record->refresh()->save();
     same($raw, $db->table('encrypted_entries')->findOrFail($record->id));
-    $record->secret = 'Geheim met Unicode: café';
+    $record->secret = 'Secret with Unicode: café';
     same([], $record->dirty());
-    $record->title = 'Anders';
+    $record->title = 'Different';
     $record->save();
     same($raw['secret'], $db->table('encrypted_entries')->findOrFail($record->id)['secret']);
-    $second = $model->create(['title' => 'Tweede', 'secret' => $record->secret]);
+    $second = $model->create(['title' => 'Second', 'secret' => $record->secret]);
     check($raw['secret'] !== $db->table('encrypted_entries')->findOrFail($second->id)['secret']);
-    same(['id' => $record->id, 'title' => 'Anders'], $record->toArray());
-    check(!str_contains(json_encode($record, JSON_THROW_ON_ERROR), 'Geheim'));
+    same(['id' => $record->id, 'title' => 'Different'], $record->toArray());
+    check(!str_contains(json_encode($record, JSON_THROW_ON_ERROR), 'Secret'));
 });
 
-test('Encrypted modelupdates en bulkupdates ondersteunen null, JSON en typecontrole', static function (): void {
+test('Encrypted model and bulk updates support null, JSON, and type checking', static function (): void {
     $db = encryptedDatabase(new Encryption(Encryption::generateKey()));
     $record = (new EncryptedEntry($db))->create(['title' => 'Test', 'secret' => null, 'details' => null]);
     same(null, $record->secret);
     same(null, $record->details);
-    $record->update(['secret' => 'nieuw', 'details' => []]);
-    same('nieuw', $record->secret);
+    $record->update(['secret' => 'new', 'details' => []]);
+    same('new', $record->secret);
     same([], $record->details);
     same(1, $record->query()->where('id', $record->id)->update(['secret' => 'bulk', 'details' => ['bulk' => true]]));
     $record->refresh();
@@ -190,23 +190,23 @@ test('Encrypted modelupdates en bulkupdates ondersteunen null, JSON en typecontr
     same(null, $db->table('encrypted_entries')->findOrFail($record->id)['secret']);
 });
 
-test('ORM weigert plaintext, vervalste ciphertext en verplaatsing tussen versleutelde kolommen', static function (): void {
+test('ORM rejects plaintext, forged ciphertext, and moving values between encrypted columns', static function (): void {
     $db = encryptedDatabase(new Encryption(Encryption::generateKey()));
-    $record = (new EncryptedEntry($db))->create(['title' => 'Test', 'secret' => 'vertrouwelijk', 'other_secret' => 'ander']);
+    $record = (new EncryptedEntry($db))->create(['title' => 'Test', 'secret' => 'confidential', 'other_secret' => 'other']);
     $raw = $db->table('encrypted_entries')->findOrFail($record->id);
     $db->table('encrypted_entries')->where('id', $record->id)->update(['other_secret' => $raw['secret']]);
     raises(fn () => $record->refresh(), EncryptionException::class);
-    $db->table('encrypted_entries')->where('id', $record->id)->update(['other_secret' => 'onversleuteld']);
+    $db->table('encrypted_entries')->where('id', $record->id)->update(['other_secret' => 'unencrypted']);
     raises(fn () => $record->query()->get(), EncryptionException::class);
     $db->table('encrypted_entries')->where('id', $record->id)->update(['other_secret' => $raw['other_secret'], 'secret' => substr($raw['secret'], 0, -4)]);
     raises(fn () => $record->refresh(), EncryptionException::class);
-    same('vertrouwelijk', $record->secret);
+    same('confidential', $record->secret);
 });
 
-test('Versleutelde casts falen zonder sleutel en blokkeren vergelijkingen, sortering en ongeschikte sleutels', static function (): void {
+test('Encrypted casts fail without a key and block comparisons, sorting, and unsuitable keys', static function (): void {
     $db = encryptedDatabase();
     $model = new EncryptedEntry($db);
-    raises(fn () => $model->create(['title' => 'Geen sleutel', 'secret' => 'test']), EncryptionException::class);
+    raises(fn () => $model->create(['title' => 'No key', 'secret' => 'test']), EncryptionException::class);
     same(0, $model->query()->count());
     foreach ([
         fn () => $model->query()->where('secret', 'test'),

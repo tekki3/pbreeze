@@ -12,7 +12,7 @@ final class TemplateCompiler
     public function compile(string $source, string $name): string
     {
         if (str_contains($source, '<?')) {
-            throw new RuntimeException("Template $name: gebruik directives in plaats van PHP-tags.");
+            throw new RuntimeException("Template $name: use directives instead of PHP tags.");
         }
         $output = '<?php declare(strict_types=1); ?>';
         $stack = [];
@@ -21,7 +21,7 @@ final class TemplateCompiler
             if (substr($source, $offset, 4) === '{{--') {
                 $end = strpos($source, '--}}', $offset + 4);
                 if ($end === false) {
-                    throw new RuntimeException("Template $name: onafgesloten commentaar.");
+                    throw new RuntimeException("Template $name: unclosed comment.");
                 }
                 $offset = $end + 4;
                 continue;
@@ -60,7 +60,7 @@ final class TemplateCompiler
                     $offset++;
                 }
                 if (($source[$offset] ?? '') !== '(') {
-                    throw new RuntimeException("Template $name: @$directive vereist argumenten (positie $start).");
+                    throw new RuntimeException("Template $name: @$directive requires arguments (position $start).");
                 }
                 $offset++;
                 $arguments = $this->expression($source, $offset, ')', $name);
@@ -70,13 +70,13 @@ final class TemplateCompiler
             } elseif ($directive === 'else' || $directive === 'elseif') {
                 $top = array_key_last($stack);
                 if ($top === null || $stack[$top]['kind'] !== 'if' || $stack[$top]['else']) {
-                    throw new RuntimeException("Template $name: onverwachte @$directive.");
+                    throw new RuntimeException("Template $name: unexpected @$directive.");
                 }
                 $stack[$top]['else'] = $directive === 'else';
             } elseif (str_starts_with($directive, 'end')) {
                 $open = array_pop($stack);
                 if ($open === null || $open['kind'] !== substr($directive, 3)) {
-                    throw new RuntimeException("Template $name: onverwachte @$directive.");
+                    throw new RuntimeException("Template $name: unexpected @$directive.");
                 }
             }
             $output .= match ($directive) {
@@ -98,16 +98,16 @@ final class TemplateCompiler
                 'slot' => '<?php $__engine->startSlot(' . $arguments . '); ?>',
                 'endslot' => '<?php $__engine->endSlot(); ?>',
                 'csrf' => '<?php echo csrf_field(' . $arguments . '); ?>',
-                default => throw new RuntimeException("Template $name: onbekende directive @$directive. Gebruik @@ voor een letterlijke @."),
+                default => throw new RuntimeException("Template $name: unknown directive @$directive. Use @@ for a literal @."),
             };
         }
         if ($stack !== []) {
-            throw new RuntimeException("Template $name: onafgesloten @" . $stack[array_key_last($stack)]['kind'] . '.');
+            throw new RuntimeException("Template $name: unclosed @" . $stack[array_key_last($stack)]['kind'] . '.');
         }
         try {
             token_get_all($output, TOKEN_PARSE);
         } catch (\ParseError $error) {
-            throw new RuntimeException("Template $name: ongeldige expressie: " . $error->getMessage(), 0, $error);
+            throw new RuntimeException("Template $name: invalid expression: " . $error->getMessage(), 0, $error);
         }
         return $output;
     }
@@ -135,7 +135,7 @@ final class TemplateCompiler
                 $expression = trim(substr($source, $start, $offset - $start));
                 $offset += strlen($closing);
                 if ($expression === '') {
-                    throw new RuntimeException("Template $name: lege expressie.");
+                    throw new RuntimeException("Template $name: empty expression.");
                 }
                 return $expression;
             }
@@ -156,17 +156,17 @@ final class TemplateCompiler
                 $offset = $end + 1;
                 continue;
             } elseif ($character === '`' || substr($source, $offset, 3) === '<<<') {
-                throw new RuntimeException("Template $name: backticks en heredoc worden niet ondersteund.");
+                throw new RuntimeException("Template $name: backticks and heredoc are not supported.");
             } elseif (str_contains('([{', $character)) {
                 $stack[] = $character;
             } elseif (str_contains(')]}', $character)) {
                 $open = array_pop($stack);
                 if ($open !== match ($character) { ')' => '(', ']' => '[', '}' => '{' }) {
-                    throw new RuntimeException("Template $name: ongebalanceerde expressie.");
+                    throw new RuntimeException("Template $name: unbalanced expression.");
                 }
             }
             $offset++;
         }
-        throw new RuntimeException("Template $name: onafgesloten expressie.");
+        throw new RuntimeException("Template $name: unclosed expression.");
     }
 }

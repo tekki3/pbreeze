@@ -17,7 +17,7 @@ try {
     header('Cache-Control: no-store');
     if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'HEAD') {
         echo $api
-            ? '{"error":{"status":500,"message":"De applicatie kon niet starten. Controleer het serverlog."}}'
-            : 'De applicatie kon niet starten. Controleer het serverlog.';
+            ? '{"error":{"status":500,"message":"The application could not start. Check the server log."}}'
+            : 'The application could not start. Check the server log.';
     }
 }

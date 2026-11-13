@@ -20,7 +20,7 @@ function templateViews(array $templates): View
     return new View($directory, $directory . '/cache');
 }
 
-test('Breeze escaped standaard HTML, quotes, Unicode en Stringable-waarden', static function (): void {
+test('Breeze escapes HTML, quotes, Unicode, and Stringable values by default', static function (): void {
     $views = templateViews(['index' => '{{ $value }}|{{ null }}|{{ 42 }}|{{ true }}|{{ $object }}']);
     $object = new class implements Stringable {
         public function __toString(): string { return '<strong>Ada</strong>'; }
@@ -31,24 +31,24 @@ test('Breeze escaped standaard HTML, quotes, Unicode en Stringable-waarden', sta
     raises(static fn () => $views->render('index', ['value' => [], 'object' => $object]), InvalidArgumentException::class);
 });
 
-test('Breeze raw-uitvoer is expliciet en templatecommentaar wordt verwijderd', static function (): void {
+test('Breeze raw output is explicit and template comments are removed', static function (): void {
     $views = templateViews(['index' => '{{-- {{ $missing }} --}}{!! $html !!}|@@if(true)|mail@example.test']);
     same('<b>Vertrouwd</b>|@if(true)|mail@example.test', $views->render('index', ['html' => '<b>Vertrouwd</b>']));
 });
 
-test('Compiler begrijpt geneste haakjes, quotes en delimiters binnen expressies', static function (): void {
+test('Compiler understands nested parentheses, quotes, and delimiters in expressions', static function (): void {
     $views = templateViews([
         'index' => '{{ implode("}}", [strtoupper("a"), "b"]) }}|{{ (static fn () => ["x" => "(ok)"])()["x"] }}|{{ "quote\\"}}inside" }}',
     ]);
     same('A}}b|(ok)|quote&quot;}}inside', $views->render('index'));
 });
 
-test('Compiler ondersteunt comments binnen expressies zonder delimiters te verwarren', static function (): void {
+test('Compiler supports comments in expressions without confusing delimiters', static function (): void {
     $views = templateViews(['index' => "{{ /* }} ) */ 'ok' }}|@if(strlen(')') === 1)yes@endif"]);
     same('ok|yes', $views->render('index'));
 });
 
-test('Breeze verwerkt if, elseif, else, foreach en for', static function (): void {
+test('Breeze handles if, elseif, else, foreach, and for', static function (): void {
     // Whitespace separates directive names from following literal letters.
     $compiler = new TemplateCompiler();
     raises(static fn () => $compiler->compile('@elseother', 'invalid'), RuntimeException::class);
@@ -60,7 +60,7 @@ test('Breeze verwerkt if, elseif, else, foreach en for', static function (): voi
     same(' other||012', $views->render('index', ['value' => 3, 'items' => []]));
 });
 
-test('Layouts renderen secties en escapen standaardwaarden voor yield', static function (): void {
+test('Layouts render sections and escape yield defaults', static function (): void {
     $views = templateViews([
         'page' => "@extends('layouts.app')@section('title'){{ \$title }}@endsection@section('content')<p>{{ \$body }}</p>@endsection",
         'layouts.app' => "<title>@yield('title')</title><main>@yield('content')</main><aside>@yield('missing', '<none>')</aside>",
@@ -70,7 +70,7 @@ test('Layouts renderen secties en escapen standaardwaarden voor yield', static f
     ]));
 });
 
-test('Meerlaagse layouts behouden de secties van de meest specifieke template', static function (): void {
+test('Multilevel layouts preserve sections from the most specific template', static function (): void {
     $views = templateViews([
         'page' => "@extends('layouts.middle')@section('title')Child@endsection",
         'layouts.middle' => "@extends('layouts.base')@section('title')Parent@endsection@section('content')<p>Middle</p>@endsection",
@@ -79,7 +79,7 @@ test('Meerlaagse layouts behouden de secties van de meest specifieke template', 
     same('<title>Child</title><p>Middle</p>', $views->render('page'));
 });
 
-test('Includes krijgen de huidige loopvariabelen met expliciete data-override', static function (): void {
+test('Includes receive current loop variables with explicit data overrides', static function (): void {
     $views = templateViews([
         'index' => "@foreach(\$items as \$item)@include('partials.item', ['title' => strtoupper(\$title)])@endforeach{{ \$title }}",
         'partials.item' => '{{ $title }}:{{ $item }};',
@@ -87,7 +87,7 @@ test('Includes krijgen de huidige loopvariabelen met expliciete data-override', 
     same('ADA:&lt;one&gt;;ADA:two;ada', $views->render('index', ['title' => 'ada', 'items' => ['<one>', 'two']]));
 });
 
-test('Componenten ontvangen alleen props en veilige, al gerenderde slots', static function (): void {
+test('Components receive only props and safe prerendered slots', static function (): void {
     $views = templateViews([
         'index' => "@component('components.panel', ['title' => '<Title>'])@slot('footer')<footer>{{ \$footer }}</footer>@endslot<p>{{ \$body }}</p>@endcomponent",
         'components.panel' => '<section><h2>{{ $title }}</h2>{!! $slot !!}{!! $footer !!}|{{ isset($private) ? "leak" : "isolated" }}</section>',
@@ -97,7 +97,7 @@ test('Componenten ontvangen alleen props en veilige, al gerenderde slots', stati
     ]));
 });
 
-test('Geneste componenten en includes mengen hun slots niet', static function (): void {
+test('Nested components and includes do not mix their slots', static function (): void {
     $views = templateViews([
         'index' => "@component('outer')O@component('inner')I@endcomponent Z@endcomponent",
         'outer' => '<outer>{!! $slot !!}</outer>',
@@ -106,7 +106,7 @@ test('Geneste componenten en includes mengen hun slots niet', static function ()
     same('<outer>O<inner>I</inner> Z</outer>', $views->render('index'));
 });
 
-test('Elke render krijgt nieuwe secties, ook na een exception', static function (): void {
+test('Each render gets fresh sections, even after an exception', static function (): void {
     $views = templateViews([
         'page' => "@extends('layout')@section('content'){{ \$value }}@endsection",
         'layout' => "@yield('content', 'empty')",
@@ -120,7 +120,7 @@ test('Elke render krijgt nieuwe secties, ook na een exception', static function 
     same('second', $views->render('page', ['value' => 'second']));
 });
 
-test('Compiler weigert ongeldige syntax zonder een cachebestand te publiceren', static function (): void {
+test('Compiler rejects invalid syntax without publishing a cache file', static function (): void {
     $compiler = new TemplateCompiler();
     foreach ([
         '{{ }}', '{{ $x ', '{!! $x ', '{{-- comment', '@if(true)', '@endif', '@else',
@@ -140,7 +140,7 @@ test('Compiler weigert ongeldige syntax zonder een cachebestand te publiceren', 
     same(0, $views->clearCache());
 });
 
-test('Runtime weigert cyclische layouts, includes en componenten zonder buffers te lekken', static function (): void {
+test('Runtime rejects cyclic layouts, includes, and components without leaking buffers', static function (): void {
     $views = templateViews([
         'layoutCycle' => "@extends('layoutCycle')",
         'includeCycle' => "@include('includeCycle')",
@@ -160,7 +160,7 @@ test('Runtime weigert cyclische layouts, includes en componenten zonder buffers 
     }
 });
 
-test('Gelijktijdige processen publiceren een volledige templatecache zonder schrijfraces', static function () use ($root, $temp): void {
+test('Concurrent processes publish a complete template cache without write races', static function () use ($root, $temp): void {
     $directory = $temp . '/concurrent-templates';
     mkdir($directory);
     file_put_contents($directory . '/index.breeze.php', '{{ $value }}');
@@ -172,7 +172,7 @@ test('Gelijktijdige processen publiceren een volledige templatecache zonder schr
                 1 => ['file', $directory . "/output-$index", 'w'],
                 2 => ['file', $directory . "/error-$index", 'w'],
             ], $pipes, $root, null, ['bypass_shell' => true]);
-            check(is_resource($process), 'Kan templateworker niet starten.');
+            check(is_resource($process), 'Cannot start the template worker.');
             $processes[$index] = $process;
         }
         foreach ($processes as $index => $process) {
@@ -192,7 +192,7 @@ test('Gelijktijdige processen publiceren een volledige templatecache zonder schr
     }
 });
 
-test('Templatepaden en interne enginevariabelen kunnen niet door viewdata worden overschreven', static function (): void {
+test('Template paths and internal engine variables cannot be overwritten by view data', static function (): void {
     $views = templateViews(['index' => '{{ $value }}']);
     same('ok', $views->render('index', ['value' => 'ok', '__engine' => 'bad', '__file' => '/missing', '__data' => []]));
     foreach (['../escape', 'C:\\escape', 'dir/name', 'con'] as $name) {
@@ -201,7 +201,7 @@ test('Templatepaden en interne enginevariabelen kunnen niet door viewdata worden
     raises(static fn () => $views->render('missing'), RuntimeException::class);
 });
 
-test('Templatecache wordt hergebruikt en vernieuwt bij gewijzigde inhoud zonder mtime-afhankelijkheid', static function (): void {
+test('Template cache is reused and refreshed on content changes without depending on mtime', static function (): void {
     global $temp;
     $directory = $temp . '/cache-test';
     mkdir($directory);
@@ -230,7 +230,7 @@ test('Templatecache wordt hergebruikt en vernieuwt bij gewijzigde inhoud zonder 
     same('new fourth', $views->render('index', ['value' => 'fourth']));
 });
 
-test('Breeze heeft voorrang boven PHP-views, bestaande PHP-views blijven bruikbaar', static function (): void {
+test('Breeze takes precedence over PHP views while existing PHP views remain usable', static function (): void {
     global $temp;
     $directory = $temp . '/mixed-views';
     mkdir($directory);
@@ -242,13 +242,13 @@ test('Breeze heeft voorrang boven PHP-views, bestaande PHP-views blijven bruikba
     same('compiled', $views->render('both'));
 });
 
-test('CSRF-directive genereert hetzelfde token als native PHP', static function (): void {
+test('CSRF directive generates the same token as native PHP', static function (): void {
     $session = new \PBreeze\Session();
     $views = templateViews(['index' => '@csrf($session)']);
     same(csrf_field($session), $views->render('index', ['session' => $session]));
 });
 
-test('CLI genereert templates, blokkeert conflicten en wist uitsluitend templatecache', static function () use ($app, $temp): void {
+test('CLI generates templates, blocks conflicts, and clears only the template cache', static function () use ($app, $temp): void {
     console($app, ['make:template', 'pages.example']);
     $file = $temp . '/app/views/pages/example.breeze.php';
     check(is_file($file));
@@ -259,7 +259,7 @@ test('CLI genereert templates, blokkeert conflicten en wist uitsluitend template
     raises(static fn () => console($app, ['make:template', 'legacy.example']), RuntimeException::class);
     raises(static fn () => console($app, ['make:template', '../escape']), InvalidArgumentException::class);
     raises(static fn () => console($app, ['make:template', 'con']), InvalidArgumentException::class);
-    check(str_contains(console($app, ['view:clear']), 'Gecompileerde templates verwijderd: 1'));
-    check(str_contains(console($app, ['view:clear']), 'Gecompileerde templates verwijderd: 0'));
+    check(str_contains(console($app, ['view:clear']), 'Compiled templates removed: 1'));
+    check(str_contains(console($app, ['view:clear']), 'Compiled templates removed: 0'));
     check(is_file($file));
 });

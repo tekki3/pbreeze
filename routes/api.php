@@ -1,4 +1,4 @@
 <?php
 declare(strict_types=1);
 
-// API-modules worden expliciet geladen; make:api voegt hieronder een require toe.
+// API modules are loaded explicitly; make:api appends a require below.
