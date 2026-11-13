@@ -5,7 +5,6 @@ namespace PBreeze;
 
 use InvalidArgumentException;
 use LogicException;
-use PDO;
 use RuntimeException;
 
 /**
@@ -30,14 +29,21 @@ final class Query
         self::identifier($table);
     }
 
-    public static function identifier(string $name): string
+    public static function identifier(string $name, string $driver = 'mysql'): string
     {
+        if (!in_array($driver, ['sqlite', 'mysql', 'sqlsrv'], true)) {
+            throw new InvalidArgumentException('Unsupported SQL identifier driver.');
+        }
         if (preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/D', $name) !== 1) {
             throw new InvalidArgumentException('Use a simple SQL identifier without expressions or a table prefix.');
         }
-        return '`' . $name . '`';
+        return $driver === 'sqlsrv' ? '[' . $name . ']' : '`' . $name . '`';
     }
 
+    private function quote(string $name): string
+    {
+        return self::identifier($name, $this->db->driver());
+    }
     public function where(string $column, #[\SensitiveParameter] mixed $operator, #[\SensitiveParameter] mixed $value = null): self
     {
         if (func_num_args() === 2) {
@@ -58,7 +64,7 @@ final class Query
         self::value($value);
         $this->model?->assertSearchable($column);
         $query = clone $this;
-        $query->conditions[] = self::identifier($column) . " $operator ?";
+        $query->conditions[] = $this->quote($column) . " $operator ?";
         $query->bindings[] = $value;
         return $query;
     }
@@ -66,21 +72,21 @@ final class Query
     public function whereNull(string $column): self
     {
         $query = clone $this;
-        $query->conditions[] = self::identifier($column) . ' IS NULL';
+        $query->conditions[] = $this->quote($column) . ' IS NULL';
         return $query;
     }
 
     public function whereNotNull(string $column): self
     {
         $query = clone $this;
-        $query->conditions[] = self::identifier($column) . ' IS NOT NULL';
+        $query->conditions[] = $this->quote($column) . ' IS NOT NULL';
         return $query;
     }
 
     /** @param list<scalar|null> $values */
     public function whereIn(string $column, #[\SensitiveParameter] array $values): self
     {
-        $identifier = self::identifier($column);
+        $identifier = $this->quote($column);
         if ($values !== []) {
             $this->model?->assertSearchable($column);
         }
@@ -107,7 +113,7 @@ final class Query
             throw new InvalidArgumentException('Sort direction must be asc or desc.');
         }
         $query = clone $this;
-        $query->orders[] = self::identifier($column) . ' ' . $direction;
+        $query->orders[] = $this->quote($column) . ' ' . $direction;
         return $query;
     }
 
@@ -134,17 +140,17 @@ final class Query
     /** @return list<T> */
     public function get(): array
     {
-        $sql = 'SELECT * FROM ' . self::identifier($this->table) . $this->whereSql();
+        $sql = 'SELECT * FROM ' . $this->quote($this->table) . $this->whereSql();
         if ($this->orders !== []) {
             $sql .= ' ORDER BY ' . implode(', ', $this->orders);
         }
         if ($this->take !== null) {
-            $sql .= ' LIMIT ' . $this->take;
+            if ($this->skip !== 0 && $this->orders === [] && $this->db->driver() === 'sqlsrv') {
+                $sql .= ' ORDER BY (SELECT NULL)';
+            }
+            $sql = $this->db->limit($sql, $this->take, $this->skip);
         } elseif ($this->skip !== 0) {
             throw new LogicException('offset requires an explicit limit.');
-        }
-        if ($this->skip !== 0) {
-            $sql .= ' OFFSET ' . $this->skip;
         }
         $rows = $this->execute($sql, $this->bindings)->fetchAll();
         return $this->model === null ? $rows : array_map($this->model->hydrate(...), $rows);
@@ -176,12 +182,12 @@ final class Query
 
     public function count(): int
     {
-        return (int) $this->execute('SELECT COUNT(*) FROM ' . self::identifier($this->table) . $this->whereSql(), $this->bindings)->fetchColumn();
+        return (int) $this->execute('SELECT COUNT(*) FROM ' . $this->quote($this->table) . $this->whereSql(), $this->bindings)->fetchColumn();
     }
 
     public function exists(): bool
     {
-        return $this->execute('SELECT 1 FROM ' . self::identifier($this->table) . $this->whereSql() . ' LIMIT 1', $this->bindings)->fetchColumn() !== false;
+        return $this->execute($this->db->limit('SELECT 1 FROM ' . $this->quote($this->table) . $this->whereSql(), 1), $this->bindings)->fetchColumn() !== false;
     }
 
     /** @return array{data: list<T>, total: int, per_page: int, current_page: int, last_page: int} */
@@ -200,25 +206,14 @@ final class Query
     }
 
     /** @param array<string, mixed> $data */
-    public function insert(array $data): int|string
+    public function insert(array $data, ?string $identity = 'id'): int|string
     {
         if ($this->model !== null) {
             throw new LogicException('Use create() for a model query.');
         }
         $this->assertInsert();
-        $columns = $this->columns($data);
-        if ($data === []) {
-            $suffix = $this->db->pdo()->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' () VALUES ()' : ' DEFAULT VALUES';
-            $this->execute('INSERT INTO ' . self::identifier($this->table) . $suffix, []);
-        } else {
-            $this->execute('INSERT INTO ' . self::identifier($this->table) . ' (' . implode(', ', $columns)
-                . ') VALUES (' . implode(', ', array_fill(0, count($columns), '?')) . ')', array_values($data));
-        }
-        $id = $this->db->pdo()->lastInsertId();
-        if ($id === false) {
-            throw new RuntimeException('Cannot retrieve the insert ID.');
-        }
-        return filter_var($id, FILTER_VALIDATE_INT) !== false ? (int) $id : $id;
+        $this->columns($data);
+        return $this->db->insert($this->table, $data, $identity);
     }
 
     /** @param array<string, mixed> $data
@@ -247,7 +242,7 @@ final class Query
             throw new InvalidArgumentException('An update requires at least one field.');
         }
         $columns = $this->columns($data);
-        return $this->execute('UPDATE ' . self::identifier($this->table) . ' SET '
+        return $this->execute('UPDATE ' . $this->quote($this->table) . ' SET '
             . implode(', ', array_map(static fn (string $column): string => "$column = ?", $columns))
             . $this->whereSql(), [...array_values($data), ...$this->bindings])->rowCount();
     }
@@ -255,7 +250,7 @@ final class Query
     public function delete(): int
     {
         $this->assertWrite();
-        return $this->execute('DELETE FROM ' . self::identifier($this->table) . $this->whereSql(), $this->bindings)->rowCount();
+        return $this->execute('DELETE FROM ' . $this->quote($this->table) . $this->whereSql(), $this->bindings)->rowCount();
     }
 
     private function assertInsert(): void
@@ -290,7 +285,7 @@ final class Query
             if (!is_string($column)) {
                 throw new InvalidArgumentException('Field names must be strings.');
             }
-            $columns[] = self::identifier($column);
+            $columns[] = $this->quote($column);
             self::value($value);
         }
         return $columns;
@@ -306,18 +301,7 @@ final class Query
     /** @param list<scalar|null> $values */
     private function execute(string $sql, array $values): \PDOStatement
     {
-        $statement = $this->db->pdo()->prepare($sql);
-        foreach ($values as $index => $value) {
-            $type = match (true) {
-                $value === null => PDO::PARAM_NULL,
-                is_bool($value) => PDO::PARAM_BOOL,
-                is_int($value) => PDO::PARAM_INT,
-                default => PDO::PARAM_STR,
-            };
-            $statement->bindValue($index + 1, $value, $type);
-        }
-        $statement->execute();
-        return $statement;
+        return $this->db->execute($sql, $values);
     }
 }
 

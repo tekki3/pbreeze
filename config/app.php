@@ -37,8 +37,10 @@ return [
         'driver' => Env::get('DB_CONNECTION', 'sqlite'),
         'database' => Env::get('DB_DATABASE', 'database/app.sqlite'),
         'host' => Env::get('DB_HOST', '127.0.0.1'),
-        'port' => Env::get('DB_PORT', '3306'),
+        'port' => Env::get('DB_PORT', Env::get('DB_CONNECTION', 'sqlite') === 'sqlsrv' ? '1433' : '3306'),
         'username' => Env::get('DB_USERNAME', 'root'),
         'password' => Env::get('DB_PASSWORD'),
+        'encrypt' => Env::get('DB_ENCRYPT', 'true'),
+        'trust_server_certificate' => Env::get('DB_TRUST_SERVER_CERTIFICATE', 'false'),
     ],
 ];

@@ -142,7 +142,7 @@ abstract class Model implements JsonSerializable
             if (!$this->incrementing && !isset($values[$this->primaryKey])) {
                 throw new LogicException('A nonincrementing model requires a primary key.');
             }
-            $id = $this->db->table($this->table)->insert($values);
+            $id = $this->db->table($this->table)->insert($values, $this->incrementing ? $this->primaryKey : null);
             if ($this->incrementing) {
                 $values[$this->primaryKey] = $id;
             }

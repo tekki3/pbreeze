@@ -78,10 +78,10 @@ final class Auth
         $this->db->transaction(function () use ($data, $hash): void {
             // The unique email index also handles concurrent registrations.
             try {
-                $this->db->execute(
-                    'INSERT INTO users (name, email, password_hash, created_at) VALUES (?, ?, ?, ?)',
-                    [$data['name'], $data['email'], $hash, time()],
-                );
+                $id = $this->db->insert('users', [
+                    'name' => $data['name'], 'email' => $data['email'],
+                    'password_hash' => $hash, 'created_at' => time(),
+                ]);
             } catch (PDOException $error) {
                 if (in_array((string) $error->getCode(), ['23000', '23505'], true)
                     && $this->db->execute('SELECT id FROM users WHERE email = ?', [$data['email']])->fetchColumn() !== false) {
@@ -89,7 +89,7 @@ final class Auth
                 }
                 throw $error;
             }
-            $this->issueToken((int) $this->db->pdo()->lastInsertId(), $data['email'], 'verify');
+            $this->issueToken((int) $id, $data['email'], 'verify');
         });
     }
 
@@ -211,11 +211,7 @@ final class Auth
         $end = (intdiv(time(), $seconds) + 1) * $seconds;
         $key = hash('sha256', "$action|$identity|$end");
         $this->db->execute('DELETE FROM auth_limits WHERE expires_at <= ?', [time()]);
-        $mysql = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql';
-        $sql = $mysql
-            ? 'INSERT INTO auth_limits (bucket, expires_at) VALUES (?, ?) ON DUPLICATE KEY UPDATE bucket = bucket'
-            : 'INSERT INTO auth_limits (bucket, expires_at) VALUES (?, ?) ON CONFLICT(bucket) DO NOTHING';
-        $this->db->execute($sql, [$key, $end]);
+        $this->db->ensureRateLimit('auth_limits', $key, $end);
         if ($this->db->execute('UPDATE auth_limits SET attempts = attempts + 1 WHERE bucket = ? AND attempts < ?', [$key, $maximum])->rowCount() !== 1) {
             throw new AuthException(['form' => ['Too many attempts. Try again after the rate limit window expires.']], 429, max(1, $end - time()));
         }

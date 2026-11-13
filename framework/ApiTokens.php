@@ -24,11 +24,11 @@ final class ApiTokens
         }
         $token = 'pbz_' . bin2hex(random_bytes(32));
         $expires = time() + $days * 86400;
-        $this->db->execute(
-            'INSERT INTO api_tokens (user_id, name, token_hash, session_version, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)',
-            [$userId, trim($name), hash('sha256', $token), $user['session_version'], time(), $expires],
-        );
-        return ['id' => (int) $this->db->pdo()->lastInsertId(), 'token' => $token, 'expires_at' => $expires];
+        $id = $this->db->insert('api_tokens', [
+            'user_id' => $userId, 'name' => trim($name), 'token_hash' => hash('sha256', $token),
+            'session_version' => $user['session_version'], 'created_at' => time(), 'expires_at' => $expires,
+        ]);
+        return ['id' => (int) $id, 'token' => $token, 'expires_at' => $expires];
     }
 
     /** @return array{id: int, name: string, email: string, token_id: int} */

@@ -47,7 +47,8 @@ formatter described below; this does not translate framework-maintained copy.
 
 ## Getting Started
 
-Requirements: PHP 8.3+, PDO, `pdo_sqlite` for SQLite or `pdo_mysql` for MySQL,
+Requirements: PHP 8.3+, PDO, `pdo_sqlite` for SQLite, `pdo_mysql` for MySQL,
+or `pdo_sqlsrv` plus Microsoft's ODBC Driver for SQL Server,
 and the standard session, json, and filter extensions. The tests also use
 native process and socket functions. The CLI uses `proc_open` for the
 development server and tests; this function must be available for those tasks.
@@ -87,7 +88,7 @@ executable shebang. Make sure PHP CLI is in `PATH`; check with
 PHP for your web server may use a different configuration file.
 
 On Windows, enable the required extensions in `php.ini`: `pdo_sqlite` for SQLite,
-`pdo_mysql` for MySQL, and also `openssl` and `iconv` for email.
+`pdo_mysql` for MySQL or `pdo_sqlsrv` for SQL Server, and also `openssl` and `iconv` for email.
 Enable `zip` for Excel/Word creation and `dom` for the document tests.
 Enable `intl` for localized date/time and number formatting.
 Enable `fileinfo` for upload validation.
@@ -106,7 +107,7 @@ DB_DATABASE="C:/Data/PBreeze/app.sqlite"
 Backslashes are also allowed and are not treated as `.env` escapes.
 Do not use drive-relative paths such as `C:app.sqlite`. UNC paths are
 recognized as absolute, but use local storage for SQLite: SMB/NFS file locking
-is not a substitute for a database server. Use MySQL for shared databases.
+is not a substitute for a database server. Use MySQL or SQL Server for shared databases.
 
 The CLI starts PHP without a shell, so spaces, percent signs, and other
 shell characters in project paths are preserved. Generators reject Windows
@@ -1575,13 +1576,130 @@ $recent = $notes->latest(20);
 
 Direct PDO remains available alongside the optional ORM.
 
+## Microsoft SQL Server
+
+SQL Server 2012+ syntax is supported through Microsoft's native **PDO_SQLSRV**
+PHP extension on Windows and Linux. Install a supported Microsoft ODBC Driver
+and a PDO_SQLSRV build matching your PHP version, architecture, and thread-safety
+mode. There is no Composer dependency. Check availability with:
+
+```sh
+php -r "print_r(PDO::getAvailableDrivers());"
+```
+
+The list must contain `sqlsrv`. Check the web server's PHP installation too.
+See Microsoft's [PHP driver installation guide](https://learn.microsoft.com/en-us/sql/connect/php/loading-the-php-sql-driver)
+for platform prerequisites and supported PHP/driver versions.
+Do not assume every PDO_SQLSRV release supports every PHP release.
+
+Create the database and a dedicated SQL authentication login/user yourself.
+Select a least-privilege application account; migrations need additional DDL
+permissions and application-lock permission. Use the user's default schema
+consistently, normally `dbo`, for both web and CLI connections.
+Then update the existing settings in `.env`, without adding duplicate keys:
+
+```dotenv
+DB_CONNECTION=sqlsrv
+DB_HOST=sql.example.test
+DB_PORT=1433
+DB_DATABASE=pbreeze
+DB_USERNAME=pbreeze
+DB_PASSWORD="your own password"
+DB_ENCRYPT=true
+DB_TRUST_SERVER_CERTIFICATE=false
+```
+
+Use a hostname or IPv4 address and an explicit TCP port. Named instance suffixes,
+arbitrary DSN fragments, integrated Windows authentication, and Azure-specific
+authentication modes are not exposed by this configuration. When `DB_PORT` is
+absent it defaults to 1433 for `sqlsrv`, but the example file explicitly sets
+3306 for MySQL: change that value when switching drivers.
+The connection has a 15-second login timeout.
+
+Encryption is enabled and certificate verification is required by default.
+Install a trusted server certificate whose name matches `DB_HOST`.
+`DB_TRUST_SERVER_CERTIFICATE=true` bypasses verification and should be restricted
+to isolated local testing, not used as a production certificate fix.
+
+Run the normal commands against the intended database:
+
+```sh
+php breeze migrate
+php breeze migrate:status
+php breeze db:seed
+```
+
+The migration runner selects same-named overrides in
+`database/migrations/sqlsrv/` for the four shipped migrations. Original
+SQLite/MySQL migration files and migration history names remain unchanged.
+Custom migrations still live in `database/migrations/`; implement driver-aware
+SQL there, or provide a same-named SQL Server override. An override without a
+corresponding top-level migration is not discovered. Do not edit applied
+migrations; create new ones for subsequent schema changes.
+Switching drivers does not transfer an existing database or its data.
+
+SQL Server migrations use transactional DDL and a database application lock
+alongside the local file lock. The supplied schema uses `BIGINT IDENTITY`,
+`NVARCHAR` for Unicode text, `DATETIME2` for note dates, and a filtered unique
+index so multiple outgoing emails can have a null IMAP source key.
+SQL Server `TIMESTAMP` is a rowversion, not a date/time column.
+
+The query builder uses square-bracket identifiers, `TOP` for limits and
+`OFFSET/FETCH` for paging. Use an explicit stable order for pagination.
+Inserts retrieve IDs with `OUTPUT INSERTED`, not session-wide `@@IDENTITY`.
+An incrementing model can declare a custom primary key; a nonincrementing model
+does not request an identity result.
+
+```php
+$id = $app->db->table('notes')->insert(['title' => 'Unicode: café']);
+$page = $app->db->table('notes')->orderBy('id')->paginate(20, 1);
+// For a custom identity column:
+$id = $app->db->table('articles')->insert(['title' => 'Hello'], identity: 'article_id');
+// For a table without an identity result, insert() returns 0:
+$app->db->table('settings')->insert(['code' => 'theme', 'value' => 'light'], identity: null);
+```
+
+Raw SQL passed to `execute()` or PDO is not translated. Write T-SQL for raw
+queries, migrations, and seeders when this driver is selected. Driver-specific
+limits still apply, including SQL Server's 2100-parameter ceiling.
+The ID-returning insert path does not support enabled INSERT triggers on the
+target table; use an application-specific, audited OUTPUT INTO/stored-procedure
+path if such triggers are required.
+
+### SQL Server Validation
+
+The standard native test suite includes recording-PDO SQL Server dialect tests;
+it does not connect to a real SQL Server. For a live run, provision an **empty,
+disposable** database whose name begins with `pbreeze_test_`. Set these process
+environment variables through PowerShell, your Linux shell, or CI:
+`SQLSRV_TEST_DATABASE`, `SQLSRV_TEST_HOST`, `SQLSRV_TEST_PORT` (default 1433),
+`SQLSRV_TEST_USERNAME`, `SQLSRV_TEST_PASSWORD`, and
+`SQLSRV_TEST_ALLOW_DESTRUCTIVE=true`. Do not put real application credentials
+in the test configuration. These variables are read directly from the process,
+not from `.env`.
+
+Only for a local self-signed test server, set
+`SQLSRV_TEST_TRUST_SERVER_CERTIFICATE=true`. Encryption remains enabled.
+Run:
+
+```sh
+php tests/sqlsrv-integration.php
+```
+
+The script refuses a nonempty database or a name outside `pbreeze_test_*`.
+It creates and removes framework tables and checks migrations/rollback,
+repeatable seeds, Unicode CRUD, ORM, pagination, transactions, authentication,
+password reset, API tokens, rate limits, and database mail transitions.
+No SMTP connection is made. Run this against your supported SQL Server/PHP/ODBC
+combination before deployment; recording tests are not live compatibility proof.
+
 ## Native ORM and Query Builder
 
 The ORM consists of `framework/Query.php` and `framework/Model.php`, explicitly
 loaded in the bootstrap. Each query and model receives the existing
 `Database` instance. There are no packages, autoloading, global connections,
-schema inspection, or automatic migrations. The SQL is designed for SQLite
-and MySQL; the existing cross-platform PDO configuration remains authoritative.
+schema inspection, or automatic migrations. The SQL is designed for SQLite,
+MySQL, and SQL Server; the existing cross-platform PDO configuration remains authoritative.
 
 ### Table Queries: Arrays
 
@@ -2012,14 +2130,14 @@ Files are sorted by timestamp. Each run forms a batch;
 rollback reverses **the entire last batch**.
 Do not modify or delete applied migrations; create a new migration.
 
-SQLite runs each migration and its registration in a single transaction.
+SQLite and SQL Server run each migration and its registration in a single transaction.
 MySQL DDL causes implicit commits: a failed migration may already be
 partially applied. Back up before changes and deliberately recover a
 partial migration before running again. Write driver-dependent
 SQL where needed; the example migration demonstrates this.
 
 A local file lock prevents concurrent migrations from the same
-project directory. MySQL also uses a database-wide advisory lock between
+project directory. MySQL and SQL Server also use a database-wide advisory lock between
 PBreeze processes. Use SQLite on a single host with local storage.
 
 Seeders return a `Closure(PDO $db): void` and run in a transaction.
@@ -2338,3 +2456,5 @@ stateless HTTP, JSON errors/body limits, rate limiting, OpenAPI/route registrati
 CLI scaffolding, and the local Swagger assets and restricted CSP.
 MySQL also requires a separate integration run on a disposable database;
 the included suite does not validate the MySQL connection against a live server.
+SQL Server has recording-PDO dialect tests and a separate, explicitly enabled
+live integration script described in its chapter.

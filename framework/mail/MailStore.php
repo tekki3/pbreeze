@@ -15,16 +15,13 @@ final class MailStore
 
     public function queue(Message $message): int
     {
-        $this->db->execute(
-            "INSERT INTO emails (direction, status, from_address, to_addresses, subject, text_body, html_body,
-                message_id, headers_json, raw_message, created_at, updated_at)
-             VALUES ('outgoing', 'queued', ?, ?, ?, ?, ?, ?, '{}', '', ?, ?)",
-            [
-                $message->from, json_encode($message->to, JSON_THROW_ON_ERROR), $message->subject,
-                $message->text, $message->html, $message->messageId, self::now(), self::now(),
-            ],
-        );
-        return (int) $this->db->pdo()->lastInsertId();
+        return (int) $this->db->insert('emails', [
+            'direction' => 'outgoing', 'status' => 'queued', 'from_address' => $message->from,
+            'to_addresses' => json_encode($message->to, JSON_THROW_ON_ERROR),
+            'subject' => $message->subject, 'text_body' => $message->text, 'html_body' => $message->html,
+            'message_id' => $message->messageId, 'headers_json' => '{}', 'raw_message' => '',
+            'created_at' => self::now(), 'updated_at' => self::now(),
+        ]);
     }
 
     /** @param array{source_key: string, uid: string, uidvalidity: string, mailbox: string, raw: string, message: array<string, mixed>} $incoming */
@@ -32,18 +29,15 @@ final class MailStore
     {
         $message = $incoming['message'];
         try {
-            $this->db->execute(
-                "INSERT INTO emails (direction, status, from_address, to_addresses, subject, text_body, html_body,
-                    message_id, headers_json, raw_message, source_key, mailbox, imap_uid, imap_uidvalidity, created_at, updated_at)
-                 VALUES ('incoming', 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    $message['from'], json_encode([$message['to']], JSON_THROW_ON_ERROR), $message['subject'],
-                    $message['text'], $message['html'], $message['message_id'],
-                    json_encode($message['headers'], JSON_THROW_ON_ERROR), base64_encode($incoming['raw']),
-                    $incoming['source_key'], $incoming['mailbox'], $incoming['uid'], $incoming['uidvalidity'],
-                    self::now(), self::now(),
-                ],
-            );
+            $id = $this->db->insert('emails', [
+                'direction' => 'incoming', 'status' => 'received', 'from_address' => $message['from'],
+                'to_addresses' => json_encode([$message['to']], JSON_THROW_ON_ERROR),
+                'subject' => $message['subject'], 'text_body' => $message['text'], 'html_body' => $message['html'],
+                'message_id' => $message['message_id'], 'headers_json' => json_encode($message['headers'], JSON_THROW_ON_ERROR),
+                'raw_message' => base64_encode($incoming['raw']), 'source_key' => $incoming['source_key'],
+                'mailbox' => $incoming['mailbox'], 'imap_uid' => $incoming['uid'], 'imap_uidvalidity' => $incoming['uidvalidity'],
+                'created_at' => self::now(), 'updated_at' => self::now(),
+            ]);
         } catch (\PDOException $error) {
             // Concurrent imports of the same UID are allowed; other database errors remain errors.
             if (in_array((string) $error->getCode(), ['23000', '23505'], true)) {
@@ -54,7 +48,7 @@ final class MailStore
             }
             throw $error;
         }
-        return (int) $this->db->pdo()->lastInsertId();
+        return (int) $id;
     }
 
     public function known(string $sourceKey): bool
@@ -125,18 +119,18 @@ final class MailStore
     public function listing(int $limit = 50): array
     {
         self::limit($limit);
-        return $this->db->execute(
-            'SELECT id, direction, status, subject, attempts, last_error, created_at, sent_at FROM emails ORDER BY id DESC LIMIT ' . $limit,
-        )->fetchAll();
+        return $this->db->execute($this->db->limit(
+            'SELECT id, direction, status, subject, attempts, last_error, created_at, sent_at FROM emails ORDER BY id DESC', $limit,
+        ))->fetchAll();
     }
 
     /** @return list<int> */
     public function pending(int $limit): array
     {
         self::limit($limit);
-        $rows = $this->db->execute(
-            "SELECT id FROM emails WHERE direction = 'outgoing' AND status = 'queued' ORDER BY id LIMIT " . $limit,
-        )->fetchAll();
+        $rows = $this->db->execute($this->db->limit(
+            "SELECT id FROM emails WHERE direction = 'outgoing' AND status = 'queued' ORDER BY id", $limit,
+        ))->fetchAll();
         return array_map(static fn (array $row): int => (int) $row['id'], $rows);
     }
 

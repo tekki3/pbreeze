@@ -218,10 +218,7 @@ final class Api
         $expires = (intdiv(time(), 60) + 1) * 60;
         $bucket = hash('sha256', $ip . '|' . $expires);
         $this->db->execute('DELETE FROM api_limits WHERE expires_at <= ?', [time()]);
-        $mysql = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql';
-        $this->db->execute($mysql
-            ? 'INSERT INTO api_limits (bucket, expires_at) VALUES (?, ?) ON DUPLICATE KEY UPDATE bucket = bucket'
-            : 'INSERT INTO api_limits (bucket, expires_at) VALUES (?, ?) ON CONFLICT(bucket) DO NOTHING', [$bucket, $expires]);
+        $this->db->ensureRateLimit('api_limits', $bucket, $expires);
         if ($this->db->execute('UPDATE api_limits SET attempts = attempts + 1 WHERE bucket = ? AND attempts < 120', [$bucket])->rowCount() !== 1) {
             throw new HttpException(429, 'Too many API requests. Please try again later.', ['Retry-After' => (string) max(1, $expires - time())]);
         }

@@ -94,7 +94,9 @@ final class Migrator
 
     private function repository(): void
     {
-        $this->db->execute('CREATE TABLE IF NOT EXISTS migrations (name VARCHAR(190) PRIMARY KEY, batch INTEGER NOT NULL)');
+        $this->db->execute($this->db->driver() === 'sqlsrv'
+            ? "IF OBJECT_ID(N'migrations', N'U') IS NULL CREATE TABLE migrations (name VARCHAR(190) PRIMARY KEY, batch INTEGER NOT NULL)"
+            : 'CREATE TABLE IF NOT EXISTS migrations (name VARCHAR(190) PRIMARY KEY, batch INTEGER NOT NULL)');
     }
 
     /** @return array<string, int> */
@@ -117,6 +119,12 @@ final class Migrator
         sort($files, SORT_STRING);
         $result = [];
         foreach ($files as $file) {
+            if ($this->db->driver() === 'sqlsrv') {
+                $override = dirname($file) . '/sqlsrv/' . basename($file);
+                if (is_file($override)) {
+                    $file = $override;
+                }
+            }
             $name = basename($file, '.php');
             if (!preg_match('/^[0-9]{14,20}_[a-z][a-z0-9_]*$/D', $name) || strlen($name) > 190) {
                 throw new RuntimeException("Invalid migration filename: $name");
@@ -138,7 +146,7 @@ final class Migrator
     private function atomic(callable $work): void
     {
         // MySQL DDL commits implicitly; a transaction would incorrectly suggest atomicity.
-        if ($this->db->pdo()->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite') {
+        if (in_array($this->db->driver(), ['sqlite', 'sqlsrv'], true)) {
             $this->db->transaction($work);
         } else {
             $work($this->db->pdo());
@@ -152,6 +160,7 @@ final class Migrator
             throw new RuntimeException('Cannot open the migration lock.');
         }
         $mysqlLock = null;
+        $sqlsrvLock = false;
         try {
             if (!flock($handle, LOCK_EX | LOCK_NB)) {
                 throw new RuntimeException('A migration process is already running.');
@@ -163,11 +172,26 @@ final class Migrator
                     throw new RuntimeException('The database is locked by another migration process.');
                 }
             }
+            if ($this->db->driver() === 'sqlsrv') {
+                $result = $this->db->execute("SET NOCOUNT ON; DECLARE @result int;
+                    EXEC @result = sys.sp_getapplock @Resource = N'pbreeze:migrations',
+                        @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 0;
+                    SET NOCOUNT OFF; SELECT @result");
+                $code = $result->fetchColumn();
+                $result->closeCursor();
+                if ($code === false || (int) $code < 0) {
+                    throw new RuntimeException('The database is locked by another migration process.');
+                }
+                $sqlsrvLock = true;
+            }
             return $work();
         } finally {
             try {
                 if ($mysqlLock !== null) {
                     $this->db->execute('SELECT RELEASE_LOCK(?)', [$mysqlLock]);
+                }
+                if ($sqlsrvLock) {
+                    $this->db->execute("EXEC sys.sp_releaseapplock @Resource = N'pbreeze:migrations', @LockOwner = 'Session'")->closeCursor();
                 }
             } finally {
                 flock($handle, LOCK_UN);
