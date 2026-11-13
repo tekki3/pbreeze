@@ -101,6 +101,314 @@ and expandable CLI examples. No external fonts or scripts are loaded.
 The default is SQLite in `database/app.sqlite`; the database is created by
 the first database command. The form does not need a database.
 
+## Detailed Installation Guide
+
+### 1. Choose your installation
+
+For the simplest local setup, use **PHP 8.3 or later with SQLite** and the
+built-in development server. You do not need Apache, Nginx, IIS, Redis,
+Composer, npm, or an external database server to try PBreeze.
+
+For production, choose Apache with FastCGI/PHP-FPM, Nginx with PHP-FPM,
+FrankenPHP standard mode, or IIS FastCGI. Follow the
+[Web Server Deployment](#web-server-deployment) chapter after completing the
+common setup below. Subdirectory hosting and persistent FrankenPHP workers
+are outside the supplied deployment scope.
+
+Use a new empty directory for a fresh installation. These instructions are
+not an upgrade procedure: do not overwrite an existing application's `.env`,
+encryption key, database, uploads, or private storage.
+
+### 2. Install PHP on Linux
+
+On a Debian/Ubuntu installation whose configured repositories provide PHP
+8.3 or later, the following installs the usual local-development requirements:
+
+```sh
+sudo apt-get update
+sudo apt-get install php-cli php-sqlite3 php-intl php-mbstring php-xml php-zip php-curl
+php -v
+php --ini
+php -m
+```
+
+Confirm the reported PHP version is **at least 8.3**. Distribution defaults
+vary: if your repositories provide an older release, use a supported
+distribution/repository that provides a compatible PHP version. Do not mix
+extension packages from different PHP release series.
+
+Some PHP builds bundle OpenSSL, iconv, JSON, session, filter, and fileinfo;
+others package them separately. Verify actual modules rather than assuming
+the package command is sufficient. On other Linux distributions, install
+equivalent packages through that distribution's supported package manager.
+For FPM deployment, additionally install the matching `php-fpm` package
+(often versioned, such as `php8.3-fpm`) and configure it with your server.
+The development server needs only CLI PHP.
+
+Check the extensions used by the bundled features and native tests:
+
+```sh
+php -r 'foreach (["PDO","pdo_sqlite","openssl","session","json","filter","intl","mbstring","fileinfo","curl","iconv","zip","dom"] as $e) { echo $e, ": ", extension_loaded($e) ? "OK" : "MISSING", PHP_EOL; }'
+```
+
+Install/enable any missing extension for the PHP binary shown by `php -v`.
+The native test runner also needs `proc_open` and local socket functions.
+If a hosting policy disables them, run the tests on an appropriate
+development/CI machine; do not blindly weaken a production hosting policy.
+
+### 3. Install PHP on Windows
+
+1. Download a supported PHP 8.3+ Windows ZIP build from
+   <https://windows.php.net/download/>. Use the architecture matching your
+   system and server. An **NTS** build is appropriate for CLI development and
+   IIS/FastCGI; Apache module installations require the matching TS/module
+   combination instead. Follow the PHP build's Visual C++ runtime requirements.
+2. Extract PHP to a directory such as `C:\PHP`. Copy
+   `php.ini-development` to `php.ini` for local work; use a reviewed
+   production configuration for deployed services.
+3. Set `extension_dir = "C:/PHP/ext"` in that INI file. Enable the available
+   extension lines below by removing their leading semicolon:
+
+```ini
+extension=pdo_sqlite
+extension=sqlite3
+extension=openssl
+extension=intl
+extension=mbstring
+extension=fileinfo
+extension=curl
+extension=zip
+```
+
+DOM, iconv, JSON, session, filter, and PDO may already be compiled into your
+build. Verify with `php -m`; do not add DLL lines for extensions already built
+in or install DLLs from an incompatible PHP version, architecture, or
+thread-safety build.
+
+4. Add `C:\PHP` to your user/system `PATH` using Windows Environment Variables,
+   then open a **new** PowerShell or Command Prompt window.
+5. In PowerShell, verify the executable and loaded configuration:
+
+```powershell
+Get-Command php
+php -v
+php --ini
+php -m
+```
+
+If PHP is not on `PATH`, run `& "C:\PHP\php.exe" -v` and use the same explicit
+executable for the remaining commands. Resolve startup warnings such as
+“Unable to load dynamic library” before proceeding. No WSL, Bash, or
+executable permission on the `breeze` file is required.
+
+### 4. Obtain the framework files
+
+Download and extract the project's source archive, or clone the actual
+repository URL supplied by your project maintainer. PBreeze does not require
+`composer install`, autoload generation, or an npm build.
+
+Use a private working directory such as `~/projects/pbreeze` on Linux or
+`C:\Projects\PBreeze` on Windows. Do not extract the project directly into a
+public web root. The full source must include `breeze`, `bootstrap.php`,
+`.env.example`, `framework/`, `app/`, `config/`, `routes/`, `database/`, and
+`public/`; enable “show hidden files” when checking archive contents.
+
+Open a terminal **inside the project directory**:
+
+```sh
+cd /absolute/path/to/pbreeze
+php breeze help
+```
+
+PowerShell equivalent:
+
+```powershell
+Set-Location "C:\Projects\PBreeze"
+php breeze help
+```
+
+If your source directory has spaces, quote the path. Do not point commands
+at another installed copy accidentally. Existing process environment
+variables override `.env`; unexpected settings may come from your shell
+or service definition.
+
+### 5. Initialize local configuration
+
+```sh
+php breeze init
+```
+
+This copies `.env.example` only when `.env` does not already exist. Open the
+new `.env` privately in your editor. For the SQLite/local-development path,
+verify these values:
+
+```ini
+APP_ENV=local
+APP_DEBUG=false
+APP_URL=http://127.0.0.1:8000
+SESSION_SECURE_COOKIE=false
+DB_CONNECTION=sqlite
+DB_DATABASE=database/app.sqlite
+STORAGE_PATH=storage
+CACHE_DRIVER=none
+```
+
+Leave cache, AI, SMTP, and IMAP credentials empty until you intentionally
+configure those services. The environment file supports `NAME=value`,
+optional matching quotes, and full-line comments; it does not expand shell
+variables or support inline comments. Keep it out of version control and
+never paste its contents into tickets or public logs.
+
+Generate an encryption key:
+
+```sh
+php breeze key:generate
+```
+
+Copy the printed `APP_KEY=base64:...` assignment into your private `.env`.
+The command **prints only** and does not update the file. Do not publish the
+output. Keep a separate protected backup; replacing the key later does not
+re-encrypt existing records and can make encrypted data unrecoverable.
+On an existing application, preserve its original key.
+
+### 6. Prepare storage and the database
+
+For a fresh local SQLite installation:
+
+```sh
+php breeze storage:prepare
+php breeze migrate
+php breeze migrate:status
+php breeze db:seed
+```
+
+`storage:prepare` creates private logs, uploads, and compiled-view
+directories. `migrate` creates/applies the bundled schema in the configured
+SQLite file. `migrate:status` should show applied batch numbers rather than
+`OPEN`. The optional default seeder adds a welcome note; it does **not**
+create an administrator or a preconfigured login.
+
+Run these commands as the identity that should own local application data.
+On Linux, newly created private files may be readable only by their owner.
+On Windows, configure NTFS ACLs explicitly; `chmod` is not equivalent.
+Do not solve permission errors with `chmod 777`, administrator-owned
+application data, or write access to the entire deployed source tree.
+
+For another database, configure it **before migrating**:
+
+| Database | Install/prepare | Required environment changes |
+|---|---|---|
+| SQLite | Native `pdo_sqlite`; writable local database directory | `DB_CONNECTION=sqlite`, file path in `DB_DATABASE` |
+| MySQL | Native `pdo_mysql`; create an empty database and dedicated account | `DB_CONNECTION=mysql`, host/port/database/username/password, `DB_MYSQL_TLS=required`, readable `DB_MYSQL_SSL_CA` |
+| PostgreSQL | Native `pdo_pgsql` and libpq; create a database and dedicated account | `DB_CONNECTION=pgsql`, `DB_PORT=5432`, connection credentials, `DB_SSLMODE=verify-full`, CA configuration as required |
+| SQL Server | Native `pdo_sqlsrv` plus Microsoft's compatible ODBC Driver; create database/login | `DB_CONNECTION=sqlsrv`, `DB_PORT=1433`, connection credentials, `DB_ENCRYPT=true`, `DB_TRUST_SERVER_CERTIFICATE=false` |
+
+Server database names are existing databases, not filesystem paths; PBreeze
+does not provision the database server or create its database/login. Use an
+account with the schema permissions needed for migrations, then apply your
+deployment's least-privilege runtime policy. Keep driver, port, and TLS
+settings consistent. See the PostgreSQL, SQL Server, and production chapters
+for their detailed requirements.
+
+MySQL's default is certificate-verified TLS, **not** plaintext. Configure a
+CA bundle and certificate matching `DB_HOST`. An explicit
+`DB_MYSQL_TLS=disabled` opt-out exists only for isolated
+`localhost`/`127.0.0.1` connections outside production. Do not disable
+certificate verification to work around an installation error.
+
+### 7. Check the installation and start the application
+
+```sh
+php breeze about
+php breeze env:check
+php breeze test
+php breeze serve
+```
+
+`about` reports CLI runtime/driver information without credentials.
+`env:check` inventories environment key names without printing values;
+empty unused integration settings are expected. The native tests use
+isolated fixtures, not your configured application database, and send no
+external email or AI requests. Optional live database/cache/server integration
+tests are separate and have their own prerequisites.
+
+Open <http://127.0.0.1:8000>. Confirm that the home page and its CSS load.
+Check <http://127.0.0.1:8000/health> for liveness and
+<http://127.0.0.1:8000/ready> for database/schema/private-storage readiness.
+Both should return HTTP 200 after successful setup; `/ready` returns 503
+when its dependencies are not ready.
+
+Stop the development server with **Ctrl+C**. If port 8000 is occupied, use
+`php breeze serve 8080` and update `APP_URL` to
+`http://127.0.0.1:8080` before testing links generated by the application.
+Never use `php breeze serve` as the production web server.
+
+### 8. Enable optional integrations deliberately
+
+- **Authentication emails:** configure a real `MAIL_FROM` and encrypted SMTP
+  host/port/login. Registration verification and password recovery require
+  delivery; a page loading successfully does not prove mail works.
+  Schedule `php breeze mail:work 50` using cron or Windows Task Scheduler.
+  Test delivery only to an authorized address; IMAP is optional.
+- **Redis/Memcached:** install the selected native extension in CLI and web
+  PHP, configure a protected server and a unique `CACHE_PREFIX`, then run
+  `php breeze cache:test`. This deliberately writes/reads/deletes one
+  temporary key. Keep `CACHE_DRIVER=none` when no cache is configured.
+- **OpenAI/Claude:** configure the selected provider's API key and exact
+  model ID, plus native cURL/system trust. API usage can incur charges;
+  framework tests do not make real provider requests.
+- **Document generation/uploads:** verify ZIP, DOM, iconv, fileinfo, PHP
+  upload limits, and writable private storage. Application upload limits
+  cannot raise PHP or web-server limits.
+
+Refer to each integration's chapter before enabling it in production.
+
+### 9. Move to a production web server
+
+1. Back up the database, private data, and encryption key. Configure a real
+   HTTPS origin, production credentials, and stable private storage outside
+   `public/`; keep its real path free of symlink ancestors.
+2. Set `APP_ENV=production`, `APP_DEBUG=false`, and the HTTPS `APP_URL`.
+   Set secure cookies and configure actual HTTPS at the server/trusted edge.
+   Restrict public API docs if not intended for public access.
+3. Follow the Apache, Nginx, FrankenPHP, or IIS instructions in
+   [Web Server Deployment](#web-server-deployment). Expose **only `public/`**.
+   Configure the actual web PHP INI/extensions, service identity, sessions,
+   upload temporary directory, timeouts, certificates, and permissions.
+4. Under the deployment identity, run `php breeze storage:prepare` and
+   review `php breeze migrate:status`. After a verified backup and schema
+   review, production migration execution requires
+   `php breeze migrate --force`. Do not automatically run development
+   seeders against production.
+5. Run `php breeze doctor`. Resolve failures and review every warning.
+   A local installation normally fails production-only checks; that is not
+   evidence that local development is broken.
+6. Smoke-test real HTTPS routes, assets, sessions/login, authorized API
+   requests, uploads, mail delivery, `/health`, and `/ready`. Test backups,
+   restores, monitoring, scheduled mail, and expected load before release.
+
+CLI checks do not certify another PHP SAPI or a complete deployment.
+The production and server chapters explain remaining operational boundaries.
+
+### Installation troubleshooting
+
+| Symptom | Check and recovery |
+|---|---|
+| `php` is not recognized / command not found | Install PHP, correct `PATH`, open a new terminal, or use the full executable path. Check which PHP binary is running. |
+| Could not open input file: `breeze` | Change to the project root containing the `breeze` file, or supply its absolute path. |
+| PHP startup/DLL warning | Use extension binaries/packages matching the PHP version, architecture, and TS/NTS mode; verify `extension_dir`, dependent runtimes, and `php --ini`. |
+| Missing Intl/mbstring/fileinfo/PDO driver | Enable/install the extension for the exact CLI/web runtime reporting the error, then restart the relevant service. |
+| `APP_ENV must be ...` / invalid typed setting | Correct the named setting in private configuration; inspect process/service overrides. Commands require a successful bootstrap. |
+| Encryption fails or key is invalid | Generate a valid key for a new installation; restore the original key for existing encrypted data rather than replacing it. |
+| SQLite cannot open the database / permission denied | Check the configured absolute/root-relative path and service identity; grant only required directory/file access and keep SQLite on local storage. |
+| MySQL TLS/CA failure | Supply a readable trusted CA and a certificate matching `DB_HOST`; verify server TLS. Plaintext opt-out is local-development-only. |
+| `/ready` returns 503 | Prepare private storage, check database connectivity/TLS, and apply reviewed pending migrations; inspect private application/PHP logs. |
+| Home page loads but other routes return server 404 | Correct the public document root and install/enable the server's supplied rewrite/FastCGI configuration. |
+| PHP source appears as text/download | Stop public access immediately and configure the PHP handler correctly. Never expose source files as static downloads. |
+| Cookies/login fail or forms return 419 | Use a consistent hostname/scheme, writable session storage, and matching secure-cookie settings. Submit the current CSRF token from the same session. |
+| Verification/reset emails stay queued | Configure real encrypted SMTP, a valid sender, and scheduled `mail:work`; check delivery diagnostics without exposing message contents. |
+| Local `doctor` returns exit 1 | It evaluates production deployment. Review each result; do not enable production settings blindly just to make a local check green. |
+
 ## Windows and Linux
 
 Use the same commands on both systems with `php breeze ...`.
