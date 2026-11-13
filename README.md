@@ -195,6 +195,125 @@ bootstrap.php        Explicit framework registration
 breeze               CLI, run with php breeze
 ```
 
+## CLI Utilities and Custom Commands
+
+```sh
+php breeze about
+php breeze env:check
+php breeze cache:test
+php breeze logs:tail
+php breeze logs:tail 100 warning
+php breeze make:command Report
+```
+
+### Runtime and environment diagnostics
+
+`about` prints safe runtime metadata: PHP version, OS family, SAPI,
+environment, configured database/cache driver names, session handler, and
+loaded extensions. The framework has no declared release version yet, so
+the command says so instead of inventing one. It does not print credentials,
+application keys, connection strings, or filesystem paths, and does not
+connect to services or create storage. CLI information does not certify the
+web server's PHP extensions or configuration.
+
+`env:check` compares your local `.env` key names against `.env.example`,
+honoring process environment overrides without changing files or loaded
+configuration. Output contains **names and statuses only**, never values:
+
+| Status | Meaning |
+|---|---|
+| `SET` | An effective value is present and nonempty |
+| `EMPTY` | Explicitly empty; may be intentional for unused integrations |
+| `MISSING` | An active example setting has no file/process value |
+| `OPTIONAL` | A commented example setting has no override |
+| `CUSTOM` | A local file key is not listed in the example |
+
+Exit code is 1 if active example keys are missing, otherwise 0. Missing keys
+can still have framework defaults; this is a configuration inventory check,
+not a production certification. Empty, optional, and custom entries need
+human review, not automatic replacement. Duplicate/malformed local entries
+fail explicitly without printing their contents. All CLI commands still
+require bootstrap to succeed: invalid typed configuration can prevent this
+command from starting. Use `doctor` for production settings/readiness.
+
+### Testing cache connectivity
+
+`cache:test` checks the **selected configured backend** using one
+cryptographically random key in its existing namespace. It writes with a
+30-second TTL, verifies the round trip, and deletes only its probe key.
+It never flushes the server or changes other application keys.
+Disabled/missing/unreachable backends fail explicitly; there is no fallback.
+Cleanup is attempted after a successful write; interrupted or uncertain
+writes expire automatically. Success output contains no key, value, host,
+or credentials. Native backend failures use the cache service's redacted
+errors and normal CLI error logging.
+
+### Reading recent application logs
+
+`logs:tail [lines] [level]` is a one-shot snapshot, **not** a continuous
+watcher. It prints the most recent matching entries in chronological order,
+across the configured storage directory's daily JSONL files. The line count
+is 1..1000, default 50. The optional second argument is the **minimum**
+severity: `debug`, `info`, `notice`, `warning`, `error`, `critical`, `alert`,
+or `emergency`; default `debug` includes every level.
+
+Reading does not create storage, write log files, or trigger retention.
+Missing logs produce a clear informational message. Symlinked paths, corrupt
+JSON/levels, entries above 64 KiB, and scans exceeding 8 MiB fail explicitly;
+request fewer lines or a less restrictive filter for large logs.
+JSON output escapes terminal control characters. Existing log messages
+and context may still contain private application data: logger key-based
+redaction does not sanitize arbitrary message text. Restrict terminal/log
+access and never paste confidential output into public systems.
+
+### Creating application-specific commands
+
+`make:command Report` creates `app/commands/Report.php` containing a Closure.
+The generated command deliberately throws until implemented, preventing
+an empty success-shaped scaffold. Existing files are never overwritten.
+Implement it, then register it **explicitly** in `routes/console.php`:
+
+```php
+<?php
+declare(strict_types=1);
+
+return [
+    'app:report' => require $app->root . '/app/commands/Report.php',
+];
+```
+
+For example, the command file can return:
+
+```php
+<?php
+declare(strict_types=1);
+
+use PBreeze\Application;
+
+return static function (Application $app, array $arguments): int {
+    if ($arguments !== []) {
+        throw new InvalidArgumentException('Usage: php breeze app:report');
+    }
+    echo "Report completed.\n";
+    return 0;
+};
+```
+
+Run `php breeze app:report`. Help lists registered custom names. The registry
+is optional for older projects; create it with the structure above.
+There is no Composer, autoloading, or command-directory scanning.
+Names must match lowercase letter-led segments containing letters, digits,
+or hyphens, optionally separated by colons. Builtin names cannot be
+overridden; every entry must be a Closure.
+
+Handlers receive the Application and **unchanged remaining CLI arguments**,
+including any options. They must validate their arguments themselves and
+return an integer exit code from 0 through 255. Exceptions use the existing
+CLI error path. Custom commands must implement their own production guards,
+authorization, confirmation, and secret handling; builtin `--force` safeguards
+do not automatically apply to arbitrary custom code. The five utility
+commands above do not accept `--force` or other options.
+
 ## Web Server Deployment
 
 PBreeze uses ordinary PHP requests, `REQUEST_URI`, standard HTTP headers,

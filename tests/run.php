@@ -141,6 +141,7 @@ try {
     require __DIR__ . '/logging.php';
     require __DIR__ . '/production.php';
     require __DIR__ . '/cache.php';
+    require __DIR__ . '/console-utilities.php';
 
     test('HTML escaping handles quotes and invalid UTF-8', static function (): void {
         same('&lt;script&gt;&quot;&#039;&amp;', e('<script>"\'&'));

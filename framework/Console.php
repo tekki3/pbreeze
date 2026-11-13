@@ -15,6 +15,11 @@ PBreeze - native PHP, without Composer or an autoloader
 Usage: php breeze <command> [name] [--force]
 
   init                       Create a local .env (preserve an existing file)
+  about                      Show safe runtime and configured driver information
+  env:check                  Compare environment keys without printing values
+  cache:test                 Verify cache round trip using one temporary key
+  logs:tail [lines] [level]  Show recent JSONL logs (default: 50; optional minimum level)
+  make:command Name          Create a custom command for explicit registration
   doctor                     Check production configuration and dependency readiness
   storage:prepare            Create private storage directories for deployment
   key:generate               Print a new APP_KEY; do not modify any files
@@ -58,6 +63,21 @@ TEXT;
     public function run(array $arguments): int
     {
         $command = array_shift($arguments) ?? 'help';
+        if (in_array($command, ['about', 'env:check', 'cache:test', 'logs:tail', 'make:command'], true)) {
+            return $this->utilityCommand($command, $arguments);
+        }
+        preg_match_all('/^  ([a-z][a-z:-]+)\s/m', self::HELP, $builtins);
+        if (!in_array($command, $builtins[1], true)) {
+            $custom = $this->customCommands();
+            if (!isset($custom[$command])) {
+                throw new InvalidArgumentException("Unknown command: $command. Use php breeze help.");
+            }
+            $result = $custom[$command]($this->app, $arguments);
+            if (!is_int($result) || $result < 0 || $result > 255) {
+                throw new RuntimeException('Custom commands must return an integer exit code from 0 through 255.');
+            }
+            return $result;
+        }
         $force = in_array('--force', $arguments, true);
         $arguments = array_values(array_filter($arguments, static fn (string $arg): bool => $arg !== '--force'));
         foreach ($arguments as $argument) {
@@ -122,6 +142,9 @@ TEXT;
                 break;
             case 'help':
                 echo self::HELP . PHP_EOL;
+                foreach ($this->customCommands() as $name => $handler) {
+                    echo "  $name (custom command)\n";
+                }
                 break;
             case 'init':
                 $target = $this->app->root . '/.env';
@@ -200,6 +223,256 @@ TEXT;
                 throw new InvalidArgumentException("Unknown command: $command. Use php breeze help.");
         }
         return 0;
+    }
+
+    /** @param list<string> $arguments */
+    private function utilityCommand(string $command, array $arguments): int
+    {
+        $max = match ($command) { 'logs:tail' => 2, 'make:command' => 1, default => 0 };
+        if (count($arguments) > $max) {
+            throw new InvalidArgumentException('Too many arguments. Use php breeze help.');
+        }
+        foreach ($arguments as $argument) {
+            if (str_starts_with($argument, '-')) {
+                throw new InvalidArgumentException('These commands do not accept options or --force.');
+            }
+        }
+        switch ($command) {
+            case 'about':
+                $safe = static fn (string $value): string => json_encode($value, JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE);
+                echo "PBreeze: native PHP framework (no release version declared)\n";
+                echo 'PHP: ' . PHP_VERSION . "\nPlatform: " . PHP_OS_FAMILY . "\nSAPI: " . PHP_SAPI . "\n";
+                foreach ([
+                    'Environment' => $this->app->config['environment'],
+                    'Database driver' => $this->app->config['database']['driver'],
+                    'Cache driver' => $this->app->config['cache']['driver'] ?? 'none',
+                    'Session handler' => (string) ini_get('session.save_handler'),
+                ] as $label => $value) {
+                    echo $label . ': ' . $safe($value) . "\n";
+                }
+                $extensions = get_loaded_extensions();
+                sort($extensions, SORT_NATURAL | SORT_FLAG_CASE);
+                echo 'Extensions: ' . implode(', ', $extensions) . "\n";
+                return 0;
+            case 'env:check':
+                return $this->checkEnvironment();
+            case 'cache:test':
+                $key = 'cli-probe:' . bin2hex(random_bytes(24));
+                $value = bin2hex(random_bytes(24));
+                $cache = $this->app->cache;
+                $cache->set($key, $value, 30);
+                try {
+                    if ($cache->get($key) !== $value) {
+                        throw new RuntimeException('Cache probe value did not round-trip.');
+                    }
+                } finally {
+                    if (!$cache->delete($key)) {
+                        throw new RuntimeException('Cache probe cleanup failed; its key expires after 30 seconds.');
+                    }
+                }
+                echo "PASS Cache write/read/delete completed using an isolated temporary key.\n";
+                return 0;
+            case 'logs:tail':
+                $lines = $arguments[0] ?? '50';
+                if (!ctype_digit($lines) || strlen($lines) > 4 || (int) $lines < 1 || (int) $lines > 1000) {
+                    throw new InvalidArgumentException('Log line count must be between 1 and 1000.');
+                }
+                $this->tailLogs((int) $lines, $arguments[1] ?? 'debug');
+                return 0;
+            case 'make:command':
+                $name = $arguments[0] ?? '';
+                Filesystem::portableName($name);
+                if (!preg_match('/^[A-Z][a-zA-Z0-9]*$/D', $name)) {
+                    throw new InvalidArgumentException('Use a command filename such as Report.');
+                }
+                $directory = $this->app->root . '/app/commands';
+                if (is_link($this->app->root . '/app') || is_link($directory)) {
+                    throw new RuntimeException('Command directories must not be symlinks.');
+                }
+                $this->write($directory . "/$name.php", <<<'PHP'
+<?php
+declare(strict_types=1);
+
+use PBreeze\Application;
+
+return static function (Application $app, array $arguments): int {
+    if ($arguments !== []) {
+        throw new InvalidArgumentException('This command does not accept arguments.');
+    }
+    throw new LogicException('Implement this command before using it.');
+};
+
+PHP);
+                $key = 'app:' . strtolower($name);
+                echo "Register explicitly in routes/console.php:\n"
+                    . "    '$key' => require \$app->root . '/app/commands/$name.php',\n";
+                return 0;
+        }
+        throw new \LogicException('Unknown utility command.');
+    }
+
+    /** @return array<string, \Closure> */
+    private function customCommands(): array
+    {
+        $path = $this->app->root . '/routes/console.php';
+        if (!is_file($path)) {
+            return [];
+        }
+        $app = $this->app;
+        $commands = require $path;
+        if (!is_array($commands)) {
+            throw new RuntimeException('routes/console.php must return an array of command names and Closures.');
+        }
+        preg_match_all('/^  ([a-z][a-z:-]+)\s/m', self::HELP, $builtins);
+        foreach ($commands as $name => $handler) {
+            if (!is_string($name) || !preg_match('/^[a-z][a-z0-9-]*(?::[a-z][a-z0-9-]*)*$/D', $name)
+                || in_array($name, $builtins[1], true) || !$handler instanceof \Closure) {
+                throw new RuntimeException('Custom commands require unique nonbuiltin names and Closure handlers.');
+            }
+        }
+        return $commands;
+    }
+
+    private function checkEnvironment(): int
+    {
+        $example = $this->app->root . '/.env.example';
+        $source = file($example, FILE_IGNORE_NEW_LINES);
+        if ($source === false) {
+            throw new RuntimeException('Cannot read the example environment.');
+        }
+        $expected = [];
+        foreach ($source as $line) {
+            if (preg_match('/^(#\s*)?([A-Z][A-Z0-9_]*)=/', $line, $match)) {
+                $expected[$match[2]] = $match[1] !== '';
+            }
+        }
+        $actual = [];
+        $path = $this->app->root . '/.env';
+        if (is_file($path)) {
+            $lines = file($path, FILE_IGNORE_NEW_LINES);
+            if ($lines === false) {
+                throw new RuntimeException('Cannot read the environment file.');
+            }
+            foreach ($lines as $index => $line) {
+                $line = trim($line);
+                if ($line === '' || str_starts_with($line, '#')) {
+                    continue;
+                }
+                if (!preg_match('/^([A-Z][A-Z0-9_]*)=(.*)$/D', $line, $match)) {
+                    throw new RuntimeException('Invalid environment syntax at line ' . ($index + 1) . '.');
+                }
+                if (isset($actual[$match[1]])) {
+                    throw new RuntimeException('Duplicate environment key at line ' . ($index + 1) . '.');
+                }
+                $value = trim($match[2]);
+                if ($value !== '' && ($value[0] === '"' || $value[0] === "'")) {
+                    if (strlen($value) < 2 || $value[-1] !== $value[0]) {
+                        throw new RuntimeException('Invalid environment quotation at line ' . ($index + 1) . '.');
+                    }
+                    $value = substr($value, 1, -1);
+                }
+                $actual[$match[1]] = $value;
+            }
+        }
+        $missing = false;
+        foreach ($expected as $key => $optional) {
+            $process = getenv($key);
+            $value = $process !== false ? $process : ($actual[$key] ?? null);
+            $status = $value === null ? ($optional ? 'OPTIONAL' : 'MISSING') : ($value === '' ? 'EMPTY' : 'SET');
+            echo "$status $key\n";
+            $missing = $missing || $status === 'MISSING';
+        }
+        foreach (array_diff_key($actual, $expected) as $key => $value) {
+            echo "CUSTOM $key\n";
+        }
+        echo "Values are never printed. EMPTY may be intentional; MISSING keys may still have framework defaults. Use doctor for production validation.\n";
+        return $missing ? 1 : 0;
+    }
+
+    private function tailLogs(int $limit, string $minimum): void
+    {
+        $levels = array_flip(['debug', 'info', 'notice', 'warning', 'error', 'critical', 'alert', 'emergency']);
+        if (!isset($levels[$minimum])) {
+            throw new InvalidArgumentException('Use a valid lowercase minimum log level.');
+        }
+        if (!file_exists($this->app->storagePath) && !is_link($this->app->storagePath)) {
+            echo "No application logs found.\n";
+            return;
+        }
+        $storage = Filesystem::privateDirectory($this->app->root, $this->app->storagePath, '', false);
+        if (!file_exists($storage . '/logs') && !is_link($storage . '/logs')) {
+            echo "No application logs found.\n";
+            return;
+        }
+        $directory = Filesystem::privateDirectory($this->app->root, $this->app->storagePath, 'logs', false);
+        $files = glob($directory . '/app-????-??-??.jsonl');
+        if ($files === false) {
+            throw new RuntimeException('Cannot list application logs.');
+        }
+        rsort($files, SORT_STRING);
+        $output = [];
+        $scanned = 0;
+        foreach ($files as $file) {
+            if (is_link($file) || !is_file($file)) {
+                throw new RuntimeException('Daily log paths must be regular files, not symlinks.');
+            }
+            $handle = fopen($file, 'rb');
+            if ($handle === false) {
+                throw new RuntimeException('Cannot read a daily log.');
+            }
+            try {
+                if (fseek($handle, 0, SEEK_END) !== 0 || ($position = ftell($handle)) === false) {
+                    throw new RuntimeException('Cannot seek within a daily log.');
+                }
+                $buffer = '';
+                while ($position > 0) {
+                    $length = min(8192, $position);
+                    $scanned += $length;
+                    if ($scanned > 8388608) {
+                        throw new RuntimeException('Log scan exceeded 8 MiB. Request fewer lines or a less restrictive level.');
+                    }
+                    $position -= $length;
+                    if (fseek($handle, $position) !== 0 || ($chunk = fread($handle, $length)) === false || strlen($chunk) !== $length) {
+                        throw new RuntimeException('Cannot read the log snapshot; retry if logs were rotated.');
+                    }
+                    $buffer = $chunk . $buffer;
+                    $parts = explode("\n", $buffer);
+                    $buffer = array_shift($parts);
+                    if ($position === 0) {
+                        array_unshift($parts, $buffer);
+                        $buffer = '';
+                    }
+                    foreach (array_reverse($parts) as $line) {
+                        if ($line === '') {
+                            continue;
+                        }
+                        if (strlen($line) > 65536) {
+                            throw new RuntimeException('A daily log entry exceeds 64 KiB.');
+                        }
+                        try {
+                            $entry = json_decode($line, true, 32, JSON_THROW_ON_ERROR);
+                        } catch (\JsonException) {
+                            throw new RuntimeException('A daily log contains invalid JSON.');
+                        }
+                        if (!is_array($entry) || !is_string($entry['level'] ?? null) || !isset($levels[$entry['level']])) {
+                            throw new RuntimeException('A daily log contains an invalid entry.');
+                        }
+                        if ($levels[$entry['level']] >= $levels[$minimum]) {
+                            $output[] = json_encode($entry, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+                            if (count($output) === $limit) {
+                                break 3;
+                            }
+                        }
+                    }
+                    if (strlen($buffer) > 65536) {
+                        throw new RuntimeException('A daily log entry exceeds 64 KiB.');
+                    }
+                }
+            } finally {
+                fclose($handle);
+            }
+        }
+        echo $output === [] ? "No matching application logs found.\n" : implode("\n", array_reverse($output)) . "\n";
     }
 
     /** @param list<string> $fields */

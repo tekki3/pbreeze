@@ -1,7 +1,8 @@
 <?php
 declare(strict_types=1);
 
-require dirname(__DIR__) . '/bootstrap.php';
+$configured = require dirname(__DIR__) . '/bootstrap.php';
+require_once dirname(__DIR__) . '/framework/Console.php';
 
 use PBreeze\Cache;
 
@@ -39,6 +40,14 @@ $assert = static function (bool $valid, string $message): void {
     }
 };
 try {
+    $application = new \PBreeze\Application($configured->root, array_replace($configured->config, ['cache' => $settings]));
+    ob_start();
+    try {
+        $assert((new \PBreeze\Console($application))->run(['cache:test']) === 0, 'CLI cache probe failed.');
+        $assert(str_contains(ob_get_contents(), 'PASS Cache'), 'CLI cache probe did not report success.');
+    } finally {
+        ob_end_clean();
+    }
     $assert($cache->get('missing', 'default') === 'default', 'Missing value default failed.');
     $native = (new ReflectionProperty(Cache::class, 'client'))->getValue($cache);
     $nativeKey = $settings['prefix'] . hash('sha256', 'corrupt');
