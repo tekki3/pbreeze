@@ -14,7 +14,7 @@ final class Database
     public readonly Encryption $encryption;
 
     /** @param array<string, string> $config */
-    public function __construct(private readonly string $root, private readonly array $config, ?Encryption $encryption = null)
+    public function __construct(private readonly string $root, private readonly array $config, ?Encryption $encryption = null, private readonly bool $production = false)
     {
         $this->encryption = $encryption ?? new Encryption();
     }
@@ -94,12 +94,22 @@ final class Database
         } else {
             throw new RuntimeException('DB_CONNECTION must be sqlite, mysql, sqlsrv, or pgsql.');
         }
-        $pdo = new PDO($dsn, $this->config['username'] ?? '', $this->config['password'] ?? '', [
+        $options = [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES => false,
             PDO::ATTR_STRINGIFY_FETCHES => false,
-        ]);
+        ];
+        if ($driver === 'mysql') {
+            $options += $this->mysqlOptions();
+        }
+        $pdo = new PDO($dsn, $this->config['username'] ?? '', $this->config['password'] ?? '', $options);
+        if ($driver === 'mysql' && ($this->config['tls'] ?? 'required') === 'required') {
+            $cipher = $pdo->query("SHOW SESSION STATUS LIKE 'Ssl_cipher'")->fetch();
+            if (!is_array($cipher) || !is_string($cipher['Value'] ?? null) || $cipher['Value'] === '') {
+                throw new RuntimeException('MySQL did not negotiate the required TLS connection.');
+            }
+        }
         if ($driver === 'sqlite') {
             $pdo->exec('PRAGMA foreign_keys = ON');
             $pdo->exec('PRAGMA busy_timeout = 5000');
@@ -111,6 +121,30 @@ final class Database
             $pdo->exec("SET client_encoding TO 'UTF8'; SET TIME ZONE 'UTC'");
         }
         return $this->connection = $pdo;
+    }
+
+    /** @return array<int, mixed> */
+    private function mysqlOptions(): array
+    {
+        $tls = $this->config['tls'] ?? 'required';
+        if (!in_array($tls, ['required', 'disabled'], true)) {
+            throw new RuntimeException('DB_MYSQL_TLS must be required or disabled.');
+        }
+        if ($tls === 'disabled') {
+            if ($this->production || !in_array($this->config['host'] ?? '', ['localhost', '127.0.0.1'], true)) {
+                throw new RuntimeException('Unencrypted MySQL is allowed only on localhost outside production.');
+            }
+            return [PDO::ATTR_TIMEOUT => 15];
+        }
+        $ca = $this->config['ssl_ca'] ?? '';
+        if ($ca === '' || !is_file($ca) || !is_readable($ca)) {
+            throw new RuntimeException('Verified MySQL TLS requires a readable DB_MYSQL_SSL_CA certificate bundle.');
+        }
+        if (!in_array('mysql', PDO::getAvailableDrivers(), true)) {
+            throw new RuntimeException('MySQL requires the native pdo_mysql extension.');
+        }
+        $attribute = static fn (string $name): int => constant((class_exists(\Pdo\Mysql::class) ? 'Pdo\\Mysql::' : 'PDO::MYSQL_') . $name);
+        return [PDO::ATTR_TIMEOUT => 15, $attribute('ATTR_SSL_CA') => $ca, $attribute('ATTR_SSL_VERIFY_SERVER_CERT') => true];
     }
 
     /** @param array<string|int, mixed> $parameters */

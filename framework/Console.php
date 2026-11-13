@@ -15,6 +15,8 @@ PBreeze - native PHP, without Composer or an autoloader
 Usage: php breeze <command> [name] [--force]
 
   init                       Create a local .env (preserve an existing file)
+  doctor                     Check production configuration and dependency readiness
+  storage:prepare            Create private storage directories for deployment
   key:generate               Print a new APP_KEY; do not modify any files
   serve [port]               Start at http://127.0.0.1:8000
   routes                     List all routes
@@ -93,6 +95,25 @@ TEXT;
             throw new RuntimeException('Production is protected. Back up your data before explicitly using --force.');
         }
         switch ($command) {
+            case 'doctor':
+                if ($force) {
+                    throw new InvalidArgumentException('doctor does not accept --force.');
+                }
+                $failed = false;
+                foreach ((new Diagnostics($this->app))->check() as $check) {
+                    echo strtoupper($check['status']) . ' ' . $check['name'] . ': ' . $check['message'] . "\n";
+                    $failed = $failed || $check['status'] === 'fail';
+                }
+                return $failed ? 1 : 0;
+            case 'storage:prepare':
+                if ($force) {
+                    throw new InvalidArgumentException('storage:prepare does not accept --force.');
+                }
+                foreach (['', 'logs', 'uploads', 'views'] as $child) {
+                    Filesystem::privateDirectory($this->app->root, $this->app->storagePath, $child);
+                }
+                echo "Private storage prepared. Verify ownership and NTFS ACLs before serving requests.\n";
+                break;
             case 'key:generate':
                 if ($force) {
                     throw new InvalidArgumentException('key:generate does not overwrite keys and does not accept --force.');
@@ -148,7 +169,7 @@ TEXT;
             case 'migrate':
             case 'migrate:rollback':
             case 'migrate:status':
-                $migrator = new Migrator($this->app->db, $this->app->root);
+                $migrator = new Migrator($this->app->db, $this->app->root, $this->app->storagePath);
                 if ($command === 'migrate:status') {
                     $rows = $migrator->status();
                     foreach ($rows as $migration => $batch) {

@@ -44,6 +44,7 @@ require_once __DIR__ . '/framework/Auth.php';
 require_once __DIR__ . '/framework/ApiTokens.php';
 require_once __DIR__ . '/framework/Api.php';
 require_once __DIR__ . '/framework/Application.php';
+require_once __DIR__ . '/framework/Diagnostics.php';
 require_once __DIR__ . '/framework/helpers.php';
 
 \PBreeze\Env::load(__DIR__ . '/.env');

@@ -70,17 +70,19 @@ final class Request
             }
         }
         $raw = null;
-        if ($api) {
+        if ($api || $contentType === 'application/json') {
             if ((int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 1048576) {
-                throw new HttpException(413, 'API request bodies must not exceed 1 MiB.');
+                throw new HttpException(413, 'JSON/API request bodies must not exceed 1 MiB.');
             }
             $raw = file_get_contents('php://input', false, null, 0, 1048577);
             if ($raw === false) {
                 throw new RuntimeException('Cannot read the request body.');
             }
             if (strlen($raw) > 1048576) {
-                throw new HttpException(413, 'API request bodies must not exceed 1 MiB.');
+                throw new HttpException(413, 'JSON/API request bodies must not exceed 1 MiB.');
             }
+        }
+        if ($api) {
             if ($contentType !== 'application/json'
                 && ($raw !== '' || (int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 0 || $_POST !== [] || $_FILES !== [])) {
                 throw new HttpException(415, 'Use Content-Type: application/json.');
@@ -89,7 +91,6 @@ final class Request
         }
         if ($contentType === 'application/json') {
             try {
-                $raw ??= file_get_contents('php://input');
                 if ($raw === false) {
                     throw new RuntimeException('Cannot read the request body.');
                 }

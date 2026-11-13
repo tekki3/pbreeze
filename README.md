@@ -2827,6 +2827,165 @@ a typo therefore does not silently disable production security.
 
 ## Production and Security Boundaries
 
+### Deployment checks and readiness
+
+The framework provides production safeguards, not automatic production
+configuration. Local `.env` values are intentionally preserved during upgrades.
+Run these commands as the deployment/service identity after configuring the
+environment and before routing traffic to the new release:
+
+```sh
+php breeze storage:prepare
+php breeze migrate --force
+php breeze doctor
+```
+
+Back up the database first and use backward-compatible migrations during rolling
+releases. `storage:prepare` creates only the private storage root and its `logs`,
+`uploads`, and `views` children. It does not move files, adjust existing
+ownership, configure sessions, or change database contents.
+
+`doctor` prints `PASS`, `WARN`, or `FAIL` for production flags, trusted HTTPS
+origin, extensions, private storage, database/schema/migration readiness,
+encryption, mail configuration, and operational concerns. Its exit code is 1
+when any check fails and 0 otherwise; review warnings too. It does not create
+directories, databases, migration tables, or records, send email, or call AI.
+An SMTP configuration warning is not evidence that real mail delivery works.
+It checks the CLI PHP installation; verify the web/FPM installation separately.
+If bootstrap configuration is invalid, the command exits with the normal
+startup error before diagnostics can run.
+
+- `GET /health`: lightweight process liveness only; a 200 does not prove that
+  the database is usable.
+- `GET /ready`: 200 with `{"status":"ready"}` only when private storage exists
+  and is readable/writable, the existing database accepts reads, bundled tables
+  exist, and applied migration names match the deployed files. Otherwise it
+  returns 503 with `{"status":"not_ready"}` and logs safe failure metadata.
+  It never creates a missing SQLite database or runs migrations.
+- Exact GET/HEAD requests to those two probe paths do not start a session or
+  issue a session cookie. HEAD responses have an empty body.
+
+Restrict probes to your load balancer/monitoring network at the web server.
+Readiness performs database reads, so set a sensible polling interval and edge
+rate limits. It does not test SMTP/AI availability, usable free disk space,
+backup recovery, real writes, or application-specific dependencies. Database
+network/query deadlines must also be set in the database/server/PHP stack.
+The framework retains provider/driver-specific timeout behavior rather than
+claiming a universal probe deadline.
+
+### Persistent storage across releases
+
+```dotenv
+STORAGE_PATH=/srv/pbreeze-data
+```
+
+On Windows, use an absolute native path such as `C:/PBreezeData`. Default
+`storage` remains project-relative. The configured location contains private
+`logs/`, `uploads/`, `views/`, and `migrations.lock`; `$app->storagePath` exposes
+the resolved path. The default configured services and CLI use this location.
+Standalone Logger/Uploads/Migrator constructors accept an optional storagePath;
+standalone custom View caches remain caller-managed.
+
+Set a real directory, not a symlink. Public paths, ancestors of `public/`,
+dot segments (`.`/`..`), stream wrappers, and symlink ancestors are rejected.
+Configure an absolute shared data directory directly rather than symlinking
+each release's `storage/`. Keep the code read-only for the web identity.
+Existing directories are not chmodded or chowned by `storage:prepare`; restrict
+POSIX permissions or inherited NTFS ACLs explicitly.
+
+**Changing STORAGE_PATH does not move existing data.** Stop or drain writers,
+back up and copy uploads and required logs to the new private directory,
+preserve ownership/ACLs, deploy consistent settings to web and workers, and
+verify downloads before switching traffic. Compiled views may be regenerated.
+Do not run `view:clear` against a cache actively used by other releases; prefer
+leaving content-addressed cache entries until old workers have drained.
+
+SQLite is independent: set `DB_DATABASE` to an absolute persistent file path
+outside the release and public directories. Do not copy a live SQLite database
+as an ordinary file without a consistent backup procedure. PHP session storage
+is also independent: configure the web SAPI's `session.save_handler` and
+`session.save_path`, permissions, and retention. Multiple nodes need shared
+sessions or appropriate sticky routing and common upload storage. SQLite on
+network filesystems is not supported.
+
+### MySQL verified TLS: upgrade requirement
+
+MySQL now defaults to verified TLS. Before upgrading a MySQL installation,
+configure:
+
+```dotenv
+DB_MYSQL_TLS=required
+DB_MYSQL_SSL_CA=/etc/ssl/certs/mysql-ca.pem
+```
+
+The CA must be a readable local certificate bundle and the server certificate
+must match `DB_HOST`. Use a TCP hostname/address; `localhost` may select a Unix
+socket instead of TLS. Native PDO verifies the certificate and the framework
+rejects connections without a negotiated TLS cipher. No plaintext fallback
+is attempted. Windows certificate paths can use forward slashes.
+
+Only isolated local development/testing can explicitly set
+`DB_MYSQL_TLS=disabled`, with `DB_HOST=localhost` or `127.0.0.1` and
+`APP_ENV` other than `production`. Production always rejects that opt-out.
+Programmatic Database settings use `tls` and `ssl_ca`; standalone production
+instances must pass `production: true`. PostgreSQL and SQL Server keep their
+existing TLS settings.
+
+### Request limits and reverse proxies
+
+Every `application/json` request, including non-API routes, now has a fixed
+1 MiB raw-body cap. All API bodies retain that cap. Bounded reads enforce it
+even without Content-Length; oversized input returns 413. This is separate
+from the 2 MiB per-upload default: set PHP/web-server multipart limits with
+appropriate overhead. Edge limits must reject oversized traffic before it
+reaches PHP, which may parse some request types first.
+
+Client identity still uses `REMOTE_ADDR`, never arbitrary forwarded headers.
+Configure Apache `mod_remoteip` or Nginx `real_ip` using **only your trusted
+proxy CIDRs**, and block direct traffic bypassing the proxy. Otherwise clients
+behind that proxy share application rate limits. TLS termination also needs
+`SESSION_SECURE_COOKIE=true` and HTTPS redirection/HSTS at the edge.
+
+### Operations and release gate
+
+1. Use `APP_ENV=production`, `APP_DEBUG=false`, a real HTTPS `APP_URL`, and a
+   valid application key before using encryption. Keep the key backed up
+   separately from encrypted data. Disable or edge-protect API documentation.
+2. Verify sender authorization and real SMTP delivery in staging. Run
+   `php breeze mail:work 50` periodically with cron/systemd timers on Linux or
+   Task Scheduler on Windows. The command processes one batch and exits; it
+   is not a permanent worker. Prevent overlapping runs, alert on nonzero exits,
+   and monitor queued age plus failed/uncertain/sending states. Recover uncertain
+   mail manually to avoid duplicate delivery; never blindly force retries.
+3. Keep consistent backups of the database, private uploads, and encryption
+   keys. Perform and document a restore rehearsal on an isolated environment;
+   verify ownership, downloads, account recovery, and encrypted records.
+4. Monitor 5xx/503 responses, request latency, disk space, log write failures,
+   queue backlog, certificate expiration, and database connection saturation.
+   Export operational logs if the default five-day local retention is too short.
+5. Test the actual PHP-FPM/Apache/IIS configuration and selected database,
+   enforce application/per-record authorization, and load-test expected traffic.
+   Set realistic process, socket, request-body, AI, and proxy timeouts.
+
+The CI definition includes native Ubuntu/Windows tests and separate PostgreSQL
+and MySQL integration jobs. SQL Server still requires its opt-in live test on
+a suitable server. CI definitions are not proof that the jobs have executed
+successfully: require green results and your staging/recovery checks before
+release.
+
+For a disposable empty MySQL database named `pbreeze_test_*`, set process
+variables `MYSQL_TEST_DATABASE`, `MYSQL_TEST_HOST`, `MYSQL_TEST_PORT`,
+`MYSQL_TEST_USERNAME`, `MYSQL_TEST_PASSWORD`, `MYSQL_TEST_TLS`,
+`MYSQL_TEST_SSL_CA`, and `MYSQL_TEST_ALLOW_DESTRUCTIVE=true`, then run:
+
+```sh
+php tests/mysql-integration.php
+```
+
+These settings are process environment variables, not `.env` values. TLS
+defaults to required; `disabled` is only for a local disposable test server.
+The script checks emptiness, creates/test-drops its schema, and sends no SMTP.
+
 - Set the document root **only to `public/`**, never to the project root.
 - Use HTTPS, `APP_ENV=production`, and `APP_DEBUG=false`.
 - Behind an HTTPS reverse proxy, set `SESSION_SECURE_COOKIE=true`.
@@ -2908,8 +3067,9 @@ absence of side effects on all five protected forms.
 API tests check token hashes, verification, expiration/revocation, password reset,
 stateless HTTP, JSON errors/body limits, rate limiting, OpenAPI/route registration,
 CLI scaffolding, and the local Swagger assets and restricted CSP.
-MySQL also requires a separate integration run on a disposable database;
-the included suite does not validate the MySQL connection against a live server.
+MySQL has an opt-in disposable-database integration script and a CI service
+job described in the production chapter. Native local tests do not connect to
+a live MySQL server; require successful integration results for your deployment.
 SQL Server has recording-PDO dialect tests and a separate, explicitly enabled
 live integration script described in its chapter.
 PostgreSQL likewise has recording-PDO tests, an opt-in live test script, and a

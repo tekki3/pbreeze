@@ -138,6 +138,7 @@ try {
     require __DIR__ . '/strings.php';
     require __DIR__ . '/uploads.php';
     require __DIR__ . '/logging.php';
+    require __DIR__ . '/production.php';
 
     test('HTML escaping handles quotes and invalid UTF-8', static function (): void {
         same('&lt;script&gt;&quot;&#039;&amp;', e('<script>"\'&'));
@@ -515,6 +516,12 @@ PHP);
         $environment['APP_URL'] = 'https://auth.example.test';
         $environment['MAIL_FROM'] = 'noreply@example.test';
         $environment['MAIL_LOG'] = 'false';
+        $environment['STORAGE_PATH'] = $temp . '/storage';
+        foreach (['', '/logs', '/views', '/uploads'] as $directory) {
+            if (!is_dir($temp . '/storage' . $directory)) {
+                mkdir($temp . '/storage' . $directory, 0700);
+            }
+        }
         $public = $temp . '/public';
         mkdir($public);
         copy($root . '/public/router.php', $public . '/router.php');
@@ -566,6 +573,16 @@ PHP);
     });
 
     if (isset($base) && is_resource($server) && proc_get_status($server)['running']) {
+        test('HTTP liveness and unavailable readiness do not start sessions or leak diagnostics', static function () use ($base): void {
+            $health = http($base, '/health');
+            same(200, $health['status']);
+            check(!str_contains(strtolower(implode("\n", $health['headers'])), 'set-cookie:'));
+            $ready = http($base, '/ready');
+            same(503, $ready['status']);
+            same(['status' => 'not_ready'], json_decode($ready['body'], true, 32, JSON_THROW_ON_ERROR));
+            check(!str_contains(strtolower(implode("\n", $ready['headers'])), 'set-cookie:'));
+            same('', http($base, '/ready', 'HEAD')['body']);
+        });
         test('HTTP form has secure cookie attributes and CSP', static function () use ($base, &$cookie, &$token): void {
             $response = http($base, '/');
             same(200, $response['status']);
@@ -606,11 +623,38 @@ PHP);
             $headers = ['Content-Type: application/json', 'Cookie: ' . $cookie, 'X-CSRF-Token: ' . $token];
             same(400, http($base, '/greet', 'POST', '{', $headers)['status']);
             same(400, http($base, '/greet', 'POST', '[]', $headers)['status']);
+            $exact = '{"name":"' . str_repeat('x', 1048576 - 11) . '"}';
+            same(1048576, strlen($exact));
+            same(422, http($base, '/greet', 'POST', $exact, $headers)['status']);
+            same(413, http($base, '/greet', 'POST', $exact . ' ', $headers)['status']);
             $fields = captchaFields($cookie, http($base, '/', 'GET', '', ['Cookie: ' . $cookie])['body']);
             $response = http($base, '/greet', 'POST', json_encode(['name' => 'Ada'] + $fields, JSON_THROW_ON_ERROR), $headers);
             same(200, $response['status']);
             $fields = captchaFields($cookie, $response['body']);
             same(422, http($base, '/greet', 'POST', json_encode(['name' => ['Ada']] + $fields, JSON_THROW_ON_ERROR), $headers)['status']);
+        });
+
+        test('HTTP JSON size limits reject chunked requests without Content-Length', static function () use ($base): void {
+            $address = substr($base, strlen('http://'));
+            $socket = stream_socket_client('tcp://' . $address, $errno, $error, 5);
+            check(is_resource($socket), 'Cannot connect to the HTTP request-limit fixture.');
+            stream_set_timeout($socket, 5);
+            try {
+                $body = '{"name":"' . str_repeat('x', 1048576) . '"}';
+                $request = "POST /greet HTTP/1.1\r\nHost: $address\r\nContent-Type: application/json\r\n"
+                    . "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+                    . dechex(strlen($body)) . "\r\n$body\r\n0\r\n\r\n";
+                for ($offset = 0; $offset < strlen($request);) {
+                    $written = fwrite($socket, substr($request, $offset, 65536));
+                    check(is_int($written) && $written > 0, 'Cannot write the chunked test request.');
+                    $offset += $written;
+                }
+                $response = stream_get_contents($socket);
+                check(is_string($response) && preg_match('~^HTTP/\S+\s+413\b~', $response) === 1,
+                    'Oversized chunked JSON must return 413.');
+            } finally {
+                fclose($socket);
+            }
         });
 
         test('HTTP HEAD is empty and private files are inaccessible', static function () use ($base, &$cookie, &$token): void {
@@ -635,6 +679,12 @@ PHP);
         englishHttp($base);
         documentHttp($base);
         uploadHttp($base);
+        test('HTTP readiness succeeds after deployed migrations and private storage are ready', static function () use ($base): void {
+            $ready = http($base, '/ready');
+            same(200, $ready['status']);
+            same(['status' => 'ready'], json_decode($ready['body'], true, 32, JSON_THROW_ON_ERROR));
+            check(!str_contains(strtolower(implode("\n", $ready['headers'])), 'set-cookie:'));
+        });
     }
 } finally {
     if (is_resource($server)) {

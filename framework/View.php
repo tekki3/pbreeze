@@ -12,7 +12,8 @@ final class View
     public readonly Formatter $format;
     public readonly Strings $strings;
 
-    public function __construct(private readonly string $directory, ?string $cacheDirectory = null, ?Formatter $formatter = null, ?Strings $strings = null)
+    public function __construct(private readonly string $directory, ?string $cacheDirectory = null, ?Formatter $formatter = null, ?Strings $strings = null,
+        private readonly ?string $storageRoot = null, private readonly ?string $storagePath = null)
     {
         $this->cacheDirectory = $cacheDirectory ?? dirname($directory, 2) . '/storage/views';
         $this->format = $formatter ?? new Formatter();
@@ -60,6 +61,9 @@ final class View
 
     public function clearCache(): int
     {
+        if ($this->storageRoot !== null && is_dir($this->cacheDirectory)) {
+            Filesystem::privateDirectory($this->storageRoot, $this->storagePath, 'views', false);
+        }
         $files = glob($this->cacheDirectory . '/breeze-*.php');
         if ($files === false) {
             throw new RuntimeException('Cannot read the template cache.');
@@ -94,12 +98,18 @@ final class View
 
     private function compiled(string $file, string $name): string
     {
+        if ($this->storageRoot !== null) {
+            Filesystem::privateDirectory($this->storageRoot, $this->storagePath, 'views');
+        }
         $source = file_get_contents($file);
         if ($source === false) {
             throw new RuntimeException("Cannot read template: $name");
         }
         $hash = hash('sha256', TemplateCompiler::VERSION . "\0" . $file . "\0" . $source);
         $target = $this->cacheDirectory . '/breeze-' . $hash . '.php';
+        if (is_link($target)) {
+            throw new RuntimeException('Compiled templates must not be symlinks.');
+        }
         if (is_file($target)) {
             return $target;
         }
@@ -119,6 +129,9 @@ final class View
             } finally {
                 restore_error_handler();
             }
+        }
+        if (is_link($this->cacheDirectory . '/.compile.lock')) {
+            throw new RuntimeException('The template compilation lock must not be a symlink.');
         }
         $lock = fopen($this->cacheDirectory . '/.compile.lock', 'c');
         if ($lock === false) {

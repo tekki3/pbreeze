@@ -20,6 +20,7 @@ final class Logger
         private readonly string $root,
         public readonly int $retentionDays = 5,
         public readonly string $minimumLevel = 'debug',
+        private readonly ?string $storagePath = null,
     ) {
         if ($retentionDays < 1 || $retentionDays > 3650) {
             throw new InvalidArgumentException('Log retention must be between 1 and 3650 days.');
@@ -163,47 +164,6 @@ final class Logger
 
     private function directory(): string
     {
-        $root = realpath($this->root);
-        if ($root === false) {
-            throw new RuntimeException('The application root does not exist.');
-        }
-        $directory = $root;
-        foreach (['storage', 'logs'] as $segment) {
-            $directory .= '/' . $segment;
-            if (is_link($directory)) {
-                throw new RuntimeException('Log directories must not be symlinks.');
-            }
-            if (!is_dir($directory)) {
-                set_error_handler(static function (int $severity, string $message): never {
-                    throw new RuntimeException('Cannot create private log storage: ' . $message);
-                });
-                try {
-                    if (!mkdir($directory, 0700) && !is_dir($directory)) {
-                        throw new RuntimeException('Cannot create private log storage.');
-                    }
-                } catch (RuntimeException $error) {
-                    if (!is_dir($directory) || is_link($directory)) {
-                        throw $error;
-                    }
-                } finally {
-                    restore_error_handler();
-                }
-            }
-        }
-        $resolved = realpath($directory);
-        if ($resolved === false) {
-            throw new RuntimeException('Cannot resolve private log storage.');
-        }
-        $public = realpath($root . '/public');
-        if ($public !== false) {
-            $normalize = static fn (string $path): string => PHP_OS_FAMILY === 'Windows'
-                ? strtolower(str_replace('\\', '/', $path)) : $path;
-            $target = $normalize($resolved);
-            $public = $normalize($public);
-            if ($target === $public || str_starts_with($target, $public . '/')) {
-                throw new RuntimeException('Logs must be outside the public directory.');
-            }
-        }
-        return $directory;
+        return Filesystem::privateDirectory($this->root, $this->storagePath, 'logs');
     }
 }

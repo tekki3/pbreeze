@@ -14,7 +14,7 @@ abstract class Migration
 
 final class Migrator
 {
-    public function __construct(private readonly Database $db, private readonly string $root)
+    public function __construct(private readonly Database $db, private readonly string $root, private readonly ?string $storagePath = null)
     {
     }
 
@@ -155,7 +155,11 @@ final class Migrator
 
     private function locked(callable $work): mixed
     {
-        $handle = fopen($this->root . '/storage/migrations.lock', 'c');
+        $lockPath = Filesystem::privateDirectory($this->root, $this->storagePath) . '/migrations.lock';
+        if (is_link($lockPath)) {
+            throw new RuntimeException('The migration lock must not be a symlink.');
+        }
+        $handle = fopen($lockPath, 'c');
         if ($handle === false) {
             throw new RuntimeException('Cannot open the migration lock.');
         }

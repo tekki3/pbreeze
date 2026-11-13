@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 $commands = [
     'init' => ['Create .env from .env.example only if absent, with private platform-appropriate permissions. Existing configuration is preserved; no database or application key is created.', 'php breeze init'],
+    'doctor' => ['Check production configuration, required/optional extensions, private storage, database/schema/migration readiness, encryption, SMTP configuration, and operational reminders. Returns exit 1 if any check fails, otherwise 0; warnings need human review. Does not create storage/databases/tables, send mail, call AI, or test real web-server settings. Database connection and read queries occur only after storage checks pass. No --force.', 'php breeze doctor'],
+    'storage:prepare' => ['Create the configured private storage root and logs, uploads, and views directories using restrictive creation permissions. Existing files are preserved; symlinks and public storage are rejected. No migration, file transfer, ownership change, or session/database relocation occurs. Run as the correct deployment identity; no --force.', 'php breeze storage:prepare'],
     'key:generate' => ['Print a fresh APP_KEY assignment. Copy it securely to .env yourself; files are not changed. Replacing a key makes older encrypted data unreadable unless you plan a migration.', 'php breeze key:generate'],
     'serve' => ['Start the native localhost development server, default port 8000, or a supplied 1024..65535 port. Runs in the foreground until stopped. Never use as a production server.', 'php breeze serve 8080'],
     'routes' => ['Load web/API route registries and print method/path pairs. Duplicate imports or invalid routes fail rather than being ignored.', 'php breeze routes'],
@@ -46,6 +48,7 @@ $environment = [
     'APP_ENV' => 'local, testing, or production only. If absent, configuration defaults to production; the example file intentionally selects local.',
     'APP_DEBUG' => 'Boolean diagnostic web output flag. Detailed errors are shown only with local environment and true. Keep false in production; API unexpected errors stay generic.',
     'APP_KEY' => 'Secret base64:-prefixed 32-byte encryption key. Empty disables usable encryption, not unrelated features. Generate securely; never commit or log it.',
+    'STORAGE_PATH' => 'Private logs/uploads/view-cache/migration-lock directory, default storage relative to the project root. Absolute local paths support persistent data across releases. No dot segments, stream wrappers, symlink ancestors, public paths, or ancestors of public are allowed. Run storage:prepare; migrate existing files explicitly. Does not relocate SQLite or PHP sessions.',
     'APP_LOCALE' => 'Default display locale for Formatter, en-US. Does not translate framework-maintained UI. Process environment overrides .env.',
     'APP_TIMEZONE' => 'Default Formatter IANA zone, UTC. No global PHP timezone change occurs.',
     'LOG_RETENTION_DAYS' => 'Daily-file retention window, 1..3650 days, default 5. Includes today; pruning runs when an entry is written.',
@@ -66,6 +69,8 @@ $environment = [
     'DB_PORT' => 'Server TCP port 1..65535. Example: 3306 for MySQL; set 1433 for SQL Server or 5432 for PostgreSQL. When entirely absent, defaults follow the selected driver.',
     'DB_USERNAME' => 'Database login, root in the MySQL-oriented example. Set an appropriate SQL authentication login for SQL Server. Use least privilege in production.',
     'DB_PASSWORD' => 'Secret database password. Empty in the example, not a production recommendation.',
+    'DB_MYSQL_TLS' => 'MySQL only: required by default, or disabled explicitly for localhost outside production. Required verifies the certificate and checks the negotiated cipher. An intentional compatibility change from earlier unencrypted defaults.',
+    'DB_MYSQL_SSL_CA' => 'MySQL only: readable local CA bundle required when DB_MYSQL_TLS=required. Use a server certificate matching DB_HOST. Forward slashes are recommended on Windows.',
     'DB_ENCRYPT' => 'SQL Server only: true or false, default true. Encrypts the database connection. Keep true in production.',
     'DB_TRUST_SERVER_CERTIFICATE' => 'SQL Server only: true bypasses certificate verification, default false. Keep false in production and configure trusted certificates.',
     'DB_SSLMODE' => 'PostgreSQL only: disable, allow, prefer, require, verify-ca, or verify-full. Default verify-full requires TLS and a trusted certificate matching DB_HOST. disable is for isolated non-TLS development only.',

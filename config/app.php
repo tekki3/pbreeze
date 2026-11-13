@@ -29,6 +29,7 @@ return [
     'environment' => $environment,
     'debug' => Env::bool('APP_DEBUG'),
     'secure_cookie' => Env::bool('SESSION_SECURE_COOKIE'),
+    'storage_path' => Env::get('STORAGE_PATH', 'storage'),
     'api_docs' => Env::bool('API_DOCS_ENABLED', $environment !== 'production'),
     'upload_max_bytes' => $uploadMaxBytes,
     'log_retention_days' => $logRetention,
@@ -48,5 +49,7 @@ return [
         'trust_server_certificate' => Env::get('DB_TRUST_SERVER_CERTIFICATE', 'false'),
         'sslmode' => Env::get('DB_SSLMODE', 'verify-full'),
         'sslrootcert' => Env::get('DB_SSLROOTCERT'),
+        'tls' => Env::get('DB_MYSQL_TLS', 'required'),
+        'ssl_ca' => Env::get('DB_MYSQL_SSL_CA'),
     ],
 ];

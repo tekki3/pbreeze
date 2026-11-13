@@ -19,7 +19,7 @@ final class StoredUpload
 
 final class Uploads
 {
-    public function __construct(private readonly string $root, public readonly int $maxBytes = 2097152)
+    public function __construct(private readonly string $root, public readonly int $maxBytes = 2097152, private readonly ?string $storagePath = null)
     {
         if ($maxBytes < 1) {
             throw new \InvalidArgumentException('The default upload limit must be a positive byte size.');
@@ -100,52 +100,12 @@ final class Uploads
 
     private function directory(bool $create): string
     {
-        $root = realpath($this->root);
-        if ($root === false) {
-            throw new RuntimeException('The application root does not exist.');
-        }
-        $directory = $root;
-        foreach (['storage', 'uploads'] as $segment) {
-            $directory .= '/' . $segment;
-            if (is_link($directory)) {
-                throw new RuntimeException('Private upload storage must not use symlinked directories.');
-            }
-            if (!is_dir($directory)) {
-                if (!$create) {
-                    throw new HttpException(404, 'The uploaded file was not found.');
-                }
-                set_error_handler(static function (int $severity, string $message): never {
-                    throw new RuntimeException('Cannot create private upload storage: ' . $message);
-                });
-                try {
-                    if (!mkdir($directory, 0700) && !is_dir($directory)) {
-                        throw new RuntimeException('Cannot create private upload storage.');
-                    }
-                } catch (RuntimeException $error) {
-                    if (!is_dir($directory) || is_link($directory)) {
-                        throw $error;
-                    }
-                } finally {
-                    restore_error_handler();
-                }
+        if (!$create) {
+            $base = Filesystem::databasePath($this->root, $this->storagePath ?? 'storage');
+            if (!is_dir($base) || !is_dir($base . '/uploads')) {
+                throw new HttpException(404, 'The uploaded file was not found.');
             }
         }
-        $public = realpath($root . '/public');
-        $resolved = realpath($directory);
-        if ($resolved === false) {
-            throw new RuntimeException('Cannot resolve private upload storage.');
-        }
-        $normalized = str_replace('\\', '/', $resolved);
-        if ($public !== false) {
-            $public = str_replace('\\', '/', $public);
-            if (PHP_OS_FAMILY === 'Windows') {
-                $public = strtolower($public);
-                $normalized = strtolower($normalized);
-            }
-            if ($public === $normalized || str_starts_with($normalized, $public . '/')) {
-                throw new RuntimeException('Upload storage must be outside the public directory.');
-            }
-        }
-        return $directory;
+        return Filesystem::privateDirectory($this->root, $this->storagePath, 'uploads', $create);
     }
 }

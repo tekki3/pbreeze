@@ -13,6 +13,7 @@ $home = new HomeController($app);
 $router->get('/', [$home, 'index']);
 $router->post('/greet', [$home, 'greet']);
 $router->get('/health', static fn (Request $request): Response => Response::json(['status' => 'ok']));
+$router->get('/ready', static fn (Request $request): Response => $app->readiness());
 $router->get('/captcha/{id}', static fn (Request $request, string $id): Response => $app->botProtection->image($id));
 
 $auth = new AuthController($app);

@@ -17,11 +17,11 @@ function sqlsrvCheck(bool $condition, string $message): void
     }
 }
 
-if (!isset($integrationDriver) || !in_array($integrationDriver, ['sqlsrv', 'pgsql'], true)) {
-    throw new RuntimeException('Run sqlsrv-integration.php or pgsql-integration.php instead.');
+if (!isset($integrationDriver) || !in_array($integrationDriver, ['sqlsrv', 'pgsql', 'mysql'], true)) {
+    throw new RuntimeException('Run mysql-integration.php, sqlsrv-integration.php, or pgsql-integration.php instead.');
 }
 $prefix = strtoupper($integrationDriver) . '_TEST_';
-$label = $integrationDriver === 'pgsql' ? 'PostgreSQL' : 'SQL Server';
+$label = match ($integrationDriver) { 'pgsql' => 'PostgreSQL', 'mysql' => 'MySQL', default => 'SQL Server' };
 $name = getenv($prefix . 'DATABASE') ?: '';
 sqlsrvCheck(
     preg_match('/^pbreeze_test_[a-zA-Z0-9_]+$/D', $name) === 1
@@ -31,20 +31,24 @@ sqlsrvCheck(
 $config = [
     'driver' => $integrationDriver, 'database' => $name,
     'host' => getenv($prefix . 'HOST') ?: '127.0.0.1',
-    'port' => getenv($prefix . 'PORT') ?: ($integrationDriver === 'pgsql' ? '5432' : '1433'),
+    'port' => getenv($prefix . 'PORT') ?: match ($integrationDriver) { 'pgsql' => '5432', 'mysql' => '3306', default => '1433' },
     'username' => getenv($prefix . 'USERNAME') ?: '',
     'password' => getenv($prefix . 'PASSWORD') ?: '',
     'encrypt' => 'true',
     'trust_server_certificate' => getenv($prefix . 'TRUST_SERVER_CERTIFICATE') ?: 'false',
     'sslmode' => getenv($prefix . 'SSLMODE') ?: 'verify-full',
     'sslrootcert' => getenv($prefix . 'SSLROOTCERT') ?: '',
+    'tls' => getenv($prefix . 'TLS') ?: 'required',
+    'ssl_ca' => getenv($prefix . 'SSL_CA') ?: '',
 ];
 $db = new Database(dirname(__DIR__), $config);
 sqlsrvCheck((int) $db->execute($integrationDriver === 'pgsql'
     ? "SELECT COUNT(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%'
        AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')"
-    : 'SELECT COUNT(*) FROM sys.tables WHERE is_ms_shipped = 0')->fetchColumn() === 0,
+    : ($integrationDriver === 'mysql'
+        ? 'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()'
+        : 'SELECT COUNT(*) FROM sys.tables WHERE is_ms_shipped = 0'))->fetchColumn() === 0,
     'The dedicated test database must contain no user tables.');
 
 $temporary = sys_get_temp_dir() . '/pbreeze-' . $integrationDriver . '-' . bin2hex(random_bytes(8));
@@ -58,7 +62,9 @@ try {
     foreach (glob(dirname(__DIR__) . '/database/migrations/*.php') as $file) {
         sqlsrvCheck(copy($file, $temporary . '/database/migrations/' . basename($file)), 'Cannot copy migration.');
         $override = dirname($file) . '/' . $integrationDriver . '/' . basename($file);
-        sqlsrvCheck(copy($override, $temporary . '/database/migrations/' . $integrationDriver . '/' . basename($file)), 'Cannot copy driver migration.');
+        if ($integrationDriver !== 'mysql') {
+            sqlsrvCheck(copy($override, $temporary . '/database/migrations/' . $integrationDriver . '/' . basename($file)), 'Cannot copy driver migration.');
+        }
     }
     $app = new Application($temporary, [
         'name' => $label . ' integration', 'environment' => 'testing', 'debug' => false,
