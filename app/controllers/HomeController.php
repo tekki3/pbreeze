@@ -19,6 +19,7 @@ final class HomeController
         return new Response($this->app->views->render('home', [
             'name' => $this->app->config['name'],
             'session' => $this->app->session,
+            'user' => $this->app->auth->user(),
         ]));
     }
 
@@ -28,6 +29,7 @@ final class HomeController
         return new Response($this->app->views->render('home', [
             'name' => $this->app->config['name'],
             'session' => $this->app->session,
+            'user' => $this->app->auth->user(),
             'errors' => $errors,
             'greeting' => $errors === [] ? 'Hallo, ' . $request->input('name') . '!' : null,
             'oldName' => is_string($request->input('name')) ? $request->input('name') : '',

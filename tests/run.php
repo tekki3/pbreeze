@@ -430,6 +430,9 @@ PHP);
         $environment['SESSION_SECURE_COOKIE'] = 'false';
         $environment['DB_CONNECTION'] = 'sqlite';
         $environment['DB_DATABASE'] = $temp . '/http.sqlite';
+        $environment['APP_URL'] = 'https://auth.example.test';
+        $environment['MAIL_FROM'] = 'noreply@example.test';
+        $environment['MAIL_LOG'] = 'false';
         $public = $temp . '/public';
         mkdir($public);
         copy($root . '/public/router.php', $public . '/router.php');
@@ -438,7 +441,8 @@ PHP);
         file_put_contents($public . '/index.php', '<?php require ' . var_export($root . '/public/index.php', true) . ';');
         file_put_contents($public . '/fixture.css', 'body { color: black; }');
         file_put_contents($public . '/.private.css', 'not-public');
-        $server = proc_open([PHP_BINARY, '-S', $address, '-t', $public, $public . '/router.php'], [
+        mkdir($temp . '/http-sessions', 0700);
+        $server = proc_open([PHP_BINARY, '-d', 'session.save_path=' . $temp . '/http-sessions', '-d', 'session.serialize_handler=php_serialize', '-S', $address, '-t', $public, $public . '/router.php'], [
             0 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'r'],
             1 => ['file', $temp . '/server.log', 'a'],
             2 => ['file', $temp . '/server.log', 'a'],
@@ -518,6 +522,8 @@ PHP);
             same(405, http($base, '/health', 'POST', '', ['Cookie: ' . $cookie, 'X-CSRF-Token: ' . $token])['status']);
             same(404, http($base, '/onbekend')['status']);
         });
+
+        require __DIR__ . '/auth.php';
     }
 } finally {
     if (is_resource($server)) {

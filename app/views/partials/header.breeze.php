@@ -7,8 +7,13 @@
         <span>{{ $name }}</span>
     </a>
     <nav aria-label="Paginanavigatie">
-        <a href="#proberen">Formulier testen</a>
-        <a href="#bouwen">Aan de slag</a>
+        <a href="/#proberen">Formulier testen</a>
+        <a href="/#bouwen">Aan de slag</a>
+        @if(!empty($user))
+            <a href="/account">Mijn account</a>
+        @else
+            <a href="/login">Inloggen</a>
+        @endif
         <a class="health-link" href="/health">Healthcontrole <span aria-hidden="true">&rarr;</span></a>
     </nav>
 </header>

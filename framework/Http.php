@@ -28,6 +28,7 @@ final class Request
         private readonly array $query = [],
         private readonly array $body = [],
         private readonly array $headers = [],
+        private readonly string $ip = 'unknown',
     ) {
     }
 
@@ -64,7 +65,7 @@ final class Request
                 throw new HttpException(400, 'Ongeldige JSON-inhoud.');
             }
         }
-        return new self(strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET'), $path, $_GET, $body, $headers);
+        return new self(strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET'), $path, $_GET, $body, $headers, $_SERVER['REMOTE_ADDR'] ?? 'unknown');
     }
 
     public function input(string $key, mixed $default = null): mixed
@@ -86,6 +87,11 @@ final class Request
     public function header(string $name): ?string
     {
         return $this->headers[strtolower($name)] ?? null;
+    }
+
+    public function clientIp(): string
+    {
+        return $this->ip;
     }
 }
 

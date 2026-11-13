@@ -12,8 +12,9 @@ final class Application
     public readonly Session $session;
     public readonly Database $db;
     public readonly \PBreeze\Mail\Mailer $mail;
+    public readonly Auth $auth;
 
-    /** @param array{name: string, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}} $config */
+    /** @param array{name: string, url?: string, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}} $config */
     public function __construct(public readonly string $root, public readonly array $config)
     {
         $this->router = new Router();
@@ -21,6 +22,7 @@ final class Application
         $this->session = new Session();
         $this->db = new Database($root, $config['database']);
         $this->mail = new \PBreeze\Mail\Mailer($this->db, $config['mail'] ?? []);
+        $this->auth = new Auth($this->db, $this->session, $this->mail, $config['url'] ?? 'http://127.0.0.1:8000', $config['environment'] === 'production');
     }
 
     public function routes(): void

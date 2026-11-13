@@ -10,6 +10,7 @@ if (!in_array($environment, ['local', 'testing', 'production'], true)) {
 
 return [
     'name' => Env::get('APP_NAME', 'PBreeze'),
+    'url' => Env::get('APP_URL', 'http://127.0.0.1:8000'),
     'environment' => $environment,
     'debug' => Env::bool('APP_DEBUG'),
     'secure_cookie' => Env::bool('SESSION_SECURE_COOKIE'),

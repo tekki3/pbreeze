@@ -5,6 +5,8 @@ packages, PSR-autoloading, container of verborgen bestandsdetectie. Alleen
 expliciete `require_once`-regels en PHP-extensies.
 
 Inclusief native SMTP, IMAP, configureerbare e-maillogging en een databasewachtrij.
+Met registratie, login/logout, wachtwoordherstel en verplichte e-mailverificatie
+voor beschermde routes.
 De applicatie, CLI en tests zijn ingericht voor zowel Windows als Linux.
 
 ## Beginnen
@@ -434,10 +436,124 @@ $notice = $this->app->session->get('notice');
 $this->app->session->regenerate();
 ```
 
-Vernieuw het sessie-ID na een toekomstige login of wijziging van rechten.
-Authenticatie en autorisatie zijn niet meegeleverd; een CSRF-token is geen
-toegangscontrole. Voor wachtwoorden gebruik je native `password_hash()`,
-`password_verify()` en `password_needs_rehash()`.
+Authenticatie vernieuwt automatisch het sessie-ID en het CSRF-token bij login
+en logout. Daarbij worden bestaande sessiegegevens gewist. Een CSRF-token
+vervangt geen toegangscontrole; bescherm je routes expliciet.
+
+## Authenticatie
+
+Voer `php breeze migrate` uit om `users`, `auth_tokens` en `auth_limits`
+aan te maken. Stel in je bestaande `.env` ook de publieke origin in:
+
+```dotenv
+APP_URL=http://127.0.0.1:8000
+```
+
+In productie is dit bijvoorbeeld `https://app.example.nl`: HTTPS is verplicht,
+zonder pad, gebruikersnaam, query of fragment. HTTP is alleen lokaal op
+localhost toegestaan. Links worden uitsluitend uit deze configuratie opgebouwd,
+nooit uit de inkomende Host- of proxyheaders. Gebruik je lokaal een andere
+poort, pas `APP_URL` daarop aan.
+
+### Pagina's en stroom
+
+| Route | Functie |
+|---|---|
+| `GET/POST /register` | Account aanmaken en verificatiemail klaarzetten |
+| `GET/POST /login` | Inloggen met e-mailadres en wachtwoord |
+| `POST /logout` | Sessie wissen, ID en CSRF vernieuwen |
+| `GET/POST /forgot-password` | Een herstellink aanvragen |
+| `GET/POST /reset-password` | Nieuw wachtwoord kiezen via een token |
+| `GET/POST /verify-email` | E-mailadres bevestigen via een token |
+| `GET /email/verify` | Verificatiemelding voor ingelogde gebruikers |
+| `POST /email/verification-notification` | Nieuwe verificatiemail aanvragen |
+| `GET /account` | Voorbeeldpagina achter login én e-mailverificatie |
+
+Na registratie log je in; onbevestigde accounts komen op de verificatiepagina.
+Een verificatielink bevestig je met een POST-formulier, zodat een mail-scanner
+die de link via GET of HEAD opent hem niet verbruikt. Bevestiging logt je niet
+automatisch in. Onjuiste/verlopen tokens geven 400, validatiefouten 422,
+te veel pogingen 429 en ontbrekende/onjuiste CSRF 419.
+
+Wachtwoorden vereisen minimaal 12 tekens en maximaal 72 **bytes** (de native
+bcryptgrens), plus een gelijke bevestiging. Ze worden niet teruggezet in
+formulieren, niet gemaild en uitsluitend met `password_hash()`/bcrypt,
+cost 12 opgeslagen. Login gebruikt `password_verify()` en herhashing indien nodig.
+E-mailadressen zijn ASCII en worden getrimd en naar kleine letters omgezet;
+naam en andere velden worden niet automatisch als databasevelden overgenomen.
+
+### Mails verzenden
+
+Authenticatiemails gaan **altijd via de bestaande databasewachtrij**, ook als
+`MAIL_LOG=false`. Configureer `MAIL_FROM` en SMTP zoals hieronder beschreven en
+voer regelmatig uit, via cron of Windows Taakplanner:
+
+```sh
+php breeze mail:work 50
+```
+
+Een succesvolle aanvraag betekent dat de mail klaarstaat, niet dat deze al is
+bezorgd. Zonder werkende SMTP-configuratie/worker ontvangt de gebruiker geen mail.
+Er wordt geen externe mail verstuurd tijdens installatie of tests. Nieuwe
+accounts en hun verificatiemail worden samen opgeslagen: faalt het klaarzetten,
+dan wordt registratie teruggedraaid. Database- en configuratiefouten worden
+als serverfout gelogd, niet als geslaagde aanvraag getoond.
+
+Tokens bevatten 32 cryptografisch willekeurige bytes en worden alleen als
+SHA-256-hash opgeslagen in `auth_tokens`. Verificatietokens zijn 24 uur geldig,
+hersteltokens 30 minuten, gerekend vanaf de aanvraag. Ze zijn eenmalig;
+een nieuwe aanvraag vervangt de eerdere link voor hetzelfde doel. De worker
+moet dus tijdig draaien. Reset maakt alle bestaande inlogsessies voor het account
+ongeldig en logt de aanvrager uit. Reset bevestigt niet automatisch het e-mailadres.
+
+**Let op:** de verzendbare e-mail in `emails` bevat noodzakelijkerwijs de
+volledige link. Bescherm de database, backups en CLI-toegang als geheimen.
+Wis oude mails volgens je bewaarbeleid en configureer webserver/proxylogs
+zodat tokendragende querystrings niet worden bewaard. Authenticatiepagina's
+gebruiken `no-store` en `Referrer-Policy: no-referrer`. Zet debug uit in productie.
+
+### Eigen routes beschermen
+
+```php
+$router->get('/dashboard', $app->auth->protect([$controller, 'dashboard']));
+
+// Uitzondering: alleen login verplicht, bijvoorbeeld voor de verificatiepagina.
+$router->get('/onboarding', $app->auth->protect([$controller, 'onboarding'], false));
+
+$user = $app->auth->user();
+// null of: id, name, email, email_verified_at; nooit een wachtwoordhash.
+```
+
+De guard stuurt gasten naar `/login` en onbevestigde accounts naar `/email/verify`.
+Er wordt niet automatisch naar een meegestuurde URL teruggestuurd. Beveilig ook
+je POST/PUT/PATCH/DELETE-routes met de guard. Bestaande voorbeeldroutes blijven
+publiek en werken zonder auth-tabellen zolang er geen ingelogde sessie is.
+Rollen, rechten per object, MFA, remember-me en externe providers zijn niet
+meegeleverd; voeg autorisatie toe vóór je gebruikersdata ontsluit.
+
+Sessies verlopen na 30 minuten inactiviteit of maximaal 12 uur vanaf login.
+Iedere controle leest de huidige gebruiker en sessieversie uit de database.
+Verwijderde gebruikers en sessies met een oude versie verliezen hun toegang.
+
+Vaste, databasegebonden tijdvensters begrenzen pogingen, ook over sessies heen:
+
+| Actie | Limiet |
+|---|---|
+| Registratie | 5 per IP per uur |
+| Login | 10 per e-mailadres en 40 per IP per 15 minuten |
+| Herstellink | 5 per e-mailadres en 20 per IP per uur |
+| Reset indienen | 20 per IP per uur |
+| Verificatiemail opnieuw | 5 per gebruiker en 20 per IP per uur |
+| Verificatietoken indienen | 30 per IP per 15 minuten |
+
+Ook ongeldige aanvragen tellen mee voor de IP-limiet. Verlopen limietrecords
+worden bij een volgende poging opgeruimd. Alleen SHA-256-buckets worden bewaard,
+geen ruwe IP-adressen in `auth_limits`. De bron is uitsluitend `REMOTE_ADDR`;
+forwarded headers worden niet vertrouwd. Achter een reverse proxy delen
+gebruikers mogelijk één limiet: configureer de echte client-IP alleen op een
+vertrouwde webserver/proxy, en pas aanvullend edge-rate-limiting toe.
+Registratie en herstel geven dezelfde melding voor bestaande en ontbrekende
+accounts; deze berichten voorkomen geen analyse van timing of mailbezorging.
 
 ## Database en modellen
 
@@ -770,8 +886,8 @@ een typefout schakelt de productiebeveiliging dus niet stilzwijgend uit.
   kunnen headers expliciet aanpassen; houd die wijzigingen beperkt.
 - Statische bestanden worden direct door de webserver bediend: configureer
   daarvoor zelf passende cache- en veiligheidsheaders.
-- Voeg vóór publieke ingebruikname je eigen autorisatie, authenticatie en
-  toepassingsspecifieke validatie toe. De voorbeeldapp heeft geen accounts.
+- Bescherm eigen routes met de auth-guard en voeg vóór publieke ingebruikname
+  autorisatie per object en toepassingsspecifieke validatie toe.
 - Draai de ontwikkelserver nooit als productieserver. Veiligheidsmaatregelen
   zijn geen garantie: laat een echte applicatie vóór uitrol beoordelen.
 
@@ -809,5 +925,8 @@ De server wordt gestopt en de tijdelijke bestanden worden opgeruimd.
 SMTP en IMAP worden via lokale protocolfixtures getest, inclusief native TLS,
 STARTTLS, authenticatie, certificaatcontrole, databasewachtrij, deduplicatie
 en het verliezen van de SMTP-bevestiging. Er wordt geen externe mail verstuurd.
+Authenticatietests doorlopen de echte HTTP-formulieren, sessie- en CSRF-rotatie,
+e-mailverificatie, tokenverval/hergebruik, wachtwoordherstel, sessie-intrekking
+en persistente rate limits op een tijdelijke database.
 MySQL vereist daarnaast een eigen integratierun op een wegwerpdatabase;
 de meegeleverde suite valideert de MySQL-verbinding niet tegen een live server.

@@ -45,6 +45,12 @@ final class Session
         }
     }
 
+    public function reset(): void
+    {
+        $_SESSION = [];
+        $this->regenerate();
+    }
+
     public function token(): string
     {
         $token = $this->get('_csrf');
