@@ -1,32 +1,10 @@
-<?php
-declare(strict_types=1);
-?>
-<!doctype html>
-<html lang="nl">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title><?= e($name) ?> - Je applicatie draait</title>
-    <meta name="color-scheme" content="light">
-    <link rel="stylesheet" href="/assets/welcome.css">
-</head>
-<body>
-    <a class="skip-link" href="#main">Ga naar de inhoud</a>
-    <header class="site-header page-width">
-        <a class="brand" href="/" aria-label="<?= e($name) ?> startpagina">
-            <svg class="brand-mark" viewBox="0 0 36 36" fill="none" aria-hidden="true">
-                <rect width="36" height="36" rx="10" fill="currentColor"/>
-                <path d="M10 12h10a4 4 0 0 1 0 8H10m4-4h10M10 24h7" stroke="white" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-            <span><?= e($name) ?></span>
-        </a>
-        <nav aria-label="Paginanavigatie">
-            <a href="#proberen">Formulier testen</a>
-            <a href="#bouwen">Aan de slag</a>
-            <a class="health-link" href="/health">Healthcontrole <span aria-hidden="true">&rarr;</span></a>
-        </nav>
-    </header>
-    <main id="main" class="page-width">
+@extends('layouts.app')
+
+@section('title')
+{{ $name }} - Je applicatie draait
+@endsection
+
+@section('content')
         <section class="intro" aria-labelledby="welcome-title">
             <div class="intro-copy">
                 <h1 id="welcome-title">Een frisse start.<br><span>Klaar om te bouwen.</span></h1>
@@ -50,24 +28,26 @@ declare(strict_types=1);
                 <h2 id="form-title">Van invoer naar antwoord.</h2>
                 <p>Test de volledige route: van dit formulier naar je controller en weer terug.</p>
                 <form action="/greet#proberen" method="post">
-                    <?= csrf_field($session) ?>
+                    @csrf($session)
                     <label for="name">Je naam</label>
                     <input id="name" name="name" autocomplete="given-name" required minlength="2" maxlength="80"
                         placeholder="Bijvoorbeeld Ada"
-                        value="<?= e($oldName ?? '') ?>"
-                        aria-describedby="name-hint<?= !empty($errors['name']) ? ' name-error' : '' ?>"
-                        <?php if (!empty($errors['name'])): ?>aria-invalid="true"<?php endif; ?>>
+                        value="{{ $oldName ?? '' }}"
+                        aria-describedby="name-hint{{ !empty($errors['name']) ? ' name-error' : '' }}"
+                        @if(!empty($errors['name'])) aria-invalid="true" @endif>
                     <p id="name-hint" class="field-hint">Gebruik 2 tot 80 tekens. Je naam wordt niet opgeslagen.</p>
-                    <?php if (!empty($errors['name'])): ?>
-                        <p id="name-error" class="feedback feedback-error" role="alert"><?= e(implode(' ', $errors['name'])) ?></p>
-                    <?php endif; ?>
+                    @if(!empty($errors['name']))
+                        @component('components.feedback', ['kind' => 'error', 'id' => 'name-error'])
+                            {{ implode(' ', $errors['name']) }}
+                        @endcomponent
+                    @endif
                     <button type="submit">Verstuur je naam <span aria-hidden="true">&rarr;</span></button>
-                    <?php if (!empty($greeting)): ?>
-                        <div class="feedback feedback-success" role="status">
-                            <strong><?= e($greeting) ?></strong>
+                    @if(!empty($greeting))
+                        @component('components.feedback', ['kind' => 'success'])
+                            <strong>{{ $greeting }}</strong>
                             <span>Je request is verwerkt. Het formulier werkt.</span>
-                        </div>
-                    <?php endif; ?>
+                        @endcomponent
+                    @endif
                 </form>
                 <div class="request-details">
                     <span class="method">POST</span><code>/greet</code>
@@ -113,10 +93,4 @@ php breeze mail:fetch 50</code></pre>
                 <div><dt>Windows &amp; Linux</dt><dd>Dezelfde structuur en CLI, op je werkplek en op je server.</dd></div>
             </dl>
         </section>
-    </main>
-    <footer class="site-footer page-width">
-        <span><?= e($name) ?> <span class="footer-divider">/</span> Native PHP. Jouw volgende idee.</span>
-        <a href="/health">Controleer de health-endpoint <span aria-hidden="true">&rarr;</span></a>
-    </footer>
-</body>
-</html>
+@endsection

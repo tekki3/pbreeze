@@ -20,6 +20,8 @@ Gebruik: php breeze <commando> [naam] [--force]
   make:controller Naam       Maak een controller in app/controllers
   make:model Naam            Maak een model in app/models
   make:view map.naam         Maak een PHP-view in app/views
+  make:template map.naam     Maak een gecompileerde Breeze-template
+  view:clear                 Verwijder gecompileerde templates
   make:migration naam        Maak een up/down-migratie
   make:seeder Naam           Maak een seeder
   migrate                    Voer openstaande migraties uit
@@ -55,7 +57,7 @@ TEXT;
             }
         }
         $mailCommands = ['mail:queue', 'mail:list', 'mail:show', 'mail:send', 'mail:work', 'mail:retry', 'mail:fetch'];
-        $allowsName = in_array($command, ['serve', 'make:controller', 'make:model', 'make:view', 'make:migration', 'make:seeder', 'db:seed', ...$mailCommands], true);
+        $allowsName = in_array($command, ['serve', 'make:controller', 'make:model', 'make:view', 'make:template', 'make:migration', 'make:seeder', 'db:seed', ...$mailCommands], true);
         if (count($arguments) > ($allowsName ? 1 : 0)) {
             throw new InvalidArgumentException('Te veel argumenten. Gebruik php breeze help.');
         }
@@ -103,12 +105,16 @@ TEXT;
             case 'make:controller':
             case 'make:model':
             case 'make:view':
+            case 'make:template':
             case 'make:migration':
             case 'make:seeder':
                 if ($name === null) {
                     throw new InvalidArgumentException('Geef een naam op.');
                 }
                 $this->generate($command, $name);
+                break;
+            case 'view:clear':
+                echo 'Gecompileerde templates verwijderd: ' . $this->app->views->clearCache() . "\n";
                 break;
             case 'migrate':
             case 'migrate:rollback':
@@ -149,12 +155,21 @@ TEXT;
     private function generate(string $command, string $name): void
     {
         Filesystem::portableName($name);
-        if ($command === 'make:view') {
+        if ($command === 'make:view' || $command === 'make:template') {
             if (!preg_match('/^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/D', $name)) {
                 throw new InvalidArgumentException('Gebruik een viewnaam zoals berichten.index.');
             }
-            $path = '/app/views/' . str_replace('.', '/', $name) . '.php';
-            $content = <<<'PHP'
+            $base = '/app/views/' . str_replace('.', '/', $name);
+            foreach (['.php', '.breeze.php'] as $extension) {
+                if (file_exists($this->app->root . $base . $extension)) {
+                    throw new RuntimeException("View bestaat al: $name");
+                }
+            }
+            $path = $base . ($command === 'make:template' ? '.breeze.php' : '.php');
+            $content = $command === 'make:template' ? <<<'TEMPLATE'
+<h1>{{ $title ?? 'Nieuwe pagina' }}</h1>
+
+TEMPLATE : <<<'PHP'
 <?php
 declare(strict_types=1);
 ?>
