@@ -1,0 +1,12 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+try {
+    $app = require __DIR__ . '/bootstrap.php';
+    require_once __DIR__ . '/framework/Console.php';
+    exit((new \PBreeze\Console($app))->run(array_slice($argv, 1)));
+} catch (Throwable $error) {
+    fwrite(STDERR, 'Fout: ' . $error->getMessage() . PHP_EOL);
+    exit(1);
+}
