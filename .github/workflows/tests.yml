@@ -23,3 +23,42 @@ jobs:
           tools: none
       - name: Run native tests
         run: php breeze test
+
+  postgresql:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.3', '8.5']
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: pbreeze_test_ci
+          POSTGRES_USER: pbreeze
+          POSTGRES_PASSWORD: local-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pbreeze -d pbreeze_test_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo_pgsql, openssl, intl
+          coverage: none
+          tools: none
+      - name: Run PostgreSQL integration tests
+        run: php tests/pgsql-integration.php
+        env:
+          PGSQL_TEST_DATABASE: pbreeze_test_ci
+          PGSQL_TEST_HOST: 127.0.0.1
+          PGSQL_TEST_PORT: '5432'
+          PGSQL_TEST_USERNAME: pbreeze
+          PGSQL_TEST_PASSWORD: local-ci-only
+          PGSQL_TEST_SSLMODE: disable
+          PGSQL_TEST_ALLOW_DESTRUCTIVE: 'true'

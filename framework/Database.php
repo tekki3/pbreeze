@@ -69,7 +69,7 @@ final class Database
             }
             $dsn = "pgsql:host=$host;port=$port;dbname=$name;sslmode=$sslmode;connect_timeout=15";
             if ($sslrootcert !== '') {
-                $dsn .= ';sslrootcert=' . $sslrootcert;
+                $dsn .= ";sslrootcert='" . str_replace('\\', '\\\\', $sslrootcert) . "'";
             }
             if (!in_array('pgsql', PDO::getAvailableDrivers(), true)) {
                 throw new RuntimeException('PostgreSQL requires the native pdo_pgsql extension and libpq.');

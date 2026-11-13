@@ -71,6 +71,12 @@ try {
     sqlsrvCheck(count($migrator->migrate()) === 4, 'Expected all four migrations.');
     sqlsrvCheck($migrator->migrate() === [], 'Repeated migration must be a no-op.');
     sqlsrvCheck(!in_array(null, $migrator->status(), true), 'Pending migration after migrate.');
+    $bucket = hash('sha256', 'integration-limiter');
+    $db->ensureRateLimit('api_limits', $bucket, time() + 60);
+    $db->execute('UPDATE api_limits SET attempts = 7 WHERE bucket = ?', [$bucket]);
+    $db->ensureRateLimit('api_limits', $bucket, time() + 60);
+    sqlsrvCheck((int) $db->execute('SELECT attempts FROM api_limits WHERE bucket = ?', [$bucket])->fetchColumn() === 7,
+        'Repeated rate-limit initialization reset the attempt count.');
     $seed = require dirname(__DIR__) . '/database/seeders/DatabaseSeeder.php';
     $db->transaction($seed);
     $db->transaction($seed);
@@ -94,6 +100,16 @@ try {
     $note->update(['title' => 'ORM revised']);
     sqlsrvCheck($note->title === 'ORM revised', 'ORM persistence failed.');
     $note->delete();
+    if ($integrationDriver === 'pgsql') {
+        $manual = new class($db) extends Model {
+            protected string $table = 'notes';
+            protected bool $incrementing = false;
+            protected array $fillable = ['id', 'title'];
+        };
+        $manualNote = $manual->create(['id' => 1000000, 'title' => 'Manual key']);
+        sqlsrvCheck((int) $manualNote->key() === 1000000, 'Manual primary key failed.');
+        $manualNote->delete();
+    }
     $before = $db->table('notes')->count();
     try {
         $db->transaction(static function () use ($db): void {
@@ -145,6 +161,17 @@ try {
     $app->mail->store->fail($mailId, new \PBreeze\Mail\DeliveryException('Fixture failure.', false));
     $app->mail->store->retry($mailId);
     sqlsrvCheck($app->mail->store->find($mailId)['status'] === 'queued', 'Mail transitions failed.');
+
+    $incoming = [
+        'source_key' => str_repeat('a', 64), 'uid' => '1', 'uidvalidity' => '1',
+        'mailbox' => 'INBOX', 'raw' => 'Fixture message',
+        'message' => ['from' => 'ada@example.test', 'to' => 'receiver@example.test',
+            'subject' => 'Incoming', 'text' => 'Hello', 'html' => '', 'message_id' => '',
+            'headers' => []],
+    ];
+    $incomingId = $app->mail->store->receive($incoming);
+    sqlsrvCheck($db->transaction(static fn () => $app->mail->store->receive($incoming)) === $incomingId,
+        'Duplicate IMAP import must preserve the row and allow the transaction to commit.');
 
     sqlsrvCheck(count($migrator->rollback()) === 4, 'Rollback did not revert all migrations.');
     sqlsrvCheck(count($migrator->migrate()) === 4, 'Schema could not be migrated after rollback.');

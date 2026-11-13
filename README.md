@@ -48,7 +48,7 @@ formatter described below; this does not translate framework-maintained copy.
 ## Getting Started
 
 Requirements: PHP 8.3+, PDO, `pdo_sqlite` for SQLite, `pdo_mysql` for MySQL,
-or `pdo_sqlsrv` plus Microsoft's ODBC Driver for SQL Server,
+`pdo_pgsql` with libpq for PostgreSQL, or `pdo_sqlsrv` plus Microsoft's ODBC Driver for SQL Server,
 and the standard session, json, and filter extensions. The tests also use
 native process and socket functions. The CLI uses `proc_open` for the
 development server and tests; this function must be available for those tasks.
@@ -88,7 +88,8 @@ executable shebang. Make sure PHP CLI is in `PATH`; check with
 PHP for your web server may use a different configuration file.
 
 On Windows, enable the required extensions in `php.ini`: `pdo_sqlite` for SQLite,
-`pdo_mysql` for MySQL or `pdo_sqlsrv` for SQL Server, and also `openssl` and `iconv` for email.
+`pdo_mysql` for MySQL, `pdo_pgsql` for PostgreSQL, or `pdo_sqlsrv` for SQL Server,
+and also `openssl` and `iconv` for email.
 Enable `zip` for Excel/Word creation and `dom` for the document tests.
 Enable `intl` for localized date/time and number formatting.
 Enable `fileinfo` for upload validation.
@@ -107,7 +108,7 @@ DB_DATABASE="C:/Data/PBreeze/app.sqlite"
 Backslashes are also allowed and are not treated as `.env` escapes.
 Do not use drive-relative paths such as `C:app.sqlite`. UNC paths are
 recognized as absolute, but use local storage for SQLite: SMB/NFS file locking
-is not a substitute for a database server. Use MySQL or SQL Server for shared databases.
+is not a substitute for a database server. Use MySQL, PostgreSQL, or SQL Server for shared databases.
 
 The CLI starts PHP without a shell, so spaces, percent signs, and other
 shell characters in project paths are preserved. Generators reject Windows
@@ -1576,6 +1577,108 @@ $recent = $notes->latest(20);
 
 Direct PDO remains available alongside the optional ORM.
 
+## PostgreSQL
+
+PostgreSQL is supported through the native `pdo_pgsql` PHP extension and libpq
+on Windows and Linux, without Composer. Enable the extension in both CLI and
+web PHP. The shipped PostgreSQL schema uses identity columns; use a maintained
+PostgreSQL release. CI is configured to exercise PostgreSQL 16.
+
+Create a UTF-8 database and a dedicated login yourself. Use a least-privilege
+application role; migrations also need schema creation/drop permissions.
+Keep the same trusted `search_path` for CLI and web connections, normally
+`public`. Do not allow untrusted users to create objects in that schema.
+Update the existing `.env` entries rather than adding duplicate keys:
+
+```dotenv
+DB_CONNECTION=pgsql
+DB_HOST=postgres.example.test
+DB_PORT=5432
+DB_DATABASE=pbreeze
+DB_USERNAME=pbreeze
+DB_PASSWORD="your own password"
+DB_SSLMODE=verify-full
+DB_SSLROOTCERT=/path/to/trusted-root.crt
+```
+
+`DB_SSLROOTCERT` is optional: empty uses libpq's default root-certificate lookup.
+On Windows, use forward-slash paths such as `C:/certificates/root.crt`.
+The default `verify-full` mode requires TLS, a trusted certificate chain, and a
+certificate matching `DB_HOST`. Supported modes are `disable`, `allow`, `prefer`,
+`require`, `verify-ca`, and `verify-full`. Prefer `verify-full` in production.
+For an isolated localhost server without TLS only, explicitly use
+`DB_SSLMODE=disable`; do not weaken production TLS to fix a certificate problem.
+SQL Server's `DB_ENCRYPT`/`DB_TRUST_SERVER_CERTIFICATE` settings do not affect PostgreSQL.
+
+Connections use TCP with a hostname or IPv4 address, not Unix socket paths or
+arbitrary DSN fragments. Set `DB_PORT=5432`: the example file explicitly uses
+3306 for MySQL. If the variable is entirely absent, the configured driver
+selects the appropriate default. Connection setup has a 15-second timeout,
+UTF-8 client encoding, and UTC session time zone. Database names accepted by
+this configuration are 1..63 ASCII letters, digits, underscores, dots, or
+hyphens, beginning with a letter, digit, or underscore.
+
+```sh
+php breeze migrate
+php breeze migrate:status
+php breeze db:seed
+```
+
+The migration runner uses same-named overrides in `database/migrations/pgsql/`
+for the four shipped migrations. Existing top-level migration files and their
+history names are unchanged. Custom migrations must still have a top-level
+file; optionally supply a same-named PostgreSQL override or write driver-aware
+SQL. Do not edit applied migrations. Switching drivers does not transfer data.
+
+PostgreSQL migrations and bookkeeping run transactionally. A database-scoped
+session advisory lock prevents overlapping PBreeze migration processes,
+in addition to the local file lock. Operations PostgreSQL prohibits inside a
+transaction (for example `CREATE INDEX CONCURRENTLY`) cannot be used in normal
+migrations; plan those separately with appropriate operational safeguards.
+
+The query builder uses double-quoted simple identifiers, `LIMIT/OFFSET`, bound
+values, and `INSERT ... RETURNING` for generated keys. Custom incrementing and
+nonincrementing ORM keys work through the same APIs as the other databases.
+Use explicit stable ordering for pagination.
+
+```php
+$id = $app->db->table('notes')->insert(['title' => 'A PostgreSQL note']);
+$note = $app->db->table('notes')->findOrFail($id);
+$page = $app->db->table('notes')->orderBy('id')->paginate(20, 1);
+```
+
+Raw SQL passed to PDO or `execute()` is not translated. Use PostgreSQL SQL in
+custom migrations, seeders, and queries. Registration and IMAP deduplication
+use `ON CONFLICT` so expected duplicates do not abort surrounding transactions.
+PostgreSQL text cannot contain NUL bytes; encode binary application data or use
+an application-specific `bytea` binding path rather than storing it as text.
+
+### PostgreSQL Validation
+
+The native suite includes recording-PDO PostgreSQL dialect tests. A separate
+live integration test checks schema/rollback, seeds, Unicode CRUD, ORM,
+pagination, transactions, duplicate registration, verification/password reset,
+API tokens, rate limits, email queue transitions, and duplicate IMAP imports
+without sending SMTP.
+
+Provision an **empty, disposable** database named `pbreeze_test_*`, then set
+these process environment variables in PowerShell, your Linux shell, or CI:
+`PGSQL_TEST_DATABASE`, `PGSQL_TEST_HOST`, `PGSQL_TEST_PORT` (default 5432),
+`PGSQL_TEST_USERNAME`, `PGSQL_TEST_PASSWORD`, and
+`PGSQL_TEST_ALLOW_DESTRUCTIVE=true`. Optional `PGSQL_TEST_SSLMODE` defaults to
+`verify-full`; `PGSQL_TEST_SSLROOTCERT` supplies a CA file. Use `disable` only
+for an isolated local non-TLS test server. These variables are not read from `.env`.
+
+```sh
+php tests/pgsql-integration.php
+```
+
+The script refuses a nonempty database or a name outside `pbreeze_test_*`.
+It creates and removes framework tables. CI has a dedicated PostgreSQL 16
+service job on Ubuntu with PHP 8.3/8.5; its local isolated connection disables
+TLS explicitly. A configured CI job is not proof of a successful run:
+validate your actual PostgreSQL/PHP/libpq/OS combination before deployment.
+
 ## Microsoft SQL Server
 
 SQL Server 2012+ syntax is supported through Microsoft's native **PDO_SQLSRV**
@@ -1699,7 +1802,7 @@ The ORM consists of `framework/Query.php` and `framework/Model.php`, explicitly
 loaded in the bootstrap. Each query and model receives the existing
 `Database` instance. There are no packages, autoloading, global connections,
 schema inspection, or automatic migrations. The SQL is designed for SQLite,
-MySQL, and SQL Server; the existing cross-platform PDO configuration remains authoritative.
+MySQL, SQL Server, and PostgreSQL; the existing cross-platform PDO configuration remains authoritative.
 
 ### Table Queries: Arrays
 
@@ -2130,14 +2233,14 @@ Files are sorted by timestamp. Each run forms a batch;
 rollback reverses **the entire last batch**.
 Do not modify or delete applied migrations; create a new migration.
 
-SQLite and SQL Server run each migration and its registration in a single transaction.
+SQLite, SQL Server, and PostgreSQL run each migration and its registration in a single transaction.
 MySQL DDL causes implicit commits: a failed migration may already be
 partially applied. Back up before changes and deliberately recover a
 partial migration before running again. Write driver-dependent
 SQL where needed; the example migration demonstrates this.
 
 A local file lock prevents concurrent migrations from the same
-project directory. MySQL and SQL Server also use a database-wide advisory lock between
+project directory. MySQL, SQL Server, and PostgreSQL also use a database-wide advisory lock between
 PBreeze processes. Use SQLite on a single host with local storage.
 
 Seeders return a `Closure(PDO $db): void` and run in a transaction.
@@ -2458,3 +2561,5 @@ MySQL also requires a separate integration run on a disposable database;
 the included suite does not validate the MySQL connection against a live server.
 SQL Server has recording-PDO dialect tests and a separate, explicitly enabled
 live integration script described in its chapter.
+PostgreSQL likewise has recording-PDO tests, an opt-in live test script, and a
+dedicated CI service job described above.

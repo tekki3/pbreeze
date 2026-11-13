@@ -18,7 +18,7 @@ $commands = [
     'view:clear' => ['Remove recognized compiled Breeze cache files and print the count. Source views remain untouched; subsequent renders compile again.', 'php breeze view:clear'],
     'make:migration' => ['Create a timestamped migration with up/down methods. Fill in driver-appropriate schema SQL before migrating; generation itself does not connect or change schema.', 'php breeze make:migration create_articles'],
     'make:seeder' => ['Create a seeder under database/seeders. Write repeatable inserts/updates deliberately. Seeders are executable trusted PHP, not validated user input.', 'php breeze make:seeder ArticleSeeder'],
-    'migrate' => ['Apply pending migrations in order and print applied names. Production requires --force after a backup. SQLite/SQL Server DDL is transactional; MySQL DDL may not roll back.', 'php breeze migrate'],
+    'migrate' => ['Apply pending migrations in order and print applied names. Production requires --force after a backup. SQLite/SQL Server/PostgreSQL DDL is transactional; MySQL DDL may not roll back.', 'php breeze migrate'],
     'migrate:status' => ['Print OPEN or BATCH numbers for discovered migrations, helping distinguish pending/applied schema work. Missing applied migration files are treated as errors.', 'php breeze migrate:status'],
     'migrate:rollback' => ['Run down() for only the latest batch in reverse order. May destroy data; production requires --force. Rollback is not a substitute for a backup.', 'php breeze migrate:rollback'],
     'db:seed' => ['Run the named seeder, or DatabaseSeeder when omitted. Production requires --force. Review the seeder first because it can change/delete data.', 'php breeze db:seed ArticleSeeder'],
@@ -51,14 +51,16 @@ $environment = [
     'LOG_LEVEL' => 'Minimum lowercase severity: debug, info, notice, warning, error, critical, alert, emergency. Default debug. Higher thresholds may filter automatic error entries.',
     'UPLOAD_MAX_BYTES' => 'Positive integer per-file default for the Uploads service, default 2097152 (2 MiB). Does not change PHP or proxy request limits; handlers can override.',
     'API_DOCS_ENABLED' => 'Optional boolean override. Without it, HTTP Swagger/OpenAPI is enabled in local/testing and disabled in production. Static vendored assets remain public.',
-    'DB_CONNECTION' => 'sqlite, mysql, or sqlsrv. SQL Server requires native PDO_SQLSRV and the Microsoft ODBC Driver. Live server deployments require separate integration verification.',
-    'DB_DATABASE' => 'SQLite file path relative to project root, absolute local path, or :memory:. For MySQL/SQL Server, an existing database name. SQLite should not use SMB/NFS shared storage.',
-    'DB_HOST' => 'MySQL/SQL Server hostname or IPv4 address, default 127.0.0.1. Not used for SQLite. SQL Server uses a separate TCP port, not a named instance suffix.',
-    'DB_PORT' => 'Server TCP port 1..65535. Example: 3306 for MySQL; change to 1433 for SQL Server. When entirely omitted, defaults to 1433 for sqlsrv, otherwise 3306.',
+    'DB_CONNECTION' => 'sqlite, mysql, sqlsrv, or pgsql. PostgreSQL requires native pdo_pgsql/libpq; SQL Server requires PDO_SQLSRV and the Microsoft ODBC Driver. Live deployments need integration verification.',
+    'DB_DATABASE' => 'SQLite file path relative to project root, absolute local path, or :memory:. For server drivers, an existing database name. PostgreSQL names here are 1..63 ASCII letters/digits/underscore/dot/hyphen, starting with a letter, digit, or underscore. SQLite should not use SMB/NFS shared storage.',
+    'DB_HOST' => 'Server hostname or IPv4 address, default 127.0.0.1. Not used for SQLite. SQL Server/PostgreSQL use a separate TCP port, not named instances or Unix socket paths.',
+    'DB_PORT' => 'Server TCP port 1..65535. Example: 3306 for MySQL; set 1433 for SQL Server or 5432 for PostgreSQL. When entirely absent, defaults follow the selected driver.',
     'DB_USERNAME' => 'Database login, root in the MySQL-oriented example. Set an appropriate SQL authentication login for SQL Server. Use least privilege in production.',
     'DB_PASSWORD' => 'Secret database password. Empty in the example, not a production recommendation.',
     'DB_ENCRYPT' => 'SQL Server only: true or false, default true. Encrypts the database connection. Keep true in production.',
     'DB_TRUST_SERVER_CERTIFICATE' => 'SQL Server only: true bypasses certificate verification, default false. Keep false in production and configure trusted certificates.',
+    'DB_SSLMODE' => 'PostgreSQL only: disable, allow, prefer, require, verify-ca, or verify-full. Default verify-full requires TLS and a trusted certificate matching DB_HOST. disable is for isolated non-TLS development only.',
+    'DB_SSLROOTCERT' => 'PostgreSQL only: optional readable local CA certificate file. Empty leaves root-certificate lookup to libpq. Use forward slashes on Windows; DSN delimiters are rejected.',
     'SESSION_SECURE_COOKIE' => 'Boolean Secure-cookie flag, false locally. Set true behind a properly configured HTTPS proxy; this does not encrypt an HTTP connection by itself.',
     'MAIL_LOG' => 'Boolean immediate-send logging/IMAP-import control, default true. Explicit queue() and auth mail always use the database queue.',
     'MAIL_FROM' => 'Default ASCII sender without a display name. Replace example.test with a valid authorized sender before real delivery.',
@@ -274,7 +276,7 @@ JSON, 'json') ?>
 <dt>415 on the API</dt><dd>Send an application/json object, not form data or multipart uploads. Use normal web routes for native file uploads/downloads.</dd>
 <dt>429 Too many requests</dt><dd>Honor Retry-After. Direct REMOTE_ADDR is used; clients behind a reverse proxy may share its IP. Do not disable rate limits to hide an upstream configuration issue.</dd>
 <dt>Unexpected 500</dt><dd>Inspect private storage/logs and PHP server logs. Automatic exception entries record safe source location/class, not messages or arguments. Verify required extensions, permissions, environment validation, and schema status.</dd>
-<dt>Missing extension</dt><dd>Use php -m for CLI, and inspect the web PHP configuration separately. Enable the selected native PDO driver (SQLite, MySQL, or SQL Server), OpenSSL, iconv, mbstring as needed, Intl, zip, DOM, and fileinfo for the features/tests described. SQL Server also requires the Microsoft ODBC Driver. Do not install Composer packages as substitutes.</dd>
+<dt>Missing extension</dt><dd>Use php -m for CLI, and inspect the web PHP configuration separately. Enable the selected native PDO driver (SQLite, MySQL, SQL Server, or PostgreSQL), OpenSSL, iconv, mbstring as needed, Intl, zip, DOM, and fileinfo for the features/tests described. SQL Server also requires the Microsoft ODBC Driver; PostgreSQL uses libpq. Do not install Composer packages as substitutes.</dd>
 <dt>Email stays queued</dt><dd>Configure SMTP and run mail:work. Registration/reset queue mail rather than sending it inline. Check delivery status; uncertain/sending recovery can duplicate messages.</dd>
 <dt>Verification link points to localhost</dt><dd>Set APP_URL to the trusted public HTTPS base URL before creating new links. Existing queued messages retain their original content.</dd>
 <dt>Encrypted content will not decrypt</dt><dd>Check the exact APP_KEY and authenticated context. Never generate a replacement key to fix unreadable existing data. Restore the original key from secure backup or perform a planned migration.</dd>
@@ -291,7 +293,7 @@ JSON, 'json') ?>
 <li>Set upload/request/time/disk/user quotas; consider quarantine and malware scanning. MIME checks do not prove a document harmless.</li>
 <li>Configure SMTP/IMAP certificate trust and schedule bounded queue workers without overlapping unsafe recovery tasks.</li>
 <li>Keep public API docs disabled unless intentionally needed; do not enable credential persistence in Swagger.</li>
-<li>Run the native suite and separate deployment-specific Windows/MySQL/SQL Server checks where applicable. A CI configuration is not evidence that a specific deployment was tested.</li>
+<li>Run the native suite and separate deployment-specific Windows/MySQL/SQL Server/PostgreSQL checks where applicable. A CI configuration is not evidence that a specific deployment was tested.</li>
 </ul>
 <h3>Maintain this manual</h3>
 <?= code("php docs/build.php\nphp docs/build.php --check", 'sh') ?>
