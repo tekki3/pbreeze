@@ -222,6 +222,7 @@ $navigationGroups = [
         'guide-detailed-installation-guide' => 'Installation',
         'guide-your-first-page' => 'Your first page',
         'tutorial' => 'Build your first feature',
+        'guide-comparison-with-laravel-and-codeigniter' => 'Compare frameworks',
     ],
     'Build your application' => [],
     'Deploy and maintain' => [],

@@ -188,6 +188,122 @@ You have connected a **route** to a **view** and passed it data. Next, use
 **Build your first feature** in the [HTML manual](docs/index.html) to move
 request handling into a controller and save form data.
 
+## Comparison with Laravel and CodeIgniter
+
+There is no best framework for every application. PBreeze prioritizes
+explicit native PHP code without Composer; Laravel offers a broad integrated
+framework and package ecosystem; CodeIgniter offers a modular MVC framework
+with both manual and Composer installation options.
+
+**Scope and review date:** November 13, 2026. This compares the PBreeze
+source shipped with this manual, **Laravel 13.x**, and **CodeIgniter 4**
+using the official documentation linked below. CodeIgniter's online guide
+tracks its current release rather than a fixed patch version. Check the
+requirements of the exact release and packages you install.
+“Included” and “available through an additional package” are distinguished;
+neither means that a production application needs no configuration.
+
+### Setup and everyday development
+
+| Area | PBreeze | Laravel 13.x | CodeIgniter 4 |
+|---|---|---|---|
+| PHP requirement | PHP 8.3+; extensions depend on the features used | PHP 8.3+ and documented required extensions | PHP 8.2+ in the current guide; PHP 8.5 requires CodeIgniter 4.7.0+ |
+| Installation | Copy/clone the source, configure `.env`, and run the native CLI; no Composer | Standard installation uses Composer and the Laravel installer or project creation workflow | Composer installation or an officially documented manual ZIP installation |
+| Class loading | Explicit `require_once` and registration; no autoloader | Composer-based autoloading and framework conventions | Built-in PSR-4 autoloader, with optional Composer integration |
+| Frontend tooling | Local CSS/JS and server-rendered views; no Node build required | Documented frontend workflow uses Vite with Node/npm or Bun; a PHP-only API does not inherently need an asset build | PHP views do not inherently need a Node build; frontend tooling is the application's choice |
+| CLI | `php breeze`: generators, migrations, seeds, diagnostics, mail tasks, and explicitly registered custom commands | `php artisan`: framework commands, generators, migrations, queue workers, and custom commands | `php spark`: framework commands, generators, migrations, and custom commands |
+| Templates | Plain PHP or compiled Breeze templates, with escaped `{{ ... }}` output | Blade templates, with directives, layouts, and components | PHP views and an optional View Parser |
+| Data access | PDO query builder plus optional models, casts, and explicit relationships; SQLite, MySQL, PostgreSQL, SQL Server | Query builder and Eloquent ORM, including relationships, scopes, events, and soft deletes | Query Builder, table-oriented Model classes, and entities; not the same relationship-oriented model API as Eloquent |
+
+Composer is a PHP dependency manager; PSR-4 is a convention for finding
+classes automatically. Avoiding them reduces PBreeze's installation
+tooling, but means you load files yourself and cannot assume Composer
+packages will work without adaptation. Conversely, autoloading and package
+management can reduce repetitive wiring as an application grows.
+CodeIgniter's manual installation does **not** disable its autoloader.
+Breeze templates are a PBreeze feature, not Laravel's similarly named
+authentication scaffolding.
+
+### Application features and operations
+
+| Area | PBreeze | Laravel 13.x | CodeIgniter 4 |
+|---|---|---|---|
+| Authentication | Included registration/login, verification, password reset, and database-backed bearer tokens; application-specific roles and record ownership remain your responsibility | Core authentication facilities; starter kits provide ready-made UI flows, with additional first-party packages for other authentication needs | Official Shield package provides authentication and authorization, including access tokens, roles, and permissions; it is separate from the core |
+| Sessions | Native PHP storage or opt-in database sessions; Redis/Memcached cache support does not add session drivers | Includes file, database, cookie, Redis, Memcached, DynamoDB, and nonpersistent array drivers, subject to prerequisites | Includes file, database, Redis, and Memcached session handlers, subject to driver prerequisites |
+| Shared cache | Native Redis or Memcached extensions; intentionally limited cache API | Multiple cache backends and a broader framework cache API | Built-in cache component with multiple handlers, including file, Redis, and Memcached |
+| Background work | Database-backed outgoing-email queue and bounded CLI mail worker; no general-purpose job queue or built-in task scheduler | General-purpose job queues, workers, retries, job chaining/batching, and task scheduling | General-purpose Queue and Tasks scheduler are available as separate official packages |
+| Extension model | Edit explicit PHP services and registries; third-party PHP packages are not part of the framework's dependency model | Composer packages, first-party integrations, and framework extension points | Framework libraries/modules, Composer integration, and optional official packages |
+| Deployment scope | Supplied domain-root templates for Apache, Nginx, FrankenPHP standard mode, and IIS; not subdirectory hosting or persistent FrankenPHP workers | Public-directory deployments; official documentation includes Nginx and FrankenPHP, with additional deployment tooling available | Public-directory application structure; configure the chosen supported PHP/web-server environment |
+| Release and maintenance planning | No release version or formal support window is currently declared; assess maintenance capacity before adopting | Published versioning and support policy: framework bug fixes for 18 months and security fixes for two years | Current requirements guide states that only the latest framework version is maintained; review upgrade notes and package compatibility |
+
+The PBreeze deployment templates are not a certification of every server
+configuration. Apache, Nginx, and FrankenPHP have been exercised in the
+project's Linux integration work; live IIS validation was not performed in
+that environment. Test your actual operating system, PHP build, database,
+and server configuration before deployment.
+
+### Which should you choose?
+
+- **Consider PBreeze** when avoiding Composer and implicit class loading
+  is an explicit requirement, or when you want to follow a request through
+  directly loaded PHP files. Accept the narrower integration model and
+  responsibility for assessing maintenance and production requirements.
+- **Consider Laravel** when you need Eloquent's broader data model,
+  general-purpose background jobs, first-party integrations, or a
+  package-oriented workflow. Budget learning time for its conventions,
+  service container, and the particular packages your application uses.
+- **Consider CodeIgniter** when you want an MVC framework with a supported
+  manual-install option and PSR-4 class loading, adding official packages
+  such as Shield, Queue, or Tasks as needed.
+
+These are fit recommendations, not measured learning-difficulty rankings.
+A beginner may prefer explicit wiring, or may learn faster with conventions
+and existing tutorials. Build the same small feature in each candidate
+before committing: include validation, login, a database change, tests,
+and deployment, rather than comparing only a “Hello world” page.
+
+**No performance or security winner is claimed.** This project has not
+published a reproducible cross-framework benchmark, independent comparative
+security audit, or equivalent production load test. Fewer dependencies do
+not automatically mean greater security; more features do not automatically
+mean slower applications. All three still require supported runtimes,
+updates, correct authorization, secure configuration, and operational care.
+Package availability also does not establish community size, support quality,
+or a service-level guarantee.
+
+### Official sources and how to verify the comparison
+
+PBreeze's entries describe this repository; follow the
+[installation](#detailed-installation-guide),
+[sessions](#sessions-and-csrf), [ORM](#native-orm-and-query-builder),
+[mail](#email-smtp-imap-and-database-queue), and
+[production boundaries](#production-and-security-boundaries) chapters
+for implementation details and limitations.
+
+- Laravel: [installation](https://laravel.com/docs/13.x/installation),
+  [PHP requirements and deployment](https://laravel.com/docs/13.x/deployment),
+  [Blade](https://laravel.com/docs/13.x/blade),
+  [Eloquent](https://laravel.com/docs/13.x/eloquent),
+  [authentication](https://laravel.com/docs/13.x/authentication),
+  [sessions](https://laravel.com/docs/13.x/session),
+  [cache](https://laravel.com/docs/13.x/cache),
+  [queues](https://laravel.com/docs/13.x/queues),
+  [scheduling](https://laravel.com/docs/13.x/scheduling), and
+  [release/support policy](https://laravel.com/docs/13.x/releases).
+- CodeIgniter: [requirements](https://codeigniter.com/user_guide/intro/requirements.html),
+  [manual installation](https://codeigniter.com/user_guide/installation/installing_manual.html),
+  [autoloading](https://codeigniter.com/user_guide/concepts/autoloader.html),
+  [Spark commands](https://codeigniter.com/user_guide/cli/spark_commands.html),
+  [models](https://codeigniter.com/user_guide/models/model.html),
+  [View Parser](https://codeigniter.com/user_guide/outgoing/view_parser.html),
+  [sessions](https://codeigniter.com/user_guide/libraries/sessions.html),
+  [cache](https://codeigniter.com/user_guide/libraries/caching.html), and
+  [official packages, including Shield, Queue, and Tasks](https://codeigniter.com/user_guide/libraries/official_packages.html).
+
+External sources need an internet connection; the comparison itself remains
+available in the offline manual. Recheck these sources when upgrading
+instead of treating this dated comparison as a permanent feature matrix.
+
 ## License
 
 PBreeze is licensed under the [MIT License](LICENSE).
