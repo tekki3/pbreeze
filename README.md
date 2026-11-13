@@ -20,6 +20,8 @@ Creates PDF, Excel (`.xlsx`), Word (`.docx`), JSON, CSV, and XML files through
 a native PHP API, with local saving and HTTP downloads.
 Provides localized date/time, money, decimal, and percentage formatting through
 native Intl, with exact decimal-string rounding.
+Supports validated multipart uploads with explicit allowed types, a 2 MiB
+default file limit, random storage keys, and private storage.
 
 ## Language Convention
 
@@ -47,6 +49,8 @@ Encryption requires the native `openssl` extension with AES-256-GCM support.
 Excel and Word creation require the native `zip` extension; PDF creation
 requires `iconv`. The document tests also use the native `dom` extension.
 Localized formatting requires the native `intl` extension and its ICU data.
+Upload validation requires native `fileinfo`; DOCX/XLSX upload checks also
+require native `zip`. PHP file uploads must be enabled.
 No package installation is required.
 
 ```sh
@@ -80,6 +84,7 @@ On Windows, enable the required extensions in `php.ini`: `pdo_sqlite` for SQLite
 `pdo_mysql` for MySQL, and also `openssl` and `iconv` for email.
 Enable `zip` for Excel/Word creation and `dom` for the document tests.
 Enable `intl` for localized date/time and number formatting.
+Enable `fileinfo` for upload validation.
 Use the correct DLLs for your PHP distribution. OpenSSL requires a valid
 CA bundle; set `openssl.cafile` if needed or use the separate
 `SMTP_CA_FILE`/`IMAP_CA_FILE` settings. Do not disable certificate verification.
@@ -199,8 +204,9 @@ There is no automatic OPTIONS/CORS or method-override support.
 
 Read form and JSON input with `$request->input('name')`, all body fields
 with `$request->all()`, and query parameters separately with `$request->query('page')`.
-JSON must be an object; invalid JSON returns 400. File uploads and other
-body formats do not yet have a framework API.
+JSON must be an object; invalid JSON returns 400. On web routes, read multipart
+uploads separately with `$request->file('document')` or
+`$request->files('documents')`. Uploaded files are not included in `all()`.
 
 ```php
 return new \PBreeze\Response($this->app->views->render('messages.index', [
@@ -212,6 +218,226 @@ return \PBreeze\Response::redirect('/berichten');
 ```
 
 Redirects accept only local paths that start with a single `/`.
+
+## File Uploads
+
+Web routes accept native PHP `multipart/form-data` uploads through `Request`.
+Use an explicit list of allowed filename extensions for each upload handler.
+There is deliberately no allow-all default. The default per-file size limit
+is **2 MiB (2,097,152 bytes)**.
+
+Configure the application default in `.env`:
+
+```dotenv
+UPLOAD_MAX_BYTES=2097152
+```
+
+This must be a positive integer number of bytes. It configures
+`$app->uploads->maxBytes` through `upload_max_bytes` in the application config.
+It does not change PHP's `upload_max_filesize` or `post_max_size`.
+
+Supported types are `jpg`, `jpeg`, `png`, `gif`, `webp`, `pdf`, `txt`, `csv`,
+`docx`, and `xlsx`. Use lowercase extensions without a dot. Uploaded extension
+matching is case-insensitive. PHP/script files, HTML, SVG, arbitrary ZIP
+archives, and legacy `.doc`/`.xls` files are not supported.
+
+### Receiving and Storing a File
+
+Register a protected web route in `routes/web.php`:
+
+```php
+use PBreeze\HttpException;
+use PBreeze\Request;
+use PBreeze\Response;
+
+$router->post('/documents', $app->auth->protect(
+    static function (Request $request) use ($app): Response {
+        $file = $request->file('document');
+        if ($file === null) {
+            throw new HttpException(422, 'Choose a document to upload.');
+        }
+        $stored = $app->uploads->store(
+            $file,
+            allowedTypes: ['pdf', 'docx', 'xlsx'],
+        );
+
+        // Persist these values with the current user's ID in your own model.
+        // Delete the stored upload if your database write subsequently fails.
+        return Response::json([
+            'key' => $stored->key,
+            'name' => $stored->originalName,
+            'mime' => $stored->mimeType,
+            'size' => $stored->size,
+        ], 201);
+    },
+));
+```
+
+In a Breeze template, submit a multipart form with the normal CSRF field:
+
+```html
+<form action="/documents" method="post" enctype="multipart/form-data">
+    @csrf
+    <label for="document">Document</label>
+    <input id="document" name="document" type="file" accept=".pdf,.docx,.xlsx" required>
+    <button type="submit">Upload document</button>
+</form>
+```
+
+The browser's `accept` attribute is only a selection hint, not validation.
+JavaScript clients may send the CSRF token in `X-CSRF-Token`; let the browser
+set the multipart boundary when using `FormData`.
+
+`file()` returns an `UploadedFile` or null for a missing field/no file
+selection. If more than one file is supplied to a single-file accessor,
+it throws HTTP 400. `files()` always returns a list; missing selections
+are omitted. One-dimensional `documents[]` and keyed file lists are supported;
+deeper nested upload fields are rejected with HTTP 400.
+Nonempty PHP upload failures remain accessible and are reported by validation.
+
+The uploaded object exposes `originalName`, `clientMediaType`, and PHP's
+`error` code. Client path components are removed from the original name;
+the remaining UTF-8 name must contain 1 to 255 bytes without control characters.
+Treat this name as display metadata and escape it in HTML. The client media
+type is explicitly untrusted and is never used to approve or serve a file.
+
+`store()` validates before writing. It returns a `StoredUpload` with read-only
+`key`, `originalName`, `mimeType`, and actual byte `size` properties.
+It uses `is_uploaded_file()` and `move_uploaded_file()`: arbitrary local
+server files and CLI-created temporary files cannot be passed off as uploads.
+Each file receives a cryptographically random 64-hex-character key plus
+its validated extension. Files are stored as
+`storage/uploads/<random-id>/file.<extension>`, never under the client's name,
+so equal original names cannot overwrite one another.
+
+Storage directories are created on demand with `0700` permissions and files
+receive `0600` on Linux. On Windows, restrict inherited NTFS ACLs to the
+administrator and PHP service user. The storage location is outside `public/`;
+symlinked storage directories and symlinked stored files are rejected.
+Upload contents are ignored by the existing `storage/` Git ignore rule.
+
+There is no automatic attachment database table or ownership model. Persist
+the storage key, display name, size, media type, and owner as your application
+requires. Keys locate files; they are **not authorization credentials**.
+No public upload/download routes are installed by this feature.
+
+### Multiple Files and Custom Limits
+
+```php
+$files = $request->files('documents');
+if ($files === [] || count($files) > 5) {
+    throw new \PBreeze\HttpException(422, 'Choose between one and five files.');
+}
+
+// Check every file before starting a batch write.
+foreach ($files as $file) {
+    $metadata = $app->uploads->validate($file, ['jpg', 'jpeg', 'png'], maxBytes: 524288);
+}
+foreach ($files as $file) {
+    $stored = $app->uploads->store($file, ['jpg', 'jpeg', 'png'], maxBytes: 524288);
+    // Persist each file and its owner.
+}
+```
+
+Use an input with `name="documents[]"` and the `multiple` attribute.
+`$app->uploads->validate($file, $allowedTypes)` performs the same checks as
+`store()` without moving the file, using the configured default,
+returning `extension`, canonical `mime`, and actual byte `size`. The optional
+positive integer `maxBytes` overrides the configured per-file default; it does not
+raise PHP or web-server limits. Empty files are rejected.
+Calling `$file->validate()` directly is standalone validation and retains a
+2 MiB default unless you explicitly pass `maxBytes`; use the application
+service for environment-aware validation.
+
+Batches are not filesystem/database transactions. Prevalidating a batch
+avoids starting writes for an already-invalid file, but disk or database
+failures can still occur later. Track successful keys and clean them up if
+the operation must be all-or-nothing. Enforce application-specific file-count,
+combined-byte, user-quota, and rate limits.
+
+### Protected Downloads and Deletion
+
+After authenticating a user and loading an attachment record belonging
+to that user, return:
+
+```php
+return $app->uploads->download($attachment['storage_key'], $attachment['original_name']);
+```
+
+Register the download action with `$app->auth->protect(...)` and perform the
+ownership/record authorization check **before** calling `download()`.
+Never authorize access just because someone knows a random storage key.
+`download()` itself is a storage operation, not an authorization service.
+Its optional filename defaults to `download.<extension>`; the original name
+must come from your persisted metadata if you want to restore it.
+
+Downloads reuse the normal attachment response: canonical media type,
+UTF-8-safe filename headers, correct byte length, `nosniff`, and `no-store`.
+HEAD requests omit the response body. Invalid keys, missing files, and
+symlinked file targets produce HTTP 404. Files are read into memory to build
+the response; bound upload limits accordingly.
+
+After the same authentication and ownership checks, a CSRF-protected POST or
+DELETE handler may call:
+
+```php
+$app->uploads->delete($attachment['storage_key']);
+```
+
+This removes only that stored file and its random directory. Coordinate
+deletion of your database metadata explicitly; deleting an attachment record
+does not automatically delete the file, and deleting a file does not update
+your database.
+
+### Validation and Deployment Limits
+
+- Validation checks the real temporary file size, allowed extension, and
+  server-detected media type using native `fileinfo`, not client-provided
+  size/type claims.
+- Images also undergo a native header/dimension check. This is not a full
+  image decode, re-encoding service, or pixel-count limit; add application
+  image-dimension limits before further processing untrusted images.
+- DOCX/XLSX files must be ZIP packages containing the matching main document,
+  content-type, and relationship entries. Checks reject macro-named entries,
+  encrypted entries, unsafe archive paths, more than 1,000 entries, entries
+  larger than 10 MiB, or a combined declared expansion larger than 20 MiB.
+  Archives are not extracted. These are bounded package-shape checks, not
+  complete Office schema validation or a guarantee of harmless content.
+- MIME/header checks are **not malware scanning** or content sanitization.
+  PDFs and Office documents may contain active content or external links.
+  Uploaded CSV files may contain spreadsheet formulas; validation does not
+  rewrite their contents.
+  Add quarantine/scanning if your deployment requires it. Do not execute,
+  include, extract, or render uploaded content inline simply because it passed
+  validation.
+- `file_uploads` must be enabled. Configure a writable PHP `upload_tmp_dir`
+  and writable private storage. Enable native `fileinfo`; Office checks
+  additionally need `zip`.
+- PHP's `upload_max_filesize` must accommodate the per-file limit;
+  `post_max_size` must accommodate all files, form fields, and multipart
+  overhead. For a single 2 MiB file, a typical starting point is
+  `upload_max_filesize=2M` and `post_max_size=8M`. Configure these in the PHP
+  configuration used by your actual web server.
+- PHP's `max_file_uploads`, `max_input_vars`, and `max_input_nesting_level`
+  can limit parsed fields. PHP may omit files/fields beyond its parsing limits;
+  handlers must check required fields and expected file counts.
+- Web-server/reverse-proxy body-size limits also apply. Raising framework
+  `maxBytes` cannot bypass them.
+
+The request layer returns HTTP 413 when a POST exceeds PHP's configured
+`post_max_size`, rather than treating PHP's discarded body as an empty form.
+Per-file PHP size failures and framework size failures also return 413;
+partial files, disallowed types, invalid images/packages, empty files, and
+untrusted local-file sources return 422. Malformed file-field structures return
+400. Server receive/storage failures throw and use the standard logged,
+generic HTTP 500 response. Application-required file errors should be
+explicitly reported by the handler, as in the example above.
+
+Multipart support is for normal POST web routes, preserving session/CSRF
+behavior. The separate `/api/*` router remains JSON-only and rejects multipart
+bodies with HTTP 415 (or 413 when its request-size limit is exceeded).
+Native PHP does not populate this API for raw PUT/PATCH uploads, chunked
+upload protocols, remote URLs, or base64 JSON file payloads.
 
 ## Date, Time, Money, and Decimal Formatting
 

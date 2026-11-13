@@ -7,6 +7,12 @@ $environment = Env::get('APP_ENV', 'production');
 if (!in_array($environment, ['local', 'testing', 'production'], true)) {
     throw new RuntimeException('APP_ENV must be local, testing, or production.');
 }
+$uploadMaxBytes = filter_var(Env::get('UPLOAD_MAX_BYTES', '2097152'), FILTER_VALIDATE_INT, [
+    'options' => ['min_range' => 1],
+]);
+if ($uploadMaxBytes === false) {
+    throw new RuntimeException('UPLOAD_MAX_BYTES must be a positive integer byte size.');
+}
 
 return [
     'name' => Env::get('APP_NAME', 'PBreeze'),
@@ -18,6 +24,7 @@ return [
     'debug' => Env::bool('APP_DEBUG'),
     'secure_cookie' => Env::bool('SESSION_SECURE_COOKIE'),
     'api_docs' => Env::bool('API_DOCS_ENABLED', $environment !== 'production'),
+    'upload_max_bytes' => $uploadMaxBytes,
     'database' => [
         'driver' => Env::get('DB_CONNECTION', 'sqlite'),
         'database' => Env::get('DB_DATABASE', 'database/app.sqlite'),

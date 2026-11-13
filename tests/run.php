@@ -132,6 +132,7 @@ try {
     require __DIR__ . '/english.php';
     require __DIR__ . '/documents.php';
     require __DIR__ . '/formatting.php';
+    require __DIR__ . '/uploads.php';
 
     test('HTML escaping handles quotes and invalid UTF-8', static function (): void {
         same('&lt;script&gt;&quot;&#039;&amp;', e('<script>"\'&'));
@@ -450,13 +451,18 @@ PHP);
             copy($root . '/public/assets/' . $asset, $public . '/assets/' . $asset);
         }
         $environment['API_DOCS_ENABLED'] = 'true';
+        $environment['PBREEZE_TEST_UPLOAD_ROOT'] = $temp;
         file_put_contents($public . '/index.php', '<?php if (str_starts_with($_SERVER["REQUEST_URI"], "/__documents/")) { require '
-            . var_export(__DIR__ . '/fixtures/documents.php', true) . '; return; } require '
+            . var_export(__DIR__ . '/fixtures/documents.php', true)
+            . '; return; } if (str_starts_with($_SERVER["REQUEST_URI"], "/__uploads")) { require '
+            . var_export(__DIR__ . '/fixtures/uploads.php', true) . '; return; } require '
             . var_export($root . '/public/index.php', true) . ';');
         file_put_contents($public . '/fixture.css', 'body { color: black; }');
         file_put_contents($public . '/.private.css', 'not-public');
         mkdir($temp . '/http-sessions', 0700);
-        $server = proc_open([PHP_BINARY, '-d', 'session.save_path=' . $temp . '/http-sessions', '-d', 'session.serialize_handler=php_serialize', '-S', $address, '-t', $public, $public . '/router.php'], [
+        $server = proc_open([PHP_BINARY, '-d', 'upload_max_filesize=3M', '-d', 'post_max_size=4M',
+            '-d', 'session.save_path=' . $temp . '/http-sessions', '-d', 'session.serialize_handler=php_serialize',
+            '-S', $address, '-t', $public, $public . '/router.php'], [
             0 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'r'],
             1 => ['file', $temp . '/server.log', 'a'],
             2 => ['file', $temp . '/server.log', 'a'],
@@ -547,6 +553,7 @@ PHP);
         require __DIR__ . '/api-http.php';
         englishHttp($base);
         documentHttp($base);
+        uploadHttp($base);
     }
 } finally {
     if (is_resource($server)) {

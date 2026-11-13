@@ -17,11 +17,13 @@ final class Application
     public readonly Encryption $encryption;
     public readonly BotProtection $botProtection;
     public readonly Api $api;
+    public readonly Uploads $uploads;
 
-    /** @param array{name: string, locale?: string, timezone?: string, url?: string, key?: string, api_docs?: bool, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}} $config */
+    /** @param array{name: string, locale?: string, timezone?: string, url?: string, key?: string, api_docs?: bool, upload_max_bytes?: int, environment: string, debug: bool, secure_cookie: bool, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}} $config */
     public function __construct(public readonly string $root, #[\SensitiveParameter] public readonly array $config)
     {
         $this->router = new Router();
+        $this->uploads = new Uploads($root, $config['upload_max_bytes'] ?? 2097152);
         $this->format = new Formatter($config['locale'] ?? 'en-US', $config['timezone'] ?? 'UTC');
         $this->views = new View($root . '/app/views', formatter: $this->format);
         $this->session = new Session();

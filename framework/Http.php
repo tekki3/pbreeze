@@ -23,6 +23,7 @@ final class Request
      * @param array<string, mixed> $query
      * @param array<string, mixed> $body
      * @param array<string, string> $headers
+     * @param array<string, list<UploadedFile>> $uploads
      */
     public function __construct(
         public readonly string $method,
@@ -31,6 +32,7 @@ final class Request
         private readonly array $body = [],
         private readonly array $headers = [],
         private readonly string $ip = 'unknown',
+        private readonly array $uploads = [],
     ) {
     }
 
@@ -61,6 +63,12 @@ final class Request
         $contentType = strtolower(explode(';', $_SERVER['CONTENT_TYPE'] ?? '')[0]);
         $body = $_POST;
         $api = Api::matches($path);
+        if (!$api && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+            $limit = ini_parse_quantity((string) ini_get('post_max_size'));
+            if ($limit > 0 && (int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > $limit) {
+                throw new HttpException(413, 'The request exceeds PHP post_max_size.');
+            }
+        }
         $raw = null;
         if ($api) {
             if ((int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 1048576) {
@@ -94,7 +102,8 @@ final class Request
                 throw new HttpException(400, 'Invalid JSON body.');
             }
         }
-        return new self(strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET'), $path, $_GET, $body, $headers, $_SERVER['REMOTE_ADDR'] ?? 'unknown');
+        return new self(strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET'), $path, $_GET, $body, $headers,
+            $_SERVER['REMOTE_ADDR'] ?? 'unknown', $api ? [] : UploadedFile::capture($_FILES));
     }
 
     public function input(string $key, mixed $default = null): mixed
@@ -121,6 +130,21 @@ final class Request
     public function clientIp(): string
     {
         return $this->ip;
+    }
+
+    public function file(string $name): ?UploadedFile
+    {
+        $files = $this->files($name);
+        if (count($files) > 1) {
+            throw new HttpException(400, 'This upload field requires a single file.');
+        }
+        return $files[0] ?? null;
+    }
+
+    /** @return list<UploadedFile> */
+    public function files(string $name): array
+    {
+        return $this->uploads[$name] ?? [];
     }
 
     /** @internal @param array{id: int, name: string, email: string, token_id: int} $user */
