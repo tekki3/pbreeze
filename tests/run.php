@@ -143,6 +143,9 @@ try {
     require __DIR__ . '/database-sessions.php';
     require __DIR__ . '/cache.php';
     require __DIR__ . '/console-utilities.php';
+    require __DIR__ . '/background-queue.php';
+    require __DIR__ . '/background-scheduler.php';
+    require __DIR__ . '/background-console.php';
 
     test('HTML escaping handles quotes and invalid UTF-8', static function (): void {
         same('&lt;script&gt;&quot;&#039;&amp;', e('<script>"\'&'));

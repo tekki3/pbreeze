@@ -23,8 +23,13 @@ final class Application
     public readonly Uploads $uploads;
     public readonly Logger $log;
     public readonly string $storagePath;
+    public readonly \PBreeze\Queue\Queue $queue;
+    public readonly \PBreeze\Scheduler\Schedule $schedule;
+    public readonly \PBreeze\Scheduler\Scheduler $scheduler;
+    public readonly \PBreeze\Worker\Worker $worker;
+    private bool $backgroundLoaded = false;
 
-    /** @param array{name: string, storage_path?: string, locale?: string, timezone?: string, url?: string, key?: string, api_docs?: bool, upload_max_bytes?: int, log_retention_days?: int, log_level?: string, environment: string, debug: bool, secure_cookie: bool, session?: array{driver?: 'native'|'database', lifetime?: int, lock_timeout?: int}, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}, cache?: array<string, mixed>, ai?: array{provider?: string, timeout?: int, max_tokens?: int, ca_file?: string, openai?: array{key?: string, model?: string}, anthropic?: array{key?: string, model?: string}}} $config */
+    /** @param array{name: string, storage_path?: string, locale?: string, timezone?: string, url?: string, key?: string, api_docs?: bool, upload_max_bytes?: int, log_retention_days?: int, log_level?: string, environment: string, debug: bool, secure_cookie: bool, session?: array{driver?: 'native'|'database', lifetime?: int, lock_timeout?: int}, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}, cache?: array<string, mixed>, scheduler?: array<string, mixed>, queue?: array<string, mixed>, ai?: array{provider?: string, timeout?: int, max_tokens?: int, ca_file?: string, openai?: array{key?: string, model?: string}, anthropic?: array{key?: string, model?: string}}} $config */
     public function __construct(public readonly string $root, #[\SensitiveParameter] public readonly array $config)
     {
         $this->storagePath = Filesystem::databasePath($root, ($config['storage_path'] ?? '') !== '' ? $config['storage_path'] : 'storage');
@@ -51,6 +56,53 @@ final class Application
         $this->mail = new \PBreeze\Mail\Mailer($this->db, $config['mail'] ?? []);
         $this->auth = new Auth($this->db, $this->session, $this->mail, $config['url'] ?? 'http://127.0.0.1:8000', $config['environment'] === 'production');
         $this->api = new Api($this->db, $this->views, $config['name'], $config['api_docs'] ?? $config['environment'] !== 'production', $this->log);
+        $registry = new \PBreeze\Queue\JobRegistry(function (\PBreeze\Queue\JobRegistry $registry): void {
+            $app = $this;
+            $path = $this->root . '/routes/jobs.php';
+            $jobs = is_file($path) ? require $path : [];
+            if (!is_array($jobs)) {
+                throw new \RuntimeException('routes/jobs.php must return a job registry array.');
+            }
+            foreach ($jobs as $type => $job) {
+                if (!is_string($type) || $type === 'scheduled-task' || !is_array($job)
+                    || !is_callable($job['validate'] ?? null) || !is_callable($job['handle'] ?? null)) {
+                    throw new \RuntimeException('Each job type requires explicit validate and handle callbacks.');
+                }
+                $registry->register($type, $job['validate'], $job['handle']);
+            }
+        });
+        $registry->register('scheduled-task', static function (array $payload): void {
+            if (array_keys($payload) !== ['task_key', 'definition_hash']
+                || !is_string($payload['task_key']) || !is_string($payload['definition_hash'])
+                || preg_match('/^[a-f0-9]{64}$/D', $payload['definition_hash']) !== 1) {
+                throw new \InvalidArgumentException('Invalid scheduled task payload.');
+            }
+        }, function (array $payload, \PBreeze\Queue\ExecutionContext $context): void {
+            $this->background();
+            $this->scheduler->executeTask($payload['task_key'], $payload['definition_hash'], $context);
+        });
+        $queueConfig = $config['queue'] ?? [];
+        $schedulerConfig = $config['scheduler'] ?? [];
+        $this->queue = new \PBreeze\Queue\Queue($this->db, $this->log, $registry, $queueConfig);
+        $this->schedule = new \PBreeze\Scheduler\Schedule($schedulerConfig['timezone'] ?? 'UTC');
+        $this->scheduler = new \PBreeze\Scheduler\Scheduler($this->db, $this->queue, $this->schedule, $schedulerConfig, app: $this);
+        $this->worker = new \PBreeze\Worker\Worker($this, $this->queue, $queueConfig);
+    }
+
+    public function background(): void
+    {
+        if ($this->backgroundLoaded) {
+            return;
+        }
+        $path = $this->root . '/routes/schedule.php';
+        if (is_file($path)) {
+            $register = require $path;
+            if (!is_callable($register)) {
+                throw new \RuntimeException('routes/schedule.php must return a schedule registration callback.');
+            }
+            $register($this->schedule, $this);
+        }
+        $this->backgroundLoaded = true;
     }
 
     public function routes(): void

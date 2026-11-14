@@ -4197,6 +4197,366 @@ for Apache, Nginx, FrankenPHP, or IIS rather than ad hoc rewrite rules.
 Configure HTTPS for the actual service. Never put confidential files or
 uploads containing executable code in `public/`.
 
+## Native Scheduling and Background Jobs
+
+PBreeze's scheduler decides **when** work runs inside a long-running PHP
+process. It does not need cron or Windows Task Scheduler. Durable jobs use the
+application database, not Redis, Composer packages, or serialized PHP objects.
+
+### Quick Start
+
+Configure the application's existing database first. Then run:
+
+```sh
+php breeze scheduler:install
+php breeze migrate
+```
+
+The install command checks prerequisites and explains setup; it does not change
+your database or overwrite application files. In production, review and back up
+the database before running `php breeze migrate --force`.
+
+Define tasks in `routes/schedule.php`, which returns a registration callback:
+
+```php
+use PBreeze\Application;
+use PBreeze\Scheduler\Schedule;
+
+return static function (Schedule $schedule, Application $app): void {
+    $schedule->command('mail:work', ['50'])
+        ->everyMinute()
+        ->withoutOverlapping();
+};
+```
+
+Start the scheduler in a dedicated terminal:
+
+```sh
+php breeze scheduler:work
+```
+
+The command stays running; this is expected. Use another terminal for your web
+server. `php pbreeze scheduler:work` is an alias for the same CLI.
+Direct scheduled tasks use the `default` queue unless explicitly changed;
+changing `QUEUE_DEFAULT` only changes the ordinary queue worker's default
+selection, not the scheduler's.
+
+For schedules using `->queue('billing')`, also start a queue worker:
+
+```sh
+php breeze queue:work --queue=billing
+```
+
+### Defining Tasks and Frequencies
+
+Application handlers are trusted code. Explicitly require their PHP files in
+the registration file; PBreeze does not discover or autoload classes.
+
+```php
+$schedule->task('cleanup')
+    ->everyMinutes(5)
+    ->run(static function (): void {
+        CleanupService::run();
+    });
+
+$schedule->task('invoice-processing')
+    ->dailyAt('02:00')
+    ->timezone('Europe/Amsterdam')
+    ->withoutOverlapping()
+    ->runMissed(limit: 1)
+    ->retries(3)
+    ->retryAfter(60)
+    ->timeout(600)
+    ->queue('billing')
+    ->run([InvoiceService::class, 'process']);
+```
+
+Frequencies include `everySecond()`, `everySeconds(10)`, `everyMinute()`,
+`everyMinutes(5)`, `hourly()`, `everyHours(2)`, `daily()`, `dailyAt('02:00')`,
+`weekly()`, `weeklyOn(1, '08:00')`, and `monthly()`. Weekly days use ISO
+numbering: Monday is 1 and Sunday is 7. Monthly means the first day of the month
+at midnight. Interval schedules use a stable UTC anchor; calendar schedules
+use the task's timezone.
+
+Use unique, stable task names. Do not rename a task or change a pending job's
+handler without reviewing persisted work. Definition fingerprints protect
+against silently running queued occurrences with incompatible definitions.
+
+### Registered Jobs and JSON Payloads
+
+`routes/jobs.php` returns explicitly registered job types. Validators reject
+bad payloads before dispatch and again before execution:
+
+```php
+return [
+    'invoice.generate.v1' => [
+        'validate' => static function (array $payload): void {
+            if (array_keys($payload) !== ['invoice_id']
+                || !is_int($payload['invoice_id']) || $payload['invoice_id'] < 1) {
+                throw new InvalidArgumentException('A positive invoice_id is required.');
+            }
+        },
+        'handle' => static function (
+            array $payload,
+            \PBreeze\Queue\ExecutionContext $context,
+        ) use ($app): void {
+            $context->checkpoint();
+            // Require InvoiceService explicitly in this registry before use.
+            InvoiceService::generate($payload['invoice_id'], $context->idempotencyKey());
+        },
+    ],
+];
+```
+
+Queue a job through the application service:
+
+```php
+$id = $app->queue->dispatch(
+    'invoice.generate.v1',
+    ['invoice_id' => 123],
+    queue: 'billing',
+    priority: 2,
+    tries: 3,
+    backoff: [60, 300],
+    timeout: 300,
+    unique: 'invoice:123',
+);
+```
+
+Payloads are bounded JSON data, not executable code. Do not put credentials,
+large documents, or unnecessary personal data in them; store a record ID and
+retrieve authorized data in the handler. Queue database access is privileged.
+Never expose dispatch, retry, or monitoring services as unauthenticated routes.
+
+`runNow($type, $payload)` invokes a registered handler in the caller. It is
+synchronous and does not provide durable delivery, process isolation, or worker
+recovery. Prefer `dispatch()` for background work.
+
+For bounded exponential delays, use
+`\PBreeze\Queue\Queue::exponentialBackoff(30, 2, 300)` as the `backoff` argument.
+This returns `[30, 60]`, suitable for the two retries of a three-attempt job.
+Unique dispatch keys deduplicate active work of the same registered job type.
+
+### Claims, Overlaps, and Multiple Servers
+
+Each scheduled occurrence has one database identity. Atomic conditional claims
+ensure only one worker owns that occurrence at a time. Every completion checks
+the claim credential; a stale worker cannot acknowledge a newer claim.
+
+`withoutOverlapping()` additionally excludes simultaneous execution of
+different occurrences of the same task. It coalesces missed work into at most
+one latest occurrence and suppresses new occurrences while any earlier one is
+pending, reserved, running, or uncertain. `onOneServer()` explicitly declares
+the existing cluster-wide occurrence guarantee; omitting it does not cause
+one execution per server.
+
+All cooperating nodes must share the same application database, synchronize
+their system clocks, and deploy compatible handler registrations.
+SQLite is for local/single-host operation,
+not independent database files on multiple servers or a shared network drive.
+
+The bundled background-work migration separates definition/runtime/history:
+
+| Table | Responsibility |
+|---|---|
+| `pbreeze_scheduler_tasks` | Definition fingerprint and durable schedule cursor |
+| `scheduled_occurrences` | Unique task/time occurrence identity, retained after job-history pruning |
+| `background_jobs` | Registered job type, JSON payload, queue, retry policy, ownership, and current state |
+| `background_attempts` | Individual execution attempts and safe outcome metadata |
+| `background_workers` | Worker identity, heartbeat, stop request, and state |
+| `background_locks` | Uniqueness and overlap ownership |
+
+This uses one additional table compared with keeping occurrence uniqueness only
+on job rows: retained occurrence tombstones prevent history pruning from
+accidentally allowing an old occurrence to be created again. Schedule handlers
+remain in application code, never in these tables.
+
+### Retries, Failure, and Crash Recovery
+
+`retries(3)` means three additional scheduled attempts, or four total.
+Scheduled tasks default to zero additional retries and a 300-second timeout.
+Queue `tries: 3` and worker `--tries=3` mean three total attempts.
+Backoff controls when a failed attempt becomes eligible again. A job exception
+does not stop the whole worker.
+
+Use `PBreeze\Queue\RetryableJobFailure` to declare a known retryable failure,
+or `PBreeze\Queue\JobFailure` to declare a known terminal failure. Unexpected
+exceptions are treated conservatively because earlier side effects may already
+have happened. For an idempotent job that may safely repeat, explicitly pass
+`retrySafe: true` when dispatching, or use `->retrySafe()` on a scheduled task.
+This is an application assertion, not an automatic proof of idempotency.
+
+States distinguish pending, reserved, running, completed, failed, and
+**uncertain** work. If application work succeeds but its acknowledgement is
+lost, PBreeze cannot know whether it is safe to repeat that work. An expired
+heartbeat is not proof that the old PHP process stopped.
+
+Do not assume exactly-once execution. Use stable idempotency keys and unique
+business constraints. For external APIs, pass their supported idempotency key.
+For atomic application updates plus enqueueing, dispatch on the same connection
+inside your database transaction; PBreeze does not commit the caller's
+transaction. External effects require application-specific outbox/idempotency
+handling.
+
+```sh
+php breeze queue:failed
+php breeze queue:retry JOB_ID
+php breeze queue:retry-all
+```
+
+Retry-all processes at most 100 confirmed failures per call and excludes
+uncertain work. Production retries require `--force`.
+
+For uncertain work, first investigate external effects and stop/fence the old
+execution. Then make an explicit operator decision:
+
+```sh
+php breeze queue:resolve JOB_ID retry --force
+php breeze queue:resolve JOB_ID complete --force
+```
+
+The force flag is an operator assertion, not proof that a remote process died.
+Never release overlap/uniqueness protection merely because a clock expired.
+The existing email queue keeps its separate uncertain SMTP-delivery safeguards;
+scheduling `mail:work` does not automatically resend uncertain email.
+
+### Timezones, DST, and Missed Schedules
+
+Persistence uses UTC timestamps. Calendar tasks interpret their configured
+IANA timezone, independently of the server's display timezone.
+
+At spring-forward, a nonexistent local time is skipped. At fall-back, a repeated
+local time runs only at its first occurrence. Elapsed-time intervals remain
+anchored in UTC.
+
+`skipMissed()` is the default: only work within the configured polling tolerance
+is materialized. `runMissed(limit: 1)` catches up the latest missed occurrence.
+Larger catch-up is bounded by the configured ceiling; a restart does not
+silently replay years of historical work. A newly registered task starts from
+the current schedule boundary, not an invented historical backlog.
+
+### Worker Management and Timeouts
+
+```sh
+php breeze scheduler:list
+php breeze scheduler:status
+php breeze scheduler:run
+php breeze queue:status
+php breeze workers:list
+php breeze workers:stop WORKER_ID
+```
+
+Workers register random identities plus host/PID information and update
+heartbeats. Stale workers are suspected offline, not conclusively dead.
+Database-backed stop requests work without Unix signals. The worker listing
+shows the newest 100 registrations by default.
+
+```sh
+php breeze queue:work --queue=billing,default --sleep=1 --tries=3
+php breeze queue:work --max-jobs=100 --max-time=3600
+php breeze queue:work --once
+```
+
+Lifetime/job-count limits are checked between executions; they do not
+interrupt arbitrary running PHP. `--once` exits after at most one eligible
+execution, including when the selected queue is empty.
+
+Priorities are integers: 0 low, 1 normal, 2 high, 3 critical. Waiting-time aging
+prevents fresh high-priority jobs from permanently starving older low-priority
+jobs. Workers only claim their selected queues.
+
+Workers use monitored child PHP processes, so the parent can maintain heartbeats.
+The native `proc_open()` function must be enabled. Timeouts request cooperative
+cancellation and quarantine uncertain work; they do not forcibly terminate
+arbitrary PHP or undo side effects. An uncooperative child can keep its parent
+occupied until it exits. Use additional workers for other work and a supervisor
+for hard process deadlines. Handlers should check their execution context between
+operations and configure network/database timeouts of their own.
+
+### Production Deployment: Linux, Windows, and Docker
+
+PBreeze owns scheduling logic while its processes are alive. It cannot keep
+itself alive after a machine reboot, crash, or container termination.
+
+- **Linux:** supervise separate scheduler and queue processes with systemd or
+  Supervisor. Use the application directory as working directory and an
+  unprivileged service identity. Adapt the supplied
+  [systemd template](deploy/pbreeze@.service), then enable
+  `pbreeze@scheduler` and `pbreeze@queue`. Replace its user, paths, and shutdown
+  timeout for your deployment; never start services before configuring and
+  migrating the application database.
+- **Windows:** use a Windows service wrapper to run the same PHP CLI commands,
+  with an explicit working directory, PHP path, database access, and private
+  storage ACLs.
+- **Docker:** use separate scheduler and worker services with restart policies,
+  the same deployed code/configuration, and sufficient shutdown grace time.
+- **macOS:** run the CLI directly for development or supervise it with launchd.
+
+These are process-lifecycle integrations, not cron replacements containing your
+application's timetable. No cron or Windows Task Scheduler is required.
+Use a PHP CLI configuration with appropriate memory limits and extension
+settings. Recycle long-lived workers during deployments so they load new code.
+
+For Docker Compose, adapt this example to an **existing application image**
+with PHP CLI, the required native extensions, deployed code, and database
+configuration. It is not a Docker build recipe:
+
+```yaml
+services:
+  scheduler:
+    image: your-pbreeze-application:release
+    working_dir: /app
+    command: ["php", "breeze", "scheduler:work"]
+    restart: unless-stopped
+    stop_grace_period: 11m
+    env_file: .env
+  queue:
+    image: your-pbreeze-application:release
+    working_dir: /app
+    command: ["php", "breeze", "queue:work", "--queue=default,billing"]
+    restart: unless-stopped
+    stop_grace_period: 11m
+    env_file: .env
+```
+
+Use the same server database for both services and run migrations as a separate
+deployment step. Supply protected persistent storage for application data/logs.
+Tune the example's shutdown grace period to exceed your longest job timeout;
+an orchestrator may still forcibly terminate processes when that period ends.
+
+### Monitoring, Retention, and Troubleshooting
+
+Queue/scheduler status commands show identifiers and safe runtime metadata,
+not payloads. Application logs contain structured lifecycle information;
+exception messages and handler output are not assumed safe to expose.
+
+For trusted programmatic monitoring, use `$app->queue->store()->status()` or
+`jobs('pending', 50)`, which omit payloads and claim credentials. Register
+listeners on `$app->worker->events->on('job.finished', $listener)` before
+starting the worker. Listeners receive safe metadata arrays. Available events
+are `worker.started`, `worker.stopped`, `job.claimed`, `job.started`, and
+`job.finished`; listener failures are logged without undoing job acknowledgement.
+Child-process events such as `job.started` require listeners registered during
+trusted child bootstrap; in-memory parent listeners are not copied to children.
+
+```sh
+php breeze queue:prune --days=30 --limit=100
+```
+
+Pruning removes bounded terminal history, not active or uncertain work.
+Keep occurrence deduplication records long enough for recovery; do not manually
+truncate live tables.
+
+| Symptom | Check |
+|---|---|
+| Worker exits at startup | CLI PHP version, enabled `proc_open()`, database schema and private storage permissions |
+| Nothing runs | Schedule registry, timezone, selected queue, worker heartbeat, availability/backoff |
+| Job type rejected | Explicit registry loading, validator, versioned job identifier |
+| Pending occurrence rejected after deployment | Definition fingerprint and deployed handler compatibility |
+| Work is uncertain | Investigate acknowledgement loss, old processes, and external effects before resolving |
+| Database repeatedly fails | Check connectivity/TLS/schema; infrastructure failures stop the worker, so configure supervisor restart delays rather than a tight restart loop |
+| Billing runs twice after recovery | Application idempotency/business constraints; queue delivery is not exactly-once |
+
 ## Tests
 
 ### Create your own tests

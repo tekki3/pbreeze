@@ -21,6 +21,20 @@ Usage: php breeze <command> [name] [--force]
   logs:tail [lines] [level]  Show recent JSONL logs (default: 50; optional minimum level)
   make:command Name          Create a custom command for explicit registration
   make:test Name             Create a native test for explicit registration
+  scheduler:install          Check background prerequisites; show setup steps
+  scheduler:list             List configured schedules and next occurrences
+  scheduler:status           Show schedule state and background work counts
+  scheduler:run              Materialize due schedules and execute direct work once
+  scheduler:work             Run the native scheduler continuously
+  queue:work                 Process durable jobs (--queue=default --sleep=1)
+  queue:status               Show queue counts without payloads
+  queue:failed               List recent failed and uncertain jobs
+  queue:retry ID             Retry one confirmed failed job
+  queue:retry-all            Retry confirmed failures in bounded batches
+  queue:resolve ID action    Resolve uncertain work (retry or complete; requires --force)
+  queue:prune                Remove old terminal history (--days=30 --limit=100)
+  workers:list               List worker heartbeats and health
+  workers:stop ID            Request graceful worker shutdown
   doctor                     Check production configuration and dependency readiness
   storage:prepare            Create private storage directories for deployment
   key:generate               Print a new APP_KEY; do not modify any files
@@ -64,6 +78,10 @@ TEXT;
     public function run(array $arguments): int
     {
         $command = array_shift($arguments) ?? 'help';
+        if (str_starts_with($command, 'scheduler:') || str_starts_with($command, 'queue:')
+            || str_starts_with($command, 'workers:') || $command === '_background:execute') {
+            return (new \PBreeze\Scheduler\SchedulerConsole($this->app))->run($command, $arguments);
+        }
         if (in_array($command, ['about', 'env:check', 'cache:test', 'logs:tail', 'make:command', 'make:test'], true)) {
             return $this->utilityCommand($command, $arguments);
         }

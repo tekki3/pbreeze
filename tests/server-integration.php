@@ -75,7 +75,7 @@ try {
     $db = $app->db;
     $migrator = new Migrator($db, $temporary);
     $ownsSchema = true;
-    sqlsrvCheck(count($migrator->migrate()) === 5, 'Expected all five migrations.');
+    sqlsrvCheck(count($migrator->migrate()) === 6, 'Expected all six migrations.');
     sqlsrvCheck($migrator->migrate() === [], 'Repeated migration must be a no-op.');
     sqlsrvCheck(!in_array(null, $migrator->status(), true), 'Pending migration after migrate.');
     $bucket = hash('sha256', 'integration-limiter');
@@ -194,9 +194,45 @@ try {
         $sessionHandler->close();
     }
 
-    sqlsrvCheck(count($migrator->rollback()) === 5, 'Rollback did not revert all migrations.');
-    sqlsrvCheck(count($migrator->migrate()) === 5, 'Schema could not be migrated after rollback.');
-    echo "$label integration passed: schema, seed, Unicode CRUD, ORM, pagination, transactions, database sessions, auth/reset, API tokens, rate limits, and mail queue. No SMTP was sent.\n";
+    $app->queue->registry()->register('integration.queue.v1',
+        static function (array $payload): void {
+            if ($payload !== ['value' => 42]) {
+                throw new InvalidArgumentException('Invalid integration payload.');
+            }
+        },
+        static function (array $payload, \PBreeze\Queue\ExecutionContext $context): void {
+            $context->checkpoint();
+        },
+    );
+    $jobId = $app->queue->dispatch('integration.queue.v1', ['value' => 42],
+        queue: 'integration', unique: 'integration-once');
+    sqlsrvCheck($app->queue->dispatch('integration.queue.v1', ['value' => 42],
+        queue: 'integration', unique: 'integration-once') === $jobId, 'Queue uniqueness failed.');
+    $workerId = $app->worker->registry()->register('queue', ['integration']);
+    $store = $app->queue->store();
+    $claim = $store->claim($workerId, 'queue', ['integration']);
+    sqlsrvCheck(is_array($claim) && $claim['id'] === $jobId, 'Queue claim failed.');
+    sqlsrvCheck($store->claim($workerId, 'queue', ['integration']) === null, 'Queue job was claimed twice.');
+    sqlsrvCheck($store->start($jobId, $claim['claim_token']) !== null, 'Queue start failed.');
+    sqlsrvCheck(!$store->finish($jobId, str_repeat('0', 64), 'completed'), 'Stale token acknowledged a job.');
+    sqlsrvCheck($store->finish($jobId, $claim['claim_token'], 'completed'), 'Queue completion failed.');
+    sqlsrvCheck($store->get($jobId)['status'] === 'completed', 'Queue terminal status failed.');
+    $rolledBackJob = null;
+    try {
+        $db->transaction(static function () use ($app, &$rolledBackJob): void {
+            $rolledBackJob = $app->queue->dispatch('integration.queue.v1', ['value' => 42], queue: 'integration');
+            throw new LogicException('Expected queue rollback.');
+        });
+    } catch (LogicException $error) {
+        sqlsrvCheck($error->getMessage() === 'Expected queue rollback.', 'Unexpected queue transaction exception.');
+    }
+    sqlsrvCheck(is_string($rolledBackJob) && $store->get($rolledBackJob) === null,
+        'Queue dispatch committed a caller-owned transaction.');
+    $app->worker->registry()->stopped($workerId);
+
+    sqlsrvCheck(count($migrator->rollback()) === 6, 'Rollback did not revert all migrations.');
+    sqlsrvCheck(count($migrator->migrate()) === 6, 'Schema could not be migrated after rollback.');
+    echo "$label integration passed: schema, seed, Unicode CRUD, ORM, pagination, transactions, database sessions, auth/reset, API tokens, rate limits, mail queue, and durable queue claims/uniqueness/rollback. No SMTP was sent.\n";
 } finally {
     try {
         if (session_status() === PHP_SESSION_ACTIVE) {

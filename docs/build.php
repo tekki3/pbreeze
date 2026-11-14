@@ -45,7 +45,7 @@ function inline(string $value): string
             $result .= '<code>' . html(substr($part, 1, -1)) . '</code>';
         } elseif (preg_match('/^\[([^\]]+)\]\(([^)]+)\)$/D', $part, $match)) {
             $url = $match[2];
-            if (!preg_match('~^(https?://|#|[A-Za-z0-9_./-]+$)~D', $url)) {
+            if (!preg_match('~^(https?://|#|[A-Za-z0-9_./@-]+$)~D', $url)) {
                 throw new RuntimeException('Unsafe documentation link.');
             }
             if (str_starts_with($url, '#')) {

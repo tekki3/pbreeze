@@ -82,7 +82,8 @@ does not use browser login cookies or CSRF tokens.
 `handle()` alone does not start sessions, import routes, or catch exceptions.
 
 Application exposes `$app->db`, `views`, `session`, `auth`, `encryption`,
-`botProtection`, `api`, `uploads`, `log`, `format`, `strings`, `ai`, and `cache`,
+`botProtection`, `api`, `uploads`, `log`, `format`, `strings`, `ai`, `cache`,
+`queue`, `schedule`, `scheduler`, and `worker`,
 plus `router`, `root`, `config`, and `storagePath`. Reuse these services
 instead of global connections or duplicate clients. New framework services
 need explicit bootstrap loading, Application wiring, configuration,
@@ -274,7 +275,7 @@ they are not ordinary PHP sources for linting.
 - Do not bootstrap a production app and call mutations as a shortcut.
   Tests for real databases/cache/servers are separate opt-in integrations
   with dedicated disposable resources and documented safety prerequisites.
-- CI defines Ubuntu/Windows PHP 8.3 and 8.5 native runs plus separate service
+- CI defines Ubuntu/Windows/macOS PHP 8.3 and 8.5 native runs plus separate service
   jobs in [the workflow](.github/workflows/tests.yml). Core feature/test
   extensions include PDO SQLite, OpenSSL, curl, iconv, mbstring, zip, DOM,
   Intl, and fileinfo; Redis/Memcached and external databases need their own
@@ -324,3 +325,28 @@ they are not ordinary PHP sources for linting.
   registries, generator output, dialects, tests, manual, and deployment
   templates as applicable. Preserve unrelated work and report actual
   verification results and any remaining limitations.
+
+## 14. Native scheduling and durable jobs
+
+- Register schedules explicitly in [routes/schedule.php](routes/schedule.php)
+  and validated JSON job types in [routes/jobs.php](routes/jobs.php).
+  Never serialize closures/objects or instantiate classes named in database rows.
+- Reuse Application background services and its lazy `background()` registration;
+  constructing an application must not connect to background tables or execute
+  application schedule handlers.
+- Scheduler and queue workers are separate native PHP CLI processes. No cron,
+  Windows Task Scheduler, Composer, Unix signals, or external broker is required.
+  `proc_open()` is required for monitored child execution. The `pbreeze` entry
+  point aliases the existing `breeze` CLI.
+- Persist occurrences before execution. Claims and terminal transitions must
+  check ownership credentials. A stale heartbeat does not prove process death;
+  never blindly release overlap/uniqueness locks or replay uncertain effects.
+- Jobs must be idempotent where replay is permitted. Queue delivery is not an
+  exactly-once business-effect guarantee. Keep mail's uncertain-delivery policy.
+- Inject Clock for schedule/retry tests. Persist UTC; calendar schedules use
+  explicit timezones and the documented DST/missed-work policies.
+- Keep operational logs/monitoring free of payloads and raw exception messages.
+  External supervisors own process restart, not application scheduling logic.
+- Add real independent-process claim tests and isolated crash-recovery fixtures
+  when changing worker/queue ownership. Live server database/platform validation
+  remains distinct from SQLite or recording-PDO coverage.

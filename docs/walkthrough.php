@@ -2,6 +2,20 @@
 declare(strict_types=1);
 
 $commands = [
+    'scheduler:install' => ['Check native process prerequisites and explain registration, migration, and worker startup. Does not create files, run migrations, or modify environment values. No cron, Task Scheduler, Composer, or external broker required.', 'php breeze scheduler:install'],
+    'scheduler:list' => ['Load explicitly registered schedules and list definitions and next occurrences. Application definitions remain authoritative; registry files are trusted executable PHP.', 'php breeze scheduler:list'],
+    'scheduler:status' => ['Show schedules and safe queue runtime counts. Requires migrated background tables. No payloads are printed.', 'php breeze scheduler:status'],
+    'scheduler:run' => ['Materialize currently due occurrences transactionally, execute eligible direct work, then exit. Queued work requires queue:work. A safety ceiling limits one invocation to 1000 direct executions.', 'php breeze scheduler:run'],
+    'scheduler:work' => ['Run native scheduling continuously using --sleep=1..60, optional --max-jobs=N and --max-time=seconds. --once materializes schedules and processes at most one direct job. Uses child PHP processes, heartbeats, and durable claims. Supervise separately for restart after reboot.', 'php breeze scheduler:work --sleep=1'],
+    'queue:work' => ['Run durable job processing. Options: --queue=default,emails, --sleep=1..60, --tries=1..100, --max-jobs=N, --max-time=seconds, --once. Registry types and JSON payloads only. Requires proc_open. Timeouts cannot guarantee arbitrary cross-platform descendant termination or exactly-once business effects.', 'php breeze queue:work --queue=default --max-jobs=100'],
+    'queue:status' => ['Show safe work counts and operational state without payloads or credentials. Requires background schema.', 'php breeze queue:status'],
+    'queue:failed' => ['List safe failed/uncertain job metadata, default limit 50; --limit=1..1000. Investigate uncertain effects before deciding whether to repeat work.', 'php breeze queue:failed --limit=20'],
+    'queue:retry' => ['Retry one confirmed failed job by its 32-character hexadecimal ID. Requires --force in production. Does not silently replay uncertain work.', 'php breeze queue:retry JOB_ID'],
+    'queue:retry-all' => ['Retry at most 100 confirmed failed jobs per call; uncertain work excluded. Requires --force in production. Review each job business operation for idempotency before replaying.', 'php breeze queue:retry-all'],
+    'queue:resolve' => ['Explicitly resolve uncertain work by retry or complete; always requires --force. First fence the old execution and verify external effects. The flag is an operator assertion, not evidence that a remote process died.', 'php breeze queue:resolve JOB_ID retry --force'],
+    'queue:prune' => ['Remove bounded terminal job/attempt history with --days=1..3650 (default 30), --limit=1..1000 (default 100). Active/uncertain work must remain. Requires --force in production.', 'php breeze queue:prune --days=30 --limit=100'],
+    'workers:list' => ['List worker IDs, type, host/PID, queues, heartbeats, and health. A stale heartbeat means suspected offline, not confirmed dead.', 'php breeze workers:list'],
+    'workers:stop' => ['Persist a graceful stop request for a 32-character hexadecimal worker ID. Stops new claims and allows active work to finish; does not forcibly kill arbitrary PHP.', 'php breeze workers:stop WORKER_ID'],
     'about' => ['Print the framework identity (no release version is currently declared), PHP version, OS family, CLI SAPI, environment, database/cache driver names, session handler, and loaded extensions. Does not connect to services, print credentials/paths, or create storage. This describes CLI PHP, not necessarily the web runtime. No arguments/options.', 'php breeze about'],
     'env:check' => ['Compare .env key names with active/commented settings in .env.example, honoring process overrides. Print SET, EMPTY, MISSING, OPTIONAL, or CUSTOM and names only, never values. Exit 1 for missing active example keys, otherwise 0; empty/optional/custom entries need human review, not automatic failure. Reject malformed/duplicate local keys. Does not modify Env state/files or validate production readiness. Bootstrap must already succeed; use doctor for semantic checks. No options.', 'php breeze env:check'],
     'cache:test' => ['Write/read/delete one cryptographically random namespaced cache key with a 30-second TTL. No flush, database access, or application-key deletion. Requires an enabled reachable native Redis/Memcached backend; disabled or failed operations throw and the CLI exits 1. Cleanup runs after successful writes; interrupted/uncertain writes expire. Success prints no key, value, host, or credentials. No arguments/options.', 'php breeze cache:test'],
@@ -49,6 +63,18 @@ if (array_diff($matches[1], array_keys($commands)) !== [] || array_diff(array_ke
 }
 
 $environment = [
+    'SCHEDULER_TIMEZONE' => 'Default scheduling IANA timezone; UTC by default. Calendar schedules may override it. Persistence uses UTC.',
+    'SCHEDULER_POLL_INTERVAL' => 'Native scheduler idle poll interval, integer 1..60 seconds; default 1. CLI --sleep overrides it.',
+    'SCHEDULER_DUE_TOLERANCE' => 'Allowed age of an occurrence under skipMissed(), integer 0..60 seconds; default 5. Does not enable historical replay.',
+    'SCHEDULER_CATCH_UP_LIMIT' => 'Maximum permitted runMissed(limit: ...) catch-up count, integer 1..100; default ceiling 100. Individual tasks default to skip.',
+    'QUEUE_DEFAULT' => 'Default queue name, 1..80 ASCII letters/digits/underscore/hyphen; default default.',
+    'QUEUE_TRIES' => 'Default maximum total attempts, integer 1..100; default 3. Not three additional retries.',
+    'QUEUE_POLL_INTERVAL' => 'Queue idle poll interval, integer 1..60 seconds; default 1. No busy loop on an empty queue.',
+    'QUEUE_TIMEOUT' => 'Default job execution timeout seconds, integer 1..86400; default 300. Not a guarantee to forcibly terminate arbitrary code on every platform.',
+    'QUEUE_PRIORITY_AGING' => 'Seconds of scheduling advantage per priority level, integer 1..3600; default 60. Older eligible low-priority jobs eventually outrank new high-priority jobs.',
+    'QUEUE_PAYLOAD_MAX_BYTES' => 'Maximum encoded JSON payload bytes, integer 1..65536; default 65536. Payloads still require registered-type validation.',
+    'WORKER_HEARTBEAT_INTERVAL' => 'Worker heartbeat period seconds, integer 1..60; default 15. Use a stale threshold comfortably longer than this interval.',
+    'WORKER_STALE_AFTER' => 'Suspected-offline threshold seconds, integer 10..3600 and greater than twice WORKER_HEARTBEAT_INTERVAL; default 90. Staleness does not prove process death or authorize blind overlap-lock removal.',
     'APP_NAME' => 'Application name used in pages and API metadata. Default PBreeze.',
     'APP_URL' => 'Trusted base URL for authentication email links. Use the actual HTTPS origin in production; do not derive it from untrusted Host input.',
     'APP_ENV' => 'local, testing, or production only. If absent, configuration defaults to production; the example file intentionally selects local.',

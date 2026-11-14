@@ -1,0 +1,23 @@
+[Unit]
+Description=PBreeze %i worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pbreeze
+Group=pbreeze
+WorkingDirectory=/srv/pbreeze
+ExecStart=/usr/bin/php /srv/pbreeze/breeze %i:work
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=660
+KillMode=control-group
+NoNewPrivileges=true
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
