@@ -1741,6 +1741,112 @@ return \PBreeze\Response::redirect('/berichten');
 
 Redirects accept only local paths that start with a single `/`.
 
+### Request and response abstractions
+
+Controllers receive a `PBreeze\Request` and return a `PBreeze\Response`.
+Keep direct access to `$_GET`, `$_POST`, `$_FILES`, `$_COOKIE`, and `$_SERVER`
+at the framework's capture boundary:
+
+```php
+$name = $request->input('name', '');
+$page = $request->query('page', '1');
+$authorization = $request->header('Authorization');
+$cookie = $request->cookie('session');
+$document = $request->file('document'); // UploadedFile|null
+$isJson = $request->isJson();
+$payload = $request->json(); // Parsed array for JSON, null otherwise
+$method = $request->method();
+$ip = $request->ip();
+```
+
+Body, query, cookies, and files stay separate; `input()` never falls back to
+query parameters. Validate every value before use. `cookie()` reads client
+cookies, not authenticated session data: use `$app->session` for that.
+Headers are case-insensitive, including explicitly constructed test requests.
+`ip()` is the direct peer address, matching the existing `clientIp()` method;
+forwarded headers are deliberately not trusted. The readonly `method`/`path`
+properties and all existing accessors remain supported.
+
+`isJson()` recognizes `Content-Type: application/json` regardless of case or
+parameters; it does not inspect `Accept`, and vendor `+json` types are not
+supported. Captured JSON must be an object, with a 1 MiB byte cap and depth
+limit of 32. Invalid JSON returns 400, oversized bodies return 413, and nested
+objects become associative arrays. `json()` returns the already-parsed body,
+without reading or decoding it again.
+
+```php
+use PBreeze\Response;
+
+return Response::json(['saved' => true], 201);
+return Response::html('<p>' . e($name) . '</p>');
+return Response::redirect('/login'); // Local paths only, default 303
+return Response::download($authorizedPath, 'report.pdf', 'application/pdf');
+return Response::file($authorizedPath, 'application/pdf');
+```
+
+`html()` preserves trusted markup; it does **not** sanitize or escape it.
+Use escaped template output or `e()`/`Html` for untrusted values.
+
+`download()` sends an attachment; `file()` displays inline. Both accept a
+local regular-file path, reject stream wrappers, and stream without buffering
+the entire file. The optional MIME override avoids automatic detection;
+otherwise the native `fileinfo` extension is required. Download names must
+be UTF-8, without paths/controls, and at most 255 bytes. Responses use safe
+ASCII fallback and UTF-8 `filename*` headers.
+
+**Authorize access and resolve a trusted path first.** These generic factories
+do not implement a storage root or prevent an authorized caller from selecting
+another local file (including via symlinks). Never use
+`Response::file($request->input('path'))`. For framework-managed uploads,
+continue using `$app->uploads->download($storedKey, $filename)` after checking
+ownership; it retains its existing storage confinement and response behavior.
+Generated documents still support their existing in-memory `download()`.
+
+Missing files/directories return 404; unreadable files and delivery failures
+throw. Files should remain stable until delivery finishes: no locking,
+byte-range requests, or conditional caching is introduced. File responses
+retain `no-store`, `nosniff`, and a restrictive sandbox CSP to prevent active
+content behaving like application HTML. HEAD returns metadata without content;
+1xx, 204, and 304 also omit bodies. Sessions are persisted before delivery.
+Pre-output delivery errors become logged error responses; errors after output
+starts are logged and rethrown, not replaced with a misleading success body.
+
+### Testing without PHP globals
+
+Inject query/body/headers/cookies through the existing constructor, then use
+the normal router or `Application::handle()`:
+
+```php
+use PBreeze\Request;
+use PBreeze\Response;
+use PBreeze\Router;
+
+$request = new Request(
+    'POST',
+    '/greet',
+    query: ['page' => '2'],
+    body: ['name' => 'Ada'],
+    headers: ['Content-Type' => 'application/json'],
+    ip: '127.0.0.1',
+    cookies: ['session' => 'test-value'],
+);
+$router = new Router();
+$router->post('/greet', static fn (Request $request): Response =>
+    Response::json(['name' => $request->input('name')]));
+$response = $router->dispatch($request);
+
+assert($response->status === 200);
+assert(json_decode($response->body, true, 32, JSON_THROW_ON_ERROR) === ['name' => 'Ada']);
+```
+
+Construction takes already-parsed body arrays; setting a JSON header does not
+decode a raw string. It never reads globals or normalizes the path.
+Direct router tests bypass sessions/CSRF; use the application flow to test
+those policies. For HTML/JSON, inspect readonly `body`, `status`, and `headers`.
+Streaming file responses have an empty `body` and initial file metadata in
+`headers`; test delivered bytes through HTTP or isolated output capture.
+Controllers should return responses, not call `send()` themselves.
+
 ## Application Logging
 
 Use the native `$app->log` service for structured application logs. No Composer,

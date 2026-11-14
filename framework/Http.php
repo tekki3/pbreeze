@@ -17,6 +17,8 @@ final class HttpException extends RuntimeException
 
 final class Request
 {
+    /** @var array<string, string> */
+    private readonly array $headers;
     /** @var array{id: int, name: string, email: string, token_id: int}|null */
     private ?array $apiIdentity = null;
     /**
@@ -24,16 +26,26 @@ final class Request
      * @param array<string, mixed> $body
      * @param array<string, string> $headers
      * @param array<string, list<UploadedFile>> $uploads
+     * @param array<string, mixed> $cookies
      */
     public function __construct(
         public readonly string $method,
         public readonly string $path,
         private readonly array $query = [],
         private readonly array $body = [],
-        private readonly array $headers = [],
+        array $headers = [],
         private readonly string $ip = 'unknown',
         private readonly array $uploads = [],
+        private readonly array $cookies = [],
     ) {
+        $normalized = [];
+        foreach ($headers as $name => $value) {
+            if (!is_string($name) || !is_string($value)) {
+                throw new \InvalidArgumentException('Request headers must have string names and values.');
+            }
+            $normalized[strtolower($name)] = $value;
+        }
+        $this->headers = $normalized;
     }
 
     public static function capture(): self
@@ -60,7 +72,7 @@ final class Request
         if (!isset($headers['authorization']) && isset($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) {
             $headers['authorization'] = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
         }
-        $contentType = strtolower(explode(';', $_SERVER['CONTENT_TYPE'] ?? '')[0]);
+        $contentType = strtolower(trim(explode(';', $headers['content-type'] ?? '')[0]));
         $body = $_POST;
         $api = Api::matches($path);
         if (!$api && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
@@ -104,7 +116,7 @@ final class Request
             }
         }
         return new self(strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET'), $path, $_GET, $body, $headers,
-            $_SERVER['REMOTE_ADDR'] ?? 'unknown', $api ? [] : UploadedFile::capture($_FILES));
+            $_SERVER['REMOTE_ADDR'] ?? 'unknown', $api ? [] : UploadedFile::capture($_FILES), $_COOKIE);
     }
 
     public function input(string $key, mixed $default = null): mixed
@@ -136,6 +148,32 @@ final class Request
     public function clientIp(): string
     {
         return $this->ip;
+    }
+
+    public function method(): string
+    {
+        return $this->method;
+    }
+
+    public function ip(): string
+    {
+        return $this->clientIp();
+    }
+
+    public function cookie(string $name, mixed $default = null): mixed
+    {
+        return $this->cookies[$name] ?? $default;
+    }
+
+    public function isJson(): bool
+    {
+        return strtolower(trim(explode(';', $this->header('Content-Type') ?? '')[0])) === 'application/json';
+    }
+
+    /** @return array<string, mixed>|null */
+    public function json(): ?array
+    {
+        return $this->isJson() ? $this->body : null;
     }
 
     public function file(string $name): ?UploadedFile
@@ -170,6 +208,7 @@ final class Request
 
 final class Response
 {
+    private ?string $filePath = null;
     /** @param array<string, string> $headers */
     public function __construct(
         public readonly string $body = '',
@@ -194,6 +233,65 @@ final class Response
         ]);
     }
 
+    public static function html(string $html, int $status = 200): self
+    {
+        return new self($html, $status);
+    }
+
+    public static function download(string $path, ?string $filename = null, ?string $mimeType = null): self
+    {
+        return self::localFile($path, $mimeType, 'attachment', $filename);
+    }
+
+    public static function file(string $path, ?string $mimeType = null): self
+    {
+        return self::localFile($path, $mimeType, 'inline', null);
+    }
+
+    private static function localFile(string $path, ?string $mimeType, string $disposition, ?string $filename): self
+    {
+        if ($path === '' || preg_match('/[\x00-\x1f\x7f]/', $path) || str_contains($path, '://')
+            || preg_match('~^[A-Za-z]:(?![/\\\\])~', $path)) {
+            throw new \InvalidArgumentException('Use a local file path without controls or stream wrappers.');
+        }
+        $resolved = realpath($path);
+        if ($resolved === false || !is_file($resolved)) {
+            throw new HttpException(404, 'File not found.');
+        }
+        if (!is_readable($resolved)) {
+            throw new RuntimeException('Cannot read the response file.');
+        }
+        $filename ??= basename(str_replace('\\', '/', $resolved));
+        if ($filename === '' || strlen($filename) > 255 || preg_match('//u', $filename) !== 1
+            || preg_match('/[\x00-\x1f\x7f\/\\\\]/', $filename) || in_array($filename, ['.', '..'], true)) {
+            throw new \InvalidArgumentException('Use a UTF-8 filename without paths or controls, at most 255 bytes.');
+        }
+        if ($mimeType === null) {
+            if (!extension_loaded('fileinfo')) {
+                throw new RuntimeException('Automatic response media types require the native fileinfo extension.');
+            }
+            $mimeType = (new \finfo(FILEINFO_MIME_TYPE))->file($resolved);
+            if ($mimeType === false) {
+                throw new RuntimeException('Cannot inspect the response file media type.');
+            }
+        }
+        if (!preg_match('~^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$~D', $mimeType)) {
+            throw new \InvalidArgumentException('Invalid file response media type.');
+        }
+        $size = filesize($resolved);
+        if ($size === false) {
+            throw new RuntimeException('Cannot determine the response file size.');
+        }
+        $response = new self('', 200, [
+            'Content-Type' => $mimeType,
+            'Content-Length' => (string) $size,
+            'Content-Disposition' => $disposition . '; filename="download"; filename*=UTF-8\'\'' . rawurlencode($filename),
+            'Content-Security-Policy' => "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        ]);
+        $response->filePath = $resolved;
+        return $response;
+    }
+
     public static function redirect(string $path, int $status = 303): self
     {
         if (!str_starts_with($path, '/') || str_starts_with($path, '//') || preg_match('/[\x00-\x20\x7f\\\\]/', $path)) {
@@ -207,20 +305,50 @@ final class Response
 
     public function send(bool $head = false): void
     {
-        http_response_code($this->status);
-        $headers = $this->headers + [
-            'Content-Security-Policy' => "default-src 'self'; script-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; object-src 'none'",
-            'X-Content-Type-Options' => 'nosniff',
-            'X-Frame-Options' => 'DENY',
-            'Referrer-Policy' => 'strict-origin-when-cross-origin',
-            'Permissions-Policy' => 'camera=(), microphone=(), geolocation=()',
-            'Cache-Control' => 'no-store',
-        ];
-        foreach ($headers as $name => $value) {
-            header("$name: $value");
+        $stream = null;
+        $headers = $this->headers;
+        if ($this->filePath !== null) {
+            if (!is_file($this->filePath) || !is_readable($this->filePath)) {
+                throw new RuntimeException('The response file is no longer readable.');
+            }
+            $stream = fopen($this->filePath, 'rb');
+            if ($stream === false) {
+                throw new RuntimeException('Cannot open the response file.');
+            }
         }
-        if (!$head) {
-            echo $this->body;
+        try {
+            if ($stream !== null) {
+                $stat = fstat($stream);
+                if ($stat === false || ($stat['mode'] & 0170000) !== 0100000) {
+                    throw new RuntimeException('The response source must be a regular file.');
+                }
+                $headers['Content-Length'] = (string) $stat['size'];
+            }
+            http_response_code($this->status);
+            $headers += [
+                'Content-Security-Policy' => "default-src 'self'; script-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; object-src 'none'",
+                'X-Content-Type-Options' => 'nosniff',
+                'X-Frame-Options' => 'DENY',
+                'Referrer-Policy' => 'strict-origin-when-cross-origin',
+                'Permissions-Policy' => 'camera=(), microphone=(), geolocation=()',
+                'Cache-Control' => 'no-store',
+            ];
+            foreach ($headers as $name => $value) {
+                header("$name: $value");
+            }
+            if (!$head && $this->status >= 200 && !in_array($this->status, [204, 304], true)) {
+                if ($stream !== null) {
+                    if (fpassthru($stream) === false) {
+                        throw new RuntimeException('Cannot stream the response file.');
+                    }
+                } else {
+                    echo $this->body;
+                }
+            }
+        } finally {
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
         }
     }
 }

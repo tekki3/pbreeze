@@ -164,7 +164,17 @@ final class Application
             $response = $apiRequest ? Api::errorResponse($error, $this->log)
                 : self::errorResponse($error, $this->config['debug'] && $this->config['environment'] === 'local', $this->log);
         }
-        $response->send(($_SERVER['REQUEST_METHOD'] ?? '') === 'HEAD');
+        try {
+            $response->send(($_SERVER['REQUEST_METHOD'] ?? '') === 'HEAD');
+        } catch (Throwable $error) {
+            if (headers_sent()) {
+                Logger::report($error, $this->log);
+                throw $error;
+            }
+            $response = $apiRequest ? Api::errorResponse($error, $this->log)
+                : self::errorResponse($error, $this->config['debug'] && $this->config['environment'] === 'local', $this->log);
+            $response->send(($_SERVER['REQUEST_METHOD'] ?? '') === 'HEAD');
+        }
     }
 
     public static function errorResponse(Throwable $error, bool $debug = false, ?Logger $logger = null): Response
