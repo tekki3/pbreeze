@@ -392,6 +392,7 @@ $method('Scheduler\\SchedulerConsole', 'run', 'Validate and execute a background
 $reference += require __DIR__ . '/background-queue-reference.php';
 $reference += require __DIR__ . '/background-scheduler-reference.php';
 $reference += require __DIR__ . '/file-reader-reference.php';
+$reference += require __DIR__ . '/html-reference.php';
 
 return [
     'classes' => $reference,

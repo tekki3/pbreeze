@@ -1445,6 +1445,193 @@ Provider protocols:
 [Claude Messages API](https://platform.claude.com/docs/en/api/messages),
 [Claude streaming](https://platform.claude.com/docs/en/build-with-claude/streaming).
 
+## HTML Helpers
+
+`PBreeze\Html` is a lightweight static utility loaded by bootstrap. It
+builds escaped HTML without an Application service, Composer package, or a new
+template language. Existing `e()`, `View::escape()`, Breeze autoescaping, router,
+and CSRF behavior remain unchanged.
+
+```php
+use PBreeze\Html;
+
+echo Html::escape($name);
+echo Html::tag('div', 'Hello', [
+    'class' => ['container', 'active' => true],
+    'data-id' => 123,
+    'aria-live' => 'polite',
+]);
+echo Html::a('/users', 'Users');
+echo Html::img('/logo.png', ['alt' => 'PBreeze']);
+```
+
+### Escaped text and explicit trusted HTML
+
+Text and quoted attribute values reuse the existing UTF-8 escaping functions.
+Quotes, angle brackets, and ampersands are escaped; invalid UTF-8 bytes use
+replacement characters. Pass **unescaped** data, not pre-encoded entities.
+Scalar values, null, and `Stringable` values are supported; arbitrary objects
+and arrays are not text.
+
+Ordinary strings are always text, even if they look like HTML:
+
+```php
+echo Html::tag('p', '<strong>Hello</strong>');
+// <p>&lt;strong&gt;Hello&lt;/strong&gt;</p>
+
+echo Html::tag('p', Html::raw(Html::tag('strong', $name)));
+// One paragraph containing a strong element; $name is still escaped.
+```
+
+`Html::raw()` returns an explicit `HtmlString` trusted-markup wrapper. It is
+**not a sanitizer**: never pass user-submitted HTML to it. Only use it for
+application-authored markup or output composed entirely by these helpers.
+Plain `Stringable` objects are not implicitly trusted. Attribute values reject
+raw HTML; textarea, option, and title content always escape it.
+
+Helpers return ordinary HTML strings (except `raw()` and `csrf()`), so render
+them intentionally:
+
+```php
+<?= \PBreeze\Html::a('/users', $label) ?>
+```
+
+In Breeze, use explicit raw output for the completed helper result:
+
+```html
+{!! \PBreeze\Html::a('/users', $label) !!}
+```
+
+Do not use raw output on `$label` itself. `{{ $value }}` continues escaping all
+values, including `HtmlString`; this feature does not change template trust rules.
+
+### Attributes, classes, and void elements
+
+```php
+echo Html::input('text', 'name', [
+    'id' => 'name',
+    'value' => $name,
+    'required' => true,
+    'disabled' => false,
+    'class' => ['field', 'invalid' => $hasError],
+    'data-id' => 123,
+    'aria-invalid' => $hasError,
+]);
+
+// For an existing application-authored opening tag:
+echo '<div' . Html::attributes(['class' => ['panel', 'wide']]) . '>...</div>';
+
+$classes = Html::classes(['panel', ['wide', 'panel'], 'active' => true]);
+// "panel wide active" (unescaped tokens; use attributes() when rendering).
+```
+
+`attributes()` includes a leading space when nonempty. Names are normalized to
+lowercase; invalid names and case-insensitive duplicates fail. True native
+boolean attributes render bare (`required`), false/null omit them. Boolean
+attributes require actual booleans, not strings such as `"false"`. For other
+attributes, booleans become `"true"`/`"false"` strings, so ARIA/data state is
+preserved. The overloaded `download`/`capture` attributes accept true for a bare
+attribute, false to omit, or a string value. Null always omits. `data-*` and `aria-*` values are escaped, not
+automatically JSON-encoded; explicitly use `json_encode()` for structured data.
+
+Class arrays accept strings, nested lists, boolean conditional maps, and
+false/null list entries. Duplicate tokens are removed in first-seen order;
+nesting is limited to 32. Pass the resulting string through `attributes()`,
+not directly into unquoted markup.
+
+`tag()` handles uncommon elements without a helper for every tag:
+
+```php
+echo Html::tag('section', $heading, ['class' => 'summary']);
+echo Html::tag('br'); // <br>, never <br></br>
+```
+
+Void elements reject content. Element/attribute names are trusted application
+structure, not arbitrary request parameters. The lightweight API deliberately
+rejects executable/raw-text and foreign-content elements (including script,
+style, iframe, SVG, and MathML), custom element names, event handlers, inline
+styles, `srcdoc`, `srcset`, `ping`, namespace attributes, and customized built-ins.
+Use reviewed application templates for those specialized contexts. It does not
+parse or clean HTML, and these checks are not a general sanitization service.
+
+### Links and URL safety
+
+Links accept local absolute/relative paths, fragments, query strings, and
+explicit `http`, `https`, `mailto`, or `tel` URLs. Image sources and other
+supported URL attributes accept local paths or HTTP(S), not mailto/tel.
+HTTP(S) URLs require a host and reject embedded credentials.
+
+```php
+echo Html::a('/users?' . http_build_query(['search' => $search]), 'Search');
+echo Html::a('https://example.test/help', 'Help', [
+    'target' => '_blank',
+    'rel' => 'noopener noreferrer',
+]);
+```
+
+JavaScript/data/blob/file URLs, protocol-relative URLs (`//host`), whitespace,
+controls, and backslashes are rejected. Do not pre-escape URLs; attributes are
+escaped after checking. Use `rawurlencode()` for dynamic path segments and
+`http_build_query()` for queries. There is no named-route generator in the
+existing router, so the helper accepts your route path directly.
+
+External HTTP(S) links are allowed. This is not host authorization, URL
+reachability checking, SSRF protection, or a replacement for the stricter
+local-only `Response::redirect()`. Continue applying your application's allowed
+destination policy.
+
+### Form controls and CSRF
+
+```php
+echo Html::label('email', 'Email address');
+echo Html::input('email', 'email', [
+    'id' => 'email', 'value' => $email, 'required' => true,
+]);
+echo Html::textarea('description', $description, ['rows' => 5]);
+echo Html::select('status', [
+    'active' => 'Active', 'inactive' => 'Inactive',
+], 'active');
+echo Html::checkbox('active', 1, true, ['id' => 'active']);
+echo Html::radio('type', 'admin', false, ['id' => 'type-admin']);
+echo Html::button('Save', ['type' => 'submit']);
+```
+
+Labels reference the control's **id**, not its name; set matching IDs
+explicitly. Textarea values are content, never a `value` attribute. Select
+options are a flat `value => label` map; labels always escape, and selections
+match exact string representations (`0` differs from `"01"`). For multiple
+selection, set `multiple => true`, pass a selection array, and use your
+application's intended array field name:
+
+```php
+echo Html::select('roles[]', ['reader' => 'Reader', 'editor' => 'Editor'],
+    ['reader'], ['multiple' => true]);
+```
+
+Checkboxes/radios do not add hidden unchecked fields. Buttons default to
+`type="button"` to avoid accidental submission; specify `submit` explicitly.
+Attributes cannot override positional arguments such as name, href, or checked;
+invalid usage throws `InvalidArgumentException` instead of silently choosing one.
+
+For browser forms, let the normal application lifecycle start the session,
+then reuse its existing CSRF protection:
+
+```php
+$content = (string) Html::csrf($app->session)
+    . Html::input('text', 'name', ['value' => $name])
+    . Html::button('Save', ['type' => 'submit']);
+echo Html::tag('form', Html::raw($content), [
+    'method' => 'post', 'action' => '/users',
+]);
+```
+
+`Html::csrf()` wraps the existing `csrf_field()` output; it does not start a
+session or implement another token system. Existing plain-PHP `csrf_field()`
+and Breeze `@csrf($session)` remain valid alternatives. Merely rendering a
+form with `tag()` does not insert a token: explicitly include it for mutations
+and retain normal server-side CSRF, authentication, authorization, and validation.
+These are output builders, not a replacement for the [Form Generator](#form-generator).
+
 ## Form Generator
 
 Create a standalone Breeze form view using `field:type` arguments:

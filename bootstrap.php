@@ -60,6 +60,8 @@ require_once __DIR__ . '/framework/scheduler/SchedulerConsole.php';
 require_once __DIR__ . '/framework/Application.php';
 require_once __DIR__ . '/framework/Diagnostics.php';
 require_once __DIR__ . '/framework/helpers.php';
+require_once __DIR__ . '/framework/HtmlString.php';
+require_once __DIR__ . '/framework/Html.php';
 
 \PBreeze\Env::load(__DIR__ . '/.env');
 $config = require __DIR__ . '/config/app.php';

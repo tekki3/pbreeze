@@ -138,6 +138,7 @@ try {
     require __DIR__ . '/file-readers.php';
     require __DIR__ . '/formatting.php';
     require __DIR__ . '/strings.php';
+    require __DIR__ . '/html.php';
     require __DIR__ . '/uploads.php';
     require __DIR__ . '/logging.php';
     require __DIR__ . '/production.php';
