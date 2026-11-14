@@ -57,17 +57,16 @@ final class Api
         return $path === '/api' || str_starts_with($path, '/api/');
     }
 
-    /** @param array<string, string> $rules
+    /** @param array<string, string|list<string|RuleInterface>> $rules
      *  @return array<string, mixed>
      */
-    public static function validate(Request $request, array $rules): array
+    public static function validate(Request $request, array $rules, array $messages = [], array $attributes = []): array
     {
-        $data = $request->all();
-        $errors = Validator::errors($data, $rules);
-        if ($errors !== []) {
-            throw new ApiValidationException($errors);
+        try {
+            return $request->validate($rules, $messages, $attributes);
+        } catch (ValidationException $error) {
+            throw new ApiValidationException($error->errors->toArray());
         }
-        return array_intersect_key($data, $rules);
     }
 
     /** @param array<string, mixed> $operation */
@@ -152,7 +151,7 @@ final class Api
         $status = match (true) {
             $error instanceof HttpException => $error->status,
             $error instanceof AuthException => $error->status,
-            $error instanceof ApiValidationException => 422,
+            $error instanceof ApiValidationException, $error instanceof ValidationException => 422,
             $error instanceof RecordNotFoundException => 404,
             default => 500,
         };
@@ -161,12 +160,14 @@ final class Api
         }
         $message = match (true) {
             $status === 500 => 'Something went wrong. Please try again later.',
-            $error instanceof AuthException, $error instanceof ApiValidationException => 'Check your input.',
+            $error instanceof AuthException, $error instanceof ApiValidationException, $error instanceof ValidationException => 'Check your input.',
             default => $error->getMessage(),
         };
         $body = ['error' => ['status' => $status, 'message' => $message]];
         if ($error instanceof AuthException || $error instanceof ApiValidationException) {
             $body['error']['details'] = $error->errors;
+        } elseif ($error instanceof ValidationException) {
+            $body['error']['details'] = $error->errors->toArray();
         }
         $response = Response::json($body, $status);
         $headers = $error instanceof HttpException ? $error->headers : [];

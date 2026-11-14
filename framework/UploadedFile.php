@@ -135,6 +135,12 @@ final class UploadedFile
         return ['extension' => $extension, 'mime' => self::mediaType($extension), 'size' => $size];
     }
 
+    /** @return list<string> */
+    public static function extensions(): array
+    {
+        return array_keys(self::TYPES);
+    }
+
     /** @internal */
     public function moveTo(string $path): void
     {

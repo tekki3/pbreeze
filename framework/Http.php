@@ -98,7 +98,7 @@ final class Request
                 if (!$decoded instanceof \stdClass) {
                     throw new HttpException(400, 'The JSON body must be an object.');
                 }
-                $body = get_object_vars($decoded);
+                $body = json_decode($raw, true, 32, JSON_THROW_ON_ERROR);
             } catch (JsonException) {
                 throw new HttpException(400, 'Invalid JSON body.');
             }
@@ -121,6 +121,11 @@ final class Request
     public function all(): array
     {
         return $this->body;
+    }
+
+    public function validate(array $rules, array $messages = [], array $attributes = []): array
+    {
+        return Validator::make($this->all(), $rules, $messages, $attributes)->validate();
     }
 
     public function header(string $name): ?string

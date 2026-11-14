@@ -169,6 +169,9 @@ final class Application
 
     public static function errorResponse(Throwable $error, bool $debug = false, ?Logger $logger = null): Response
     {
+        if ($error instanceof ValidationException) {
+            return new Response('Check your input.', 422, ['Content-Type' => 'text/plain; charset=UTF-8']);
+        }
         if ($error instanceof HttpException) {
             if ($error->status >= 500) {
                 Logger::report($error, $logger);

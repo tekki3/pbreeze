@@ -2882,6 +2882,318 @@ origin and `/api/`. The Swagger client does not send session cookies or store
 authorization in localStorage/sessionStorage; reloading clears the token.
 The included assets remain statically public when docs are disabled.
 
+## Validation Component
+
+The modern validator works on arrays independently of HTTP, sessions,
+databases, Composer, or an Application instance. Bootstrap loads it explicitly;
+standalone scripts can require `framework/Validator.php`.
+
+```php
+use PBreeze\Validator;
+
+$validator = Validator::make($data, [
+    'name' => 'required|string|max:100',
+    'email' => 'required|email',
+    'age' => 'nullable|integer|min:18',
+    'active' => 'boolean',
+    'password' => 'required|string|min:8',
+]);
+
+if ($validator->fails()) {
+    $errors = $validator->errors()->toArray(); // field => list of messages
+}
+if ($validator->passes()) {
+    $validated = $validator->validated();
+}
+```
+
+`make()` returns a `ValidationResult`; rules are normalized once, and one
+evaluation is cached across `passes()`, `fails()`, `errors()`, `validated()`,
+and `validate()`. Unknown/malformed rules throw immediately, even for missing
+optional fields. Construct a new result for new input.
+
+The existing static `Validator::errors($data, $rules)` remains a compatibility
+API for existing authentication/forms: it supports its original seven rules,
+messages, Unicode string-size checks, and optional-empty skipping. Use
+`make()` for all new rules and the explicit null/missing semantics below.
+
+### Presence, null, and types
+
+Missing fields skip ordinary value rules. Use `required` or `present` when the
+key must exist:
+
+| Rule | Meaning |
+|---|---|
+| `required` | Exists and is not null, an empty/ASCII-whitespace-only string, or an empty array |
+| `required_if:type,company,nonprofit` | Required when another field matches one of these values |
+| `required_unless:type,person` | Required unless another field matches; missing comparison fields do not match |
+| `present` | Key must exist, even if its value is null |
+| `nullable` | Null skips value rules, but never overrides a required/present rule |
+| `sometimes` | If missing, skip the entire field, including presence rules |
+| `string` | Valid UTF-8 string; no coercion |
+| `integer` | PHP integer or signed decimal integer string, within PHP's integer range, without whitespace or leading zeroes except zero itself |
+| `numeric`, `float` | Finite PHP number or decimal/exponent string, without whitespace; integers also qualify |
+| `boolean` | Exactly true, false, 0, 1, `"0"`, or `"1"` |
+| `array` | PHP array; does not automatically validate/copy children |
+
+`0`, `"0"`, and `false` satisfy `required`. A present null fails `string`
+unless `nullable` is specified; a present empty string passes `string` but
+fails `integer`/`email`. No automatic trimming, string-to-number conversion,
+HTML stripping, or null conversion occurs.
+
+For conditional comparison lists, string/integer/float values compare by their
+exact string representation. Booleans match only `true`/`false` literals and
+null matches only `null`; false never silently equals zero.
+
+### Sizes, strings, formatting, and comparisons
+
+| Rules | Meaning |
+|---|---|
+| `min:n`, `max:n`, `between:min,max` | Inclusive numeric magnitude for native numbers or fields with integer/numeric/float rules; otherwise Unicode code-point length for strings or item count for arrays |
+| `length:n` | Exact string code-point length or array count |
+| `regex:/pattern/u` | Native PCRE match; invalid patterns and engine/resource errors throw explicitly |
+| `alpha`, `alpha_num` | Nonempty Unicode letters, or letters/numbers; spaces, punctuation and combining marks outside those categories do not qualify |
+| `email` | Native `FILTER_VALIDATE_EMAIL` |
+| `url` | Absolute HTTP(S) URL without credentials, whitespace, controls, or backslashes |
+| `uuid` | Canonical hyphenated UUID with version 1..8 and RFC variant bits |
+| `ip`, `ipv4`, `ipv6` | Native IP address validation, optionally restricted to one family |
+| `json` | Syntactically valid JSON string, depth at most 64; scalar JSON is permitted |
+| `same:other`, `different:other` | Strict PHP identity/nonidentity; comparison field must exist |
+| `in:a,b`, `not_in:a,b` | Membership/nonmembership using the conditional-list comparison semantics above |
+| `confirmed` | Strict equality to the sibling `field_confirmation` value |
+
+Rules accept pipe strings or lists of individual rule strings/objects:
+
+```php
+$validator = Validator::make($data, [
+    'name' => ['required', 'string', 'max:100'],
+    'pet' => ['string', 'regex:/^(cat|dog)$/u'],
+]);
+```
+
+Use **array syntax for regex patterns containing `|`**, so alternation is not
+mistaken for a rule separator. Patterns are trusted application configuration,
+not user-supplied expressions. PCRE's configured resource limits still apply.
+Size arguments accept finite signed/decimal bounds; `length` and `max_size`
+require nonnegative integers. Integer bounds within PHP's integer range compare
+as integers; decimal/out-of-range magnitudes use PHP floating-point precision,
+not arbitrary-precision financial arithmetic.
+
+### Dates
+
+`date` accepts strict `YYYY-MM-DD` or ISO timestamps with `T`, seconds, optional
+fractional seconds, and optional `Z`/numeric offset. Invalid calendar dates and
+rollover times fail. Timezone-less input uses UTC independently of the global
+PHP timezone. Relative strings such as `tomorrow` are not accepted.
+
+```php
+$data = Validator::make($input, [
+    'start' => 'required|date',
+    'end' => 'required|date|after:@start|before:2030-01-01',
+    'display_date' => 'date_format:d/m/Y',
+])->validate();
+```
+
+`before`/`after` are exclusive and accept an ISO literal or explicit `@field`
+reference; referenced fields must contain valid ISO dates. `date_format`
+uses native PHP date-format characters with exact round-trip matching. Do not
+combine `date` with a non-ISO `date_format` expecting conversion.
+
+### Nested data, wildcard arrays, and filtered output
+
+```php
+$data = Validator::make($input, [
+    'user' => 'required|array',
+    'user.name' => 'required|string',
+    'user.email' => 'required|email',
+    'users' => 'required|array|min:1|max:100',
+    'users.*.email' => 'required|email',
+    'tags' => 'array',
+    'tags.*' => 'string|max:30',
+])->validate();
+```
+
+Errors use concrete paths such as `users.1.email`. Comparison-field wildcards
+are resolved at the same indexes, for example
+`users.*.end => after:@users.*.start`. Dot paths traverse arrays only.
+Dots/asterisks inside literal keys are not supported; map such imported keys to
+simple field names first. Empty arrays expand to no wildcard matches: require
+and bound the parent array separately. Wildcards are never a substitute for
+validating the container's type.
+
+**Array rules validate containers, not all their descendants.** Validated output
+starts each covered array as `[]`, then copies only covered descendants.
+For example, validating `user => array` and `user.email => email` excludes
+`user.admin`. A standalone `user => array` produces `user => []`; add rules
+for every permitted child or `user.*` for all permitted scalar children.
+This intentional filtering also applies to the Request/API adapters. Array
+keys/indexes are preserved, including sparse numeric indexes.
+
+Missing optional fields are omitted. Present allowed nulls remain null.
+No partial output is returned on failure: both `validated()` and `validate()`
+throw `ValidationException` when any field is invalid.
+
+### Error messages and field labels
+
+```php
+$validator = Validator::make($input,
+    ['email_address' => 'required|email', 'users.*.email' => 'email'],
+    [
+        'email_address.required' => 'An email address is required.',
+        'email_address.email' => 'Please provide a valid :attribute.',
+        'users.*.email.email' => 'Please check this row email.',
+    ],
+    ['email_address' => 'email address'],
+);
+
+$errors = $validator->errors();
+$all = $errors->all();                 // Flat message list
+$first = $errors->first();             // First message, or null
+$email = $errors->first('email_address');
+$messages = $errors->get('email_address'); // [] when absent
+$hasError = $errors->has('email_address');
+$map = $errors->toArray();
+$json = json_encode($errors, JSON_THROW_ON_ERROR);
+```
+
+Message precedence is concrete `field.rule`, declared wildcard `pattern.rule`,
+global `rule`, then the default English message. Attribute labels accept exact
+fields or the declared wildcard pattern. Supported placeholders are
+`:attribute`, `:field`, `:rule`, `:min`, `:max`, and `:length`.
+`get()`/`first(field)`/`has()` use exact concrete paths, not wildcard queries.
+The framework has locale-aware number/date formatting but no translation
+service; supplied message/label maps provide the localization seam without
+introducing a new translation subsystem.
+
+Errors never automatically include submitted values. Messages are still plain,
+untrusted output: escape them in HTML, including application-provided labels.
+JSON serialization produces the field/message map (or `{}` when empty).
+
+### Request, API, and exception integration
+
+```php
+$data = $request->validate([
+    'name' => 'required|string|max:100',
+    'email' => 'required|email',
+]);
+```
+
+This validates the parsed **body only**, never query parameters or uploads
+implicitly. JSON capture now converts nested JSON objects to associative
+arrays for consistent dot-path validation. For query filters, explicitly build
+an array from `$request->query()`.
+
+On failure, `ValidationException` exposes a `ValidationErrors` object as
+`$exception->errors`; it does not retain original input. API routes can call
+`$request->validate()` directly: existing API exception handling sends HTTP 422
+using PBreeze's established envelope, not a second response convention:
+
+```json
+{
+  "error": {
+    "status": 422,
+    "message": "Check your input.",
+    "details": {
+      "email": ["The email field must be a valid email value."]
+    }
+  }
+}
+```
+
+`Api::validate($request, $rules, $messages, $attributes)` uses the same engine
+but retains `ApiValidationException` for compatibility. Web application
+exception handling returns generic plain-text 422; form controllers can instead
+use `fails()`/`errors()->toArray()` or catch `ValidationException` to render
+field messages using their existing views. CSRF, authentication, rate limiting,
+and authorization remain separate.
+
+### Imports, DTOs/models, and custom rules
+
+```php
+$rows = \PBreeze\FileReader::iterate($csvPath);
+foreach ($rows as $row) {
+    $data = Validator::make($row, [
+        'email' => 'required|email',
+        'age' => 'nullable|integer|min:18',
+    ])->validate();
+    // Apply business authorization and persistence explicitly.
+}
+```
+
+CSV values stay strings, so use `integer`/`numeric` when numeric bounds are
+intended. Blank CSV cells are empty strings, not null. JSON/YAML reader arrays
+work directly. XML's explicit node representation can be validated with matching
+paths or mapped to a simpler record first. Map DTO/model input explicitly to
+arrays; the validator never reflects into objects, invokes model hydration,
+or mass-assigns fields.
+
+Custom rules implement the small `PBreeze\RuleInterface`:
+
+```php
+final class VatNumberRule implements \PBreeze\RuleInterface
+{
+    public function validate(string $field, mixed $value, array $data): bool
+    {
+        return is_string($value) && preg_match('/^NL[0-9]{9}B[0-9]{2}$/D', $value) === 1;
+    }
+
+    public function message(): string
+    {
+        return 'The :attribute value is not a valid VAT number.';
+    }
+}
+
+$data = Validator::make($input, [
+    'vat_number' => ['required', new VatNumberRule()],
+])->validate();
+```
+
+Explicitly require custom rule classes; there is no class discovery.
+Custom rules run for existing fields (including empty values), but skip allowed
+nullable nulls; use `required` for presence. They receive the concrete field,
+unchanged value, and original array. Business/database failures propagate rather
+than becoming successful defaults. A custom rule may accept an explicitly
+injected `Database`/repository for future `unique`/`exists` checks; the core
+never opens a connection. Enforce database uniqueness with database constraints
+as well, since validation alone cannot prevent races. No built-in database rule
+or SQL table name is inferred from untrusted input.
+
+### Uploaded files
+
+When bootstrap has loaded the existing upload abstraction, explicitly pass the
+selected `UploadedFile` objects:
+
+```php
+$data = Validator::make(['document' => $request->file('document')], [
+    'document' => 'required|file|mimes:pdf|max_size:2097152',
+])->validate();
+```
+
+`file`, `mimes`, `mimetypes`, and `max_size` all reuse
+`UploadedFile::validate()`: actual HTTP-upload provenance, nonempty content,
+extension/MIME matching, supported image headers, and Office-package checks.
+`mimes` is an explicit comma-separated list from the existing supported
+extension allowlist. `mimetypes` accepts exact canonical detected MIME names,
+not wildcard patterns or the browser's claimed type. `max_size` is **bytes**.
+No file rule accepts a local path instead of an HTTP upload.
+
+File rules without a `max_size` impose no additional validator byte cap
+(PHP/web-server limits still apply). Supply a bound explicitly or use the
+existing Uploads service for configured environment limits. Unsupported upload
+formats remain unsupported. Content/type/size failures become field errors;
+server-side upload failures propagate normally. Validated output retains the
+same accepted object; storing/moving the file is a separate authorized operation.
+
+### Boundaries
+
+Validation is not sanitization, output escaping, authorization, CSRF, or
+business correctness. Never interpolate validated values into SQL/shell code;
+retain parameter binding and context-appropriate escaping.
+Limits are 1000 field definitions, 32 path segments/512 bytes, and 100000
+wildcard expansion steps. Bound incoming payloads/array sizes and trusted regex
+complexity at their own boundaries. Configuration errors and operational
+failures throw explicitly; they never become empty successful validation.
+
 ## Views and Validation
 
 ### Breeze Templates
@@ -3095,7 +3407,11 @@ not a sandbox for visitors. PHP expressions can execute PHP functions;
 never let visitors upload or modify templates or choose view paths.
 View data names beginning with `__` are reserved for the engine.
 
-### Validation
+### Validation in existing forms
+
+This section shows the backward-compatible static API used by existing forms.
+For expanded rules, nullable fields, nested arrays, filtered output, and custom
+rules, use the [Validation Component](#validation-component).
 
 ```php
 $errors = \PBreeze\Validator::errors($request->all(), [

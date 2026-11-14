@@ -139,6 +139,7 @@ try {
     require __DIR__ . '/formatting.php';
     require __DIR__ . '/strings.php';
     require __DIR__ . '/html.php';
+    require __DIR__ . '/validation.php';
     require __DIR__ . '/uploads.php';
     require __DIR__ . '/logging.php';
     require __DIR__ . '/production.php';
@@ -546,6 +547,8 @@ PHP);
         $environment['PBREEZE_TEST_UPLOAD_ROOT'] = $temp;
         file_put_contents($public . '/index.php', '<?php if (str_starts_with($_SERVER["REQUEST_URI"], "/__documents/")) { require '
             . var_export(__DIR__ . '/fixtures/documents.php', true)
+            . '; return; } if (str_starts_with($_SERVER["REQUEST_URI"], "/__validation/")) { require '
+            . var_export(__DIR__ . '/fixtures/validation.php', true)
             . '; return; } if (str_starts_with($_SERVER["REQUEST_URI"], "/__uploads")) { require '
             . var_export(__DIR__ . '/fixtures/uploads.php', true) . '; return; } require '
             . var_export($root . '/public/index.php', true) . ';');
@@ -688,6 +691,7 @@ PHP);
         englishHttp($base);
         documentHttp($base);
         uploadHttp($base);
+        validationHttp($base);
         test('HTTP readiness succeeds after deployed migrations and private storage are ready', static function () use ($base): void {
             $ready = http($base, '/ready');
             same(200, $ready['status']);

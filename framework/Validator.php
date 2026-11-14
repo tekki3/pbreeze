@@ -5,8 +5,19 @@ namespace PBreeze;
 
 use InvalidArgumentException;
 
+require_once __DIR__ . '/RuleInterface.php';
+require_once __DIR__ . '/ValidationErrors.php';
+require_once __DIR__ . '/ValidationException.php';
+require_once __DIR__ . '/ValidationResult.php';
+
 final class Validator
 {
+    /** @param array<string, string|list<string|RuleInterface>> $rules */
+    public static function make(array $data, array $rules, array $messages = [], array $attributes = []): ValidationResult
+    {
+        return new ValidationResult($data, $rules, $messages, $attributes);
+    }
+
     /**
      * @param array<string, mixed> $data
      * @param array<string, string> $rules
@@ -14,9 +25,7 @@ final class Validator
      */
     public static function errors(array $data, array $rules): array
     {
-        $errors = [];
         foreach ($rules as $field => $definition) {
-            $value = $data[$field] ?? null;
             foreach (explode('|', $definition) as $rule) {
                 [$name, $argument] = array_pad(explode(':', $rule, 2), 2, null);
                 if (!in_array($name, ['required', 'string', 'email', 'integer', 'min', 'max', 'confirmed'], true)) {
@@ -25,32 +34,8 @@ final class Validator
                 if (in_array($name, ['min', 'max'], true) && ($argument === null || !ctype_digit($argument))) {
                     throw new InvalidArgumentException("$name requires a nonnegative integer.");
                 }
-                if ($name !== 'required' && ($value === null || $value === '')) {
-                    continue;
-                }
-                $length = is_string($value) ? preg_match_all('/./us', $value) : false;
-                $valid = match ($name) {
-                    'required' => $value !== null && $value !== [] && (!is_string($value) || trim($value) !== ''),
-                    'string' => is_string($value),
-                    'email' => is_string($value) && filter_var($value, FILTER_VALIDATE_EMAIL) !== false,
-                    'integer' => (is_int($value) || is_string($value)) && filter_var($value, FILTER_VALIDATE_INT) !== false,
-                    'min' => $length !== false && $length >= (int) $argument,
-                    'max' => $length !== false && $length <= (int) $argument,
-                    'confirmed' => is_string($value) && $value === ($data[$field . '_confirmation'] ?? null),
-                };
-                if (!$valid) {
-                    $errors[$field][] = match ($name) {
-                        'required' => 'This field is required.',
-                        'string' => 'Enter text.',
-                        'email' => 'Enter a valid email address.',
-                        'integer' => 'Enter an integer.',
-                        'min' => "Use at least $argument characters.",
-                        'max' => "Use no more than $argument characters.",
-                        'confirmed' => 'The confirmation does not match.',
-                    };
-                }
             }
         }
-        return $errors;
+        return (new ValidationResult($data, $rules, [], [], legacy: true))->errors()->toArray();
     }
 }
