@@ -30,6 +30,26 @@ Supports validated multipart uploads with explicit allowed types, a 2 MiB
 default file limit, random storage keys, and private storage.
 Includes UTF-8 string manipulation, grapheme-safe slicing/truncation,
 slug and naming helpers, and cryptographic random strings.
+Also includes immutable native date operations, escaped HTML helpers, extensible
+nested/wildcard validation, structured file readers, and an eager data-mapping
+pipeline. Application-owned file storage supports local, SFTP, S3-compatible,
+and Azure Blob backends. Request/response abstractions and central exception
+handling provide testable HTTP boundaries and private production errors.
+General-purpose database jobs and a native scheduler complement the separate
+outgoing-email queue.
+
+### Feature guide
+
+| Task | Guide |
+|---|---|
+| Read CSV, JSON, XML, YAML or YML | [Structured File Reading](#structured-file-reading) |
+| Filter, map, validate and export data | [Data Transformation and Mapping](#data-transformation-and-mapping) |
+| Store files locally or remotely | [File Storage Abstraction](#file-storage-abstraction) |
+| Read request data and return HTML/JSON/files | [Request and response abstractions](#request-and-response-abstractions) |
+| Handle failures safely | [Central exception handling](#central-exception-handling) |
+| Validate arrays, forms, imports and API payloads | [Validation Component](#validation-component) |
+| Build escaped HTML | [HTML Helpers](#html-helpers) |
+| Parse dates, add calendar days and show relative time | [Date/Time Utility](#datetime-utility) |
 
 Read the complete [HTML user manual](docs/index.html) for beginner walkthroughs,
 every public function, CLI commands, and environment settings. Open it directly
@@ -231,7 +251,9 @@ authentication scaffolding.
 | Authentication | Included registration/login, verification, password reset, and database-backed bearer tokens; application-specific roles and record ownership remain your responsibility | Core authentication facilities; starter kits provide ready-made UI flows, with additional first-party packages for other authentication needs | Official Shield package provides authentication and authorization, including access tokens, roles, and permissions; it is separate from the core |
 | Sessions | Native PHP storage or opt-in database sessions; Redis/Memcached cache support does not add session drivers | Includes file, database, cookie, Redis, Memcached, DynamoDB, and nonpersistent array drivers, subject to prerequisites | Includes file, database, Redis, and Memcached session handlers, subject to driver prerequisites |
 | Shared cache | Native Redis or Memcached extensions; intentionally limited cache API | Multiple cache backends and a broader framework cache API | Built-in cache component with multiple handlers, including file, Redis, and Memcached |
-| Background work | Database-backed outgoing-email queue and bounded CLI mail worker; no general-purpose job queue or built-in task scheduler | General-purpose job queues, workers, retries, job chaining/batching, and task scheduling | General-purpose Queue and Tasks scheduler are available as separate official packages |
+| Background work | Native scheduler and database-backed general-purpose queue with explicit job registries, retries and uncertain-work recovery; separate outgoing-email queue | General-purpose job queues, workers, retries, job chaining/batching, and task scheduling | General-purpose Queue and Tasks scheduler are available as separate official packages |
+| File storage | Application-owned local, native SSH2 SFTP, signed S3-compatible and Azure Blob drivers; bounded string API, no automatic credential discovery | Filesystem abstraction with local/cloud adapters and broader streaming/file APIs, subject to packages and configuration | File handling utilities; remote/cloud integration depends on chosen libraries or packages |
+| Structured imports | Native CSV/JSON/XML readers and ext-yaml YAML/YML; eager Data filter/map/transform/validate/export pipeline with explicit DTO factories | Collections, validation and filesystem tools can compose imports; format-specific parsing depends on selected libraries | Validation and data/file tools can compose imports; format-specific parsing depends on selected libraries |
 | Extension model | Edit explicit PHP services and registries; third-party PHP packages are not part of the framework's dependency model | Composer packages, first-party integrations, and framework extension points | Framework libraries/modules, Composer integration, and optional official packages |
 | Deployment scope | Supplied domain-root templates for Apache, Nginx, FrankenPHP standard mode, and IIS; not subdirectory hosting or persistent FrankenPHP workers | Public-directory deployments; official documentation includes Nginx and FrankenPHP, with additional deployment tooling available | Public-directory application structure; configure the chosen supported PHP/web-server environment |
 | Release and maintenance planning | No release version or formal support window is currently declared; assess maintenance capacity before adopting | Published versioning and support policy: framework bug fixes for 18 months and security fixes for two years | Current requirements guide states that only the latest framework version is maintained; review upgrade notes and package compatibility |
@@ -563,7 +585,8 @@ Run one command at a time. The last command, `db:seed`, is optional.
 If a command reports an error, resolve it before moving on.
 
 `storage:prepare` creates private logs, uploads, and compiled-view
-directories. `migrate` creates/applies the bundled schema in the configured
+directories, plus `files` when local file storage is selected.
+`migrate` creates/applies the bundled schema in the configured
 SQLite file. `migrate:status` should show applied batch numbers rather than
 `OPEN`. The optional default seeder adds a welcome note; it does **not**
 create an administrator or a preconfigured login.
@@ -786,7 +809,7 @@ public/              Only public document root
 routes/web.php       Explicit imports and route registration
 routes/api.php       Explicit API module imports (also updated by CLI)
 routes/api/          API routes and OpenAPI metadata in the same definition
-storage/             Migration lock; writable by CLI
+storage/             Private logs/uploads/views/files and migration lock
 tests/run.php        Native tests, including real HTTP requests
 bootstrap.php        Explicit framework registration
 breeze               CLI, run with php breeze
@@ -5381,8 +5404,9 @@ php breeze doctor
 ```
 
 Back up the database first and use backward-compatible migrations during rolling
-releases. `storage:prepare` creates only the private storage root and its `logs`,
-`uploads`, and `views` children. It does not move files, adjust existing
+releases. `storage:prepare` creates the private storage root and its `logs`,
+`uploads`, and `views` children, plus `files` for local file storage.
+It does not provision remote buckets/containers, move files, adjust existing
 ownership, configure sessions, or change database contents.
 
 `doctor` prints `PASS`, `WARN`, or `FAIL` for production flags, trusted HTTPS
