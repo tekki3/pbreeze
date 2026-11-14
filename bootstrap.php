@@ -47,6 +47,7 @@ require_once __DIR__ . '/framework/mail/MailConsole.php';
 require_once __DIR__ . '/framework/Auth.php';
 require_once __DIR__ . '/framework/ApiTokens.php';
 require_once __DIR__ . '/framework/Api.php';
+require_once __DIR__ . '/framework/ExceptionHandler.php';
 require_once __DIR__ . '/framework/Clock.php';
 require_once __DIR__ . '/framework/queue/Queue.php';
 require_once __DIR__ . '/framework/scheduler/ScheduleExpression.php';

@@ -1,7 +1,6 @@
 <?php
 declare(strict_types=1);
 
-use PBreeze\Application;
 use PBreeze\Request;
 use PBreeze\Response;
 
@@ -26,9 +25,13 @@ try {
         '/__http/missing' => Response::file($directory . '/not-there.txt'),
         '/__http/html' => Response::html('<p>Hello</p>'),
         '/__http/no-content' => Response::html('must not be emitted', 204),
+        '/__http/error', '/__http/debug' => throw new RuntimeException('http-private-secret'),
+        '/__http/unavailable' => throw new \PBreeze\HttpException(503, 'http-private-secret', ['Retry-After' => '60']),
         default => throw new \PBreeze\HttpException(404, 'Not found.'),
     };
     $response->send($request->method() === 'HEAD');
 } catch (Throwable $error) {
-    Application::errorResponse($error)->send(($_SERVER['REQUEST_METHOD'] ?? '') === 'HEAD');
+    $debug = isset($request) && $request->path === '/__http/debug';
+    (new \PBreeze\ExceptionHandler($debug ? 'local' : 'production', $debug))
+        ->render($error, $request ?? null)->send(($_SERVER['REQUEST_METHOD'] ?? '') === 'HEAD');
 }

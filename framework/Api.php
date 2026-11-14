@@ -32,6 +32,7 @@ final class Api
         private readonly string $name,
         private readonly bool $docsEnabled,
         private readonly ?Logger $logger = null,
+        private readonly ?ExceptionHandler $exceptions = null,
     ) {
         $this->tokens = new ApiTokens($db);
         $this->router = new Router();
@@ -142,39 +143,13 @@ final class Api
             $this->limit($request->clientIp());
             return $this->router->dispatch($request);
         } catch (Throwable $error) {
-            return self::errorResponse($error, $this->logger);
+            return ($this->exceptions ?? new ExceptionHandler(logger: $this->logger))->render($error, $request, true);
         }
     }
 
     public static function errorResponse(Throwable $error, ?Logger $logger = null): Response
     {
-        $status = match (true) {
-            $error instanceof HttpException => $error->status,
-            $error instanceof AuthException => $error->status,
-            $error instanceof ApiValidationException, $error instanceof ValidationException => 422,
-            $error instanceof RecordNotFoundException => 404,
-            default => 500,
-        };
-        if ($status >= 500) {
-            Logger::report($error, $logger);
-        }
-        $message = match (true) {
-            $status === 500 => 'Something went wrong. Please try again later.',
-            $error instanceof AuthException, $error instanceof ApiValidationException, $error instanceof ValidationException => 'Check your input.',
-            default => $error->getMessage(),
-        };
-        $body = ['error' => ['status' => $status, 'message' => $message]];
-        if ($error instanceof AuthException || $error instanceof ApiValidationException) {
-            $body['error']['details'] = $error->errors;
-        } elseif ($error instanceof ValidationException) {
-            $body['error']['details'] = $error->errors->toArray();
-        }
-        $response = Response::json($body, $status);
-        $headers = $error instanceof HttpException ? $error->headers : [];
-        if ($error instanceof AuthException && $error->retryAfter > 0) {
-            $headers['Retry-After'] = (string) $error->retryAfter;
-        }
-        return new Response($response->body, $status, $response->headers + $headers);
+        return (new ExceptionHandler(logger: $logger))->render($error, json: true);
     }
 
     /** @return array<string, mixed> */
@@ -189,7 +164,8 @@ final class Api
                 'securitySchemes' => ['bearerAuth' => ['type' => 'http', 'scheme' => 'bearer', 'description' => 'Token issued by php breeze api:token. No browser session authentication.']],
                 'schemas' => [
                     'Error' => ['type' => 'object', 'required' => ['error'], 'properties' => [
-                        'error' => ['type' => 'object', 'required' => ['status', 'message'], 'properties' => [
+                        'error' => ['type' => 'object', 'required' => ['code', 'status', 'message'], 'properties' => [
+                            'code' => ['type' => 'string', 'description' => 'INTERNAL_ERROR for server errors; HTTP_<status> for expected client errors.'],
                             'status' => ['type' => 'integer'], 'message' => ['type' => 'string'],
                             'details' => ['type' => 'object', 'additionalProperties' => ['type' => 'array', 'items' => ['type' => 'string']]],
                         ]],

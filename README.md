@@ -1849,6 +1849,82 @@ Controllers should return responses, not call `send()` themselves.
 
 ## Application Logging
 
+### Central exception handling
+
+`PBreeze\ExceptionHandler` is shared by the web lifecycle and API dispatch:
+
+```php
+$response = $app->exceptions->render($exception, $request);
+// Return the response; Application::run() normally does this automatically.
+```
+
+It handles `Throwable`, including native PHP errors, without Composer or a
+process-global exception handler. Request-capture, route, session-persistence,
+and pre-output file-delivery failures use the same mapping. Startup failures
+also use it once loaded; earlier bootstrap failures use a minimal safe JSON
+fallback. Failures after output starts are logged without appending another
+error body. Health/readiness status responses and CLI errors keep their
+existing specialized behavior.
+
+**Development diagnostics** require both settings:
+
+```dotenv
+APP_ENV=local
+APP_DEBUG=true
+```
+
+Server failures then return HTTP 500 (or the explicit server-error status)
+with `text/plain; charset=UTF-8`, containing exception class, message, file,
+line, stack trace, and a limited request summary (method, path, direct IP).
+Trace arguments, body/query values, headers, cookies and uploaded-file data
+are omitted. Failures before capture say request context is unavailable.
+Exception messages and route paths can still contain sensitive information:
+never expose local debug mode to untrusted users.
+
+**Production and all non-local environments** suppress diagnostic details,
+even if `APP_DEBUG=true` is mistakenly configured. With local debug disabled,
+the same privacy behavior applies. Unexpected web errors return:
+
+```json
+{
+  "error": {
+    "code": "INTERNAL_ERROR",
+    "message": "An unexpected error occurred."
+  }
+}
+```
+
+JSON/API requests retain the existing `error.status` integer in addition to
+this code/message. No exception class, private message, file, line, stack trace,
+request payload or previous exception is returned. Every server-error status,
+including an explicitly thrown `HttpException(503, ...)`, uses the generic
+message; `Retry-After` can be retained, while arbitrary server-error headers
+are discarded. Server failures are reported once through the existing logger;
+its safe report omits exception messages, traces, arguments and request data.
+
+Expected **4xx** failures remain usable: browser HTTP errors use safe plain-text
+messages, validation returns 422, missing records return generic 404, and
+`Allow`/`Retry-After` survive. API/JSON errors include `code: "HTTP_422"` (or
+the relevant status), `status`, `message`, and existing validation `details`.
+Only put deliberately public text in HTTP exceptions and custom validation
+messages; they are not automatically sanitized for secrets.
+
+For independent usage:
+
+```php
+use PBreeze\ExceptionHandler;
+
+$handler = new ExceptionHandler('production', false, $logger);
+$response = $handler->render($exception); // Request context is optional.
+```
+
+`Application::errorResponse()` and `Api::errorResponse()` remain compatibility
+adapters. Prefer `$app->exceptions` for environment-aware handling; the static
+web adapter's explicit `debug=true` opts into local diagnostics without reading
+environment configuration. This intentionally replaces the old generic
+plain-text web 500 message with the JSON contract above. Local API server
+failures also become diagnostic plain text when debug is explicitly enabled.
+
 Use the native `$app->log` service for structured application logs. No Composer,
 PSR interface, database migration, or external logging package is required.
 
@@ -3031,7 +3107,7 @@ at the edge. This limit is not DDoS protection.
 API errors consistently use:
 
 ```json
-{"error":{"status":422,"message":"Check your input.","details":{"message":["This field is required."]}}}
+{"error":{"code":"HTTP_422","status":422,"message":"Check your input.","details":{"message":["This field is required."]}}}
 ```
 
 `details` is present only for validation errors. Unknown routes return JSON 404,
@@ -4354,8 +4430,9 @@ database check, use `query()->where(...)->exists()`.
 After a write, defaults and database values are reloaded. Saving an unchanged
 model writes nothing. `refresh()` or a write on a deleted row throws
 `RecordNotFoundException`; an unchanged `save()` does not check again.
-This exception does not automatically produce an HTTP 404: translate it
-in your controller to `HttpException(404, ...)` if desired.
+The central exception handler maps `RecordNotFoundException` to a generic
+HTTP 404 without exposing record identifiers. Catch it explicitly when your
+controller needs a different response.
 
 `fill()` and field assignment accept only `$fillable`. Unknown fields
 are not silently ignored. The primary key of a saved model and

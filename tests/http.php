@@ -159,7 +159,8 @@ test('Application maps pre-output file delivery failures to a logged error respo
     same('', $errors);
     $result = json_decode($output, true, 32, JSON_THROW_ON_ERROR);
     same(500, $result['status']);
-    same('Something went wrong. Please try again later.', $result['body']);
+    same(['error' => ['code' => 'INTERNAL_ERROR', 'message' => 'An unexpected error occurred.']],
+        json_decode($result['body'], true, 32, JSON_THROW_ON_ERROR));
     $logs = glob($directory . '/storage/logs/app-*.jsonl');
     check($logs !== false && count($logs) > 0);
     $entry = json_decode(trim(file_get_contents($logs[0])), true, 32, JSON_THROW_ON_ERROR);
@@ -171,6 +172,27 @@ test('Application maps pre-output file delivery failures to a logged error respo
 
 function requestResponseHttp(string $base): void
 {
+    test('HTTP exception handler delivers safe production JSON and opt-in plain-text diagnostics', static function () use ($base): void {
+        foreach (['error' => 500, 'unavailable' => 503] as $route => $status) {
+            $response = http($base, '/__http/' . $route);
+            same($status, $response['status']);
+            same(['error' => ['code' => 'INTERNAL_ERROR', 'message' => 'An unexpected error occurred.']],
+                json_decode($response['body'], true, 32, JSON_THROW_ON_ERROR));
+            check(in_array('Content-Type: application/json; charset=UTF-8', $response['headers'], true));
+            check(in_array('Cache-Control: no-store', $response['headers'], true));
+            if ($status === 503) {
+                check(in_array('Retry-After: 60', $response['headers'], true));
+            }
+            same('', http($base, '/__http/' . $route, 'HEAD')['body']);
+        }
+        $response = http($base, '/__http/debug', 'GET', '', ['Cookie: session=http-cookie-secret']);
+        same(500, $response['status']);
+        check(in_array('Content-Type: text/plain; charset=UTF-8', $response['headers'], true));
+        check(str_contains($response['body'], 'Message: http-private-secret'));
+        check(str_contains($response['body'], 'Method: GET'));
+        check(!str_contains($response['body'], 'http-cookie-secret'));
+    });
+
     test('HTTP request accessors parse JSON, forms, query, headers and cookies consistently', static function () use ($base): void {
         $response = http($base, '/__http/request?page=2&name=query', 'POST', '{"name":"Ada","nested":{"active":true}}', [
             'Content-Type: application/json; charset=UTF-8', 'Authorization: Bearer test',

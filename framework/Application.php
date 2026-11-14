@@ -22,6 +22,7 @@ final class Application
     public readonly Api $api;
     public readonly Uploads $uploads;
     public readonly Logger $log;
+    public readonly ExceptionHandler $exceptions;
     public readonly string $storagePath;
     public readonly \PBreeze\Queue\Queue $queue;
     public readonly \PBreeze\Scheduler\Schedule $schedule;
@@ -35,6 +36,7 @@ final class Application
         $this->storagePath = Filesystem::databasePath($root, ($config['storage_path'] ?? '') !== '' ? $config['storage_path'] : 'storage');
         $this->router = new Router();
         $this->log = new Logger($root, $config['log_retention_days'] ?? 5, $config['log_level'] ?? 'debug', $this->storagePath);
+        $this->exceptions = new ExceptionHandler($config['environment'], $config['debug'], $this->log);
         $this->uploads = new Uploads($root, $config['upload_max_bytes'] ?? 2097152, $this->storagePath);
         $this->format = new Formatter($config['locale'] ?? 'en-US', $config['timezone'] ?? 'UTC');
         $this->strings = new Strings();
@@ -55,7 +57,7 @@ final class Application
         $this->db = new Database($root, $config['database'], $this->encryption, $config['environment'] === 'production');
         $this->mail = new \PBreeze\Mail\Mailer($this->db, $config['mail'] ?? []);
         $this->auth = new Auth($this->db, $this->session, $this->mail, $config['url'] ?? 'http://127.0.0.1:8000', $config['environment'] === 'production');
-        $this->api = new Api($this->db, $this->views, $config['name'], $config['api_docs'] ?? $config['environment'] !== 'production', $this->log);
+        $this->api = new Api($this->db, $this->views, $config['name'], $config['api_docs'] ?? $config['environment'] !== 'production', $this->log, $this->exceptions);
         $registry = new \PBreeze\Queue\JobRegistry(function (\PBreeze\Queue\JobRegistry $registry): void {
             $app = $this;
             $path = $this->root . '/routes/jobs.php';
@@ -139,6 +141,7 @@ final class Application
     public function run(): void
     {
         $apiRequest = Api::matches(rawurldecode(explode('?', $_SERVER['REQUEST_URI'] ?? '/', 2)[0]));
+        $request = null;
         try {
             $https = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
             if ($this->config['environment'] === 'production' && !$this->config['secure_cookie'] && !$https) {
@@ -150,10 +153,10 @@ final class Application
                 $this->session->start($https || $this->config['secure_cookie']);
             }
             $this->routes();
-            $response = $this->handle(Request::capture());
+            $request = Request::capture();
+            $response = $this->handle($request);
         } catch (Throwable $error) {
-            $response = $apiRequest ? Api::errorResponse($error, $this->log)
-                : self::errorResponse($error, $this->config['debug'] && $this->config['environment'] === 'local', $this->log);
+            $response = $this->exceptions->render($error, $request, $apiRequest);
         }
         try {
             $this->session->close();
@@ -161,8 +164,7 @@ final class Application
             if (session_status() === PHP_SESSION_ACTIVE) {
                 session_abort();
             }
-            $response = $apiRequest ? Api::errorResponse($error, $this->log)
-                : self::errorResponse($error, $this->config['debug'] && $this->config['environment'] === 'local', $this->log);
+            $response = $this->exceptions->render($error, $request, $apiRequest);
         }
         try {
             $response->send(($_SERVER['REQUEST_METHOD'] ?? '') === 'HEAD');
@@ -171,26 +173,13 @@ final class Application
                 Logger::report($error, $this->log);
                 throw $error;
             }
-            $response = $apiRequest ? Api::errorResponse($error, $this->log)
-                : self::errorResponse($error, $this->config['debug'] && $this->config['environment'] === 'local', $this->log);
+            $response = $this->exceptions->render($error, $request, $apiRequest);
             $response->send(($_SERVER['REQUEST_METHOD'] ?? '') === 'HEAD');
         }
     }
 
     public static function errorResponse(Throwable $error, bool $debug = false, ?Logger $logger = null): Response
     {
-        if ($error instanceof ValidationException) {
-            return new Response('Check your input.', 422, ['Content-Type' => 'text/plain; charset=UTF-8']);
-        }
-        if ($error instanceof HttpException) {
-            if ($error->status >= 500) {
-                Logger::report($error, $logger);
-            }
-            return new Response($error->getMessage(), $error->status, $error->headers + ['Content-Type' => 'text/plain; charset=UTF-8']);
-        }
-        Logger::report($error, $logger);
-        return new Response($debug ? (string) $error : 'Something went wrong. Please try again later.', 500, [
-            'Content-Type' => 'text/plain; charset=UTF-8',
-        ]);
+        return (new ExceptionHandler($debug ? 'local' : 'production', $debug, $logger))->render($error);
     }
 }
