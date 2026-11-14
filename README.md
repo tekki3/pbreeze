@@ -1847,6 +1847,184 @@ Streaming file responses have an empty `body` and initial file metadata in
 `headers`; test delivered bytes through HTTP or isolated output capture.
 Controllers should return responses, not call `send()` themselves.
 
+## Data Transformation and Mapping
+
+`PBreeze\Data` connects structured reading, explicit transformation, validation
+and export in one lightweight, HTTP-independent pipeline:
+
+```php
+use PBreeze\Data;
+
+$customers = Data::read('customers.csv')
+    ->filter(static fn (array $row): bool => $row['active'] === '1')
+    ->map(static fn (array $row): array => [
+        'name' => trim($row['name']),
+        'email' => trim($row['email']),
+    ])
+    ->validate([
+        '*.name' => 'required|string|max:100',
+        '*.email' => 'required|email',
+    ])
+    ->toArray();
+```
+
+Bootstrap loads `Data`; independent scripts can explicitly require
+`framework/Data.php`. No Composer, container, automatic class discovery or
+model property assignment is introduced.
+
+### Explicit shapes and pipeline behavior
+
+- `Data::from($array)` wraps an existing array.
+- `Data::read($path, $options)` reuses all `FileReader` formats, options,
+  parsing errors and security limits.
+- `filter($callback)` calls `callback($value, $key)`, requiring a boolean.
+  Lists are reindexed after filtering; associative keys are preserved.
+- `map($callback)` maps **each entry**, preserving keys.
+- `transform($mapper)` maps the **whole array**, requiring an array result.
+- `validate($rules, $messages, $attributes)` validates the **whole array**
+  and retains only fields covered by rules.
+- `toArray()` returns the current values.
+- `write($path, $options)` writes the current array and returns the pipeline.
+
+This is an **eager**, copy-on-write array pipeline. Every transformation returns
+a new pipeline; previous arrays remain unchanged. It is not a streaming
+collection, and callbacks are trusted application code. Objects and PHP
+reference-linked values are not deep-cloned: avoid mutating them in callbacks
+if you need snapshot isolation. Callback exceptions propagate unchanged.
+For large CSV streaming, keep using `FileReader::iterate()`.
+
+Validation does not guess whether a document is a list. For one record use
+`name`/`email`; for a top-level record list use `*.name`/`*.email`; for nested
+records use `users.*.email`. The existing `ValidationException` exposes
+concrete failed paths, such as `1.email`. Failed rows are never silently
+dropped. CSV values remain strings until you deliberately convert them.
+As with the validator, unknown fields are pruned and arrays require explicit
+descendant rules; validating an empty rule map produces an empty result.
+
+### XML-to-JSON transformation
+
+The XML reader exposes `@attributes`, `@text` and `@children`, not guessed
+business records. Supply a mapper to choose the desired shape:
+
+```php
+$mapper = static fn (array $document): array => array_map(
+    static fn (array $node): array => [
+        'id' => $node['@attributes']['id'],
+        'name' => $node['@children']['name'][0]['@text'],
+    ],
+    $document['customers']['@children']['customer'],
+);
+
+Data::read('input.xml')
+    ->transform($mapper)
+    ->validate(['*.id' => 'required|integer', '*.name' => 'required|string'])
+    ->write('output.json');
+```
+
+This example expects a `<customers>` root with repeated `<customer id="...">`
+elements containing `<name>`. Validate/check source structure in your mapper
+when the input schema is not guaranteed. Namespaced nodes retain the existing
+`{URI}local` keys; no namespace information is implicitly flattened.
+
+### Rule classes and DTO factories
+
+Class names are **explicit contracts**, not constructor reflection:
+
+```php
+final class UserRules
+{
+    public static function rules(): array
+    {
+        return ['name' => 'required|string', 'email' => 'required|email'];
+    }
+}
+
+final class UserDto
+{
+    private function __construct(
+        public readonly string $name,
+        public readonly string $email,
+    ) {}
+
+    public static function fromArray(array $data): self
+    {
+        return new self($data['name'], $data['email']);
+    }
+}
+
+// Require these classes explicitly before use.
+$payload = $request->json();
+if ($payload === null) {
+    throw new \PBreeze\HttpException(415, 'Use Content-Type: application/json.');
+}
+
+$validated = Data::from($payload)->validate(UserRules::class)->toArray();
+$user = Data::from([$validated])->map(UserDto::class)->toArray()[0];
+```
+
+`map()` always operates on entries: **wrap a single record in a list** for DTO
+mapping. `Data::from($payload)->map(UserDto::class)` would map its field values,
+not the whole record, and fails when those values are not arrays. A whole-array
+`transform()` must still return an array. Rule classes expose public static
+`rules(): array`; mapping classes expose public static `fromArray(array)`.
+Classes must already be loaded; dependencies belong in trusted callbacks or
+factories, not implicit discovery.
+
+DTO objects may appear in `toArray()` but are not automatically serialized,
+hydrated into models, or accepted by writers. Convert them to deliberate
+scalar arrays before exporting or validating again:
+
+```php
+$export = Data::from([$user])->map(static fn (UserDto $user): array => [
+    'name' => $user->name,
+    'email' => $user->email,
+]);
+$export->write('users.json');
+```
+
+### Writers and safety
+
+Output supports JSON, CSV, XML and YAML/YML, detected by extension:
+
+```php
+Data::from($customers)->write('customers.csv', ['delimiter' => ';']);
+Data::from($customers)->write('customers.yaml'); // Requires ext-yaml
+Data::from(['name' => 'Ada'])->write('customer.xml', ['root' => 'customer']);
+Data::from($customers)->write('output.data', ['format' => 'json']);
+Data::from([['Ada', 30]])->write('rows.csv', ['headers' => false]);
+```
+
+Writers reuse `Documents`/`DocumentFile::save()`. They **do not overwrite**
+existing files or create parent directories. Operational errors propagate;
+invalid options and unsupported formats fail explicitly. No existing file is
+replaced on validation/encoding failure.
+
+CSV expects a list of row arrays with identical column keys in the same order.
+Headers default true and require nonempty string column names. Positional
+rows require `headers=false`. Cells must be scalar/null, not nested arrays.
+The existing CSV formula protection is **on by default** and may prefix risky
+strings with `'`; use `protect_formulas=false` only for a deliberately trusted,
+non-spreadsheet workflow. Delimiters match `Documents::csv()`.
+
+XML uses the existing generic array-to-element exporter, root `document` by
+default. It is **not** a lossless writer for the XML reader's attributes,
+namespaces or mixed-content representation: transform those nodes into your
+chosen output shape first. JSON follows PHP array shape: lists encode as
+arrays, associative arrays as objects; an empty PHP array encodes as `[]`.
+No original empty-object identity is retained.
+
+YAML/YML output requires the native YAML extension, as reading does. Only
+plain scalar/array data is emitted; no PHP object tags or custom serialization
+are introduced. All formats reject DTOs/resources, invalid text, non-finite
+numbers, cycles, depth above 64 and graphs above 100000 values. Text uses the
+existing UTF-8/XML-safe document rules, even for JSON/YAML.
+
+`max_bytes` bounds published output, default 16 MiB, configurable from 1 byte
+to 256 MiB. Encoding occurs in memory before the byte check; it is not a peak
+memory guarantee. Input bounds remain the reader's own limits. Storage is
+separate: `Data::read/write` accept local paths, not remote storage keys; use
+explicit private temporary files or the existing storage byte API when needed.
+
 ## File Storage Abstraction
 
 Use the application-owned `$app->storage` service so handlers do not depend

@@ -411,6 +411,7 @@ $reference += require __DIR__ . '/html-reference.php';
 $reference += require __DIR__ . '/validation-reference.php';
 $reference += require __DIR__ . '/date-reference.php';
 $reference += require __DIR__ . '/storage-reference.php';
+$reference += require __DIR__ . '/data-reference.php';
 
 return [
     'classes' => $reference,

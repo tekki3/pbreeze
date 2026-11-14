@@ -21,6 +21,7 @@ require_once __DIR__ . '/framework/Cache.php';
 require_once __DIR__ . '/framework/Storage.php';
 require_once __DIR__ . '/framework/documents/DocumentFile.php';
 require_once __DIR__ . '/framework/documents/Documents.php';
+require_once __DIR__ . '/framework/Data.php';
 require_once __DIR__ . '/framework/documents/PdfDocument.php';
 require_once __DIR__ . '/framework/documents/Spreadsheet.php';
 require_once __DIR__ . '/framework/documents/WordDocument.php';
