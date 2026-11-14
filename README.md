@@ -2946,16 +2946,37 @@ Host or proxy headers. If you use a different local port, update `APP_URL`.
 | `POST /logout` | Clear the session, regenerate ID and CSRF |
 | `GET/POST /forgot-password` | Request a reset link |
 | `GET/POST /reset-password` | Choose a new password with a token |
-| `GET/POST /verify-email` | Verify an email address with a token |
+| `GET/POST /verify-email` | Verify an email address and establish the owner's password with a token |
 | `GET /email/verify` | Verification notice for signed-in users |
 | `POST /email/verification-notification` | Request a new verification email |
 | `GET /account` | Example page requiring login and email verification |
 
 After registration, sign in; unverified accounts are sent to the verification page.
-Confirm a verification link through a POST form so that a mail scanner opening
-the link with GET or HEAD does not consume it. Confirmation does not sign you
-in automatically. Invalid/expired tokens return 400, validation errors 422,
+Open the verification link and **choose and confirm the password to use from
+then on**. The POST confirmation replaces the registration password, increments
+the account's session version, and revokes existing authentication and API
+tokens. All earlier login sessions become invalid, and the requester is signed
+out. This prevents someone who registered your email with their own password
+from retaining access after you verify ownership. Sign in again with your
+chosen password; verification does not sign you in automatically.
+
+A mail scanner opening the link with GET or HEAD does not consume it.
+Missing or invalid passwords do not consume a valid link. Invalid/expired tokens return 400, validation errors 422,
 too many attempts 429, and missing/incorrect CSRF 419.
+
+**Verification API upgrade:** custom callers must now pass password and
+password confirmation as the third argument:
+
+```php
+$app->auth->verifyEmail($request->input('token'), $request->clientIp(), $request->all());
+```
+
+Token-only calls intentionally fail. Update custom verification forms and
+controllers together; existing unexpired links can still be used with the
+updated form. Already-verified accounts are not automatically remediated:
+if pre-registration abuse may have occurred, investigate affected accounts,
+revoke their sessions/tokens, and have their email owners establish new
+passwords through a trusted recovery process.
 
 Passwords require at least 12 characters and no more than 72 **bytes** (the native
 bcrypt limit), plus a matching confirmation. They are not repopulated in

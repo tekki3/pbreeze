@@ -162,13 +162,26 @@ final class Auth
         }
     }
 
-    public function verifyEmail(#[\SensitiveParameter] mixed $token, string $ip): void
+    /** @param array<string, mixed> $data */
+    public function verifyEmail(#[\SensitiveParameter] mixed $token, string $ip, #[\SensitiveParameter] array $data = []): void
     {
         $this->limit('verify-token-ip', $ip, 30, 900);
-        $this->db->transaction(function () use ($token): void {
+        $this->db->transaction(function () use ($token, $data): void {
             $id = $this->consumeToken($token, 'verify');
-            $this->db->execute('UPDATE users SET email_verified_at = ? WHERE id = ? AND email_verified_at IS NULL', [time(), $id]);
+            // Email ownership must also establish credentials, not activate a registrant's password.
+            self::password($data);
+            $hash = password_hash($data['password'], PASSWORD_BCRYPT, ['cost' => 12]);
+            if ($this->db->execute(
+                'UPDATE users SET email_verified_at = ?, password_hash = ?, session_version = session_version + 1
+                 WHERE id = ? AND email_verified_at IS NULL',
+                [time(), $hash, $id],
+            )->rowCount() !== 1) {
+                throw new AuthException(['token' => ['This link is invalid or has expired. Request a new link.']], 400);
+            }
+            $this->db->execute('DELETE FROM auth_tokens WHERE user_id = ?', [$id])->closeCursor();
+            $this->db->execute('DELETE FROM api_tokens WHERE user_id = ?', [$id])->closeCursor();
         });
+        $this->logout();
     }
 
     /** @param array<string, mixed> $data */

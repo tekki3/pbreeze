@@ -141,7 +141,7 @@ try {
         sqlsrvCheck(is_string($body) && preg_match('/\?token=([a-f0-9]{64})/', $body, $match) === 1, 'Missing auth email token.');
         return $match[1];
     };
-    $app->auth->verifyEmail($tokenFromEmail('Verify your email address'), '127.0.0.1');
+    $app->auth->verifyEmail($tokenFromEmail('Verify your email address'), '127.0.0.1', $credentials);
     $app->auth->login($credentials, '127.0.0.1');
     sqlsrvCheck($app->auth->user()['id'] === $userId, 'Login failed.');
     $issued = $app->api->tokens->create($userId);

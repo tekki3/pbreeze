@@ -51,7 +51,7 @@
                 @if(in_array($mode, ['login', 'register', 'forgot'], true))
                     @include('auth.field', ['field' => 'email', 'label' => 'Email address', 'type' => 'email', 'autocomplete' => 'email', 'value' => $oldEmail, 'minimum' => 1, 'maximum' => 254])
                 @endif
-                @if(in_array($mode, ['login', 'register', 'reset'], true))
+                @if(in_array($mode, ['login', 'register', 'reset', 'verify'], true))
                     @include('auth.field', ['field' => 'password', 'label' => 'Password', 'type' => 'password', 'autocomplete' => $mode === 'login' ? 'current-password' : 'new-password', 'value' => '', 'minimum' => $mode === 'login' ? 1 : 12, 'maximum' => 72])
                     @if($mode !== 'login')
                         <p class="field-hint" id="password-hint">Use at least 12 characters and no more than 72 bytes. Spaces and passphrases are allowed.</p>

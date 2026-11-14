@@ -15,7 +15,7 @@ final class AuthController
         'register' => ['Create your account', 'After registering, verify your email address to continue.', '/register', 'Create account'],
         'forgot' => ['Forgot your password?', 'Enter your email address. If an account exists, you will receive a reset link.', '/forgot-password', 'Request reset link'],
         'reset' => ['Choose a new password', 'Changing your password ends all existing login sessions and invalidates API tokens.', '/reset-password', 'Change password'],
-        'verify' => ['Verify your email address', 'Confirm below that this email address belongs to you.', '/verify-email', 'Verify email address'],
+        'verify' => ['Verify your email address', 'Choose and confirm the password you will use to log in. This replaces the registration password and ends existing login sessions.', '/verify-email', 'Verify email address'],
         'notice' => ['Check your inbox', 'To continue, verify your email address using the link in our email.', '/email/verification-notification', 'Request new verification email'],
         'account' => ['Your account', 'You are logged in and your email address is verified.', '', ''],
     ];
@@ -92,8 +92,8 @@ final class AuthController
 
     public function verify(Request $request): Response
     {
-        return $this->submit($request, 'verify', fn () => $this->app->auth->verifyEmail($request->input('token'), $request->clientIp()),
-            'Your email address has been verified. You can continue to your account.');
+        return $this->submit($request, 'verify', fn () => $this->app->auth->verifyEmail($request->input('token'), $request->clientIp(), $request->all()),
+            'Your email address has been verified and your password has been set. Log in with your chosen password.');
     }
 
     public function resend(Request $request): Response

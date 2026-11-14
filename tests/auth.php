@@ -157,8 +157,13 @@ test('Verification does not consume on GET or HEAD, rejects invalid tokens, and 
     same(200, $client->request($path, 'HEAD')['status']);
     same(null, $authDb->execute('SELECT email_verified_at FROM users')->fetchColumn());
     same(400, $client->request('/verify-email', 'POST', ['token' => str_repeat('0', 64)])['status']);
-    same(200, $client->request('/verify-email', 'POST', ['token' => $verifyToken])['status']);
+    same(422, $client->request('/verify-email', 'POST', ['token' => $verifyToken])['status']);
+    same(null, $authDb->execute('SELECT email_verified_at FROM users')->fetchColumn());
+    same(200, $client->request('/verify-email', 'POST', authData() + ['token' => $verifyToken])['status']);
+    same(200, $client->request('/login')['status']);
     same(400, $client->request('/verify-email', 'POST', ['token' => $verifyToken])['status']);
+    same(303, $authClient->request('/account')['status']);
+    same(303, $authClient->request('/login', 'POST', authData())['status']);
     $account = $authClient->request('/account');
     same(200, $account['status']);
     check(str_contains($account['body'], '&lt;Ada&gt;'));
@@ -245,7 +250,7 @@ test('Resend requires login and leaves only the latest verification link valid',
     same(400, $client->request('/verify-email', 'POST', ['token' => $new])['status']);
     same(200, $client->request('/email/verification-notification', 'POST')['status']);
     $new = authToken($authDb, 'grace@example.test', 'verify');
-    same(200, $client->request('/verify-email', 'POST', ['token' => $new])['status']);
+    same(200, $client->request('/verify-email', 'POST', authData('grace@example.test') + ['token' => $new])['status']);
 });
 
 test('The guard rejects expired sessions, old versions, and deleted users', static function () use ($base, $authDb, $temp): void {
@@ -290,6 +295,83 @@ test('Rate limits persist across sessions and do not trust forged proxy headers'
         same(422, $client->request('/login', 'POST', $data)['status']);
     }
     same(429, (new AuthBrowser($base))->request('/login', 'POST', $data)['status']);
+    $authDb->execute('DELETE FROM auth_limits');
+});
+
+test('Verification defeats pre-registration hijacking and revokes attacker sessions and outstanding tokens', static function () use ($base, $authDb): void {
+    $authDb->execute('DELETE FROM auth_limits');
+    $attacker = new AuthBrowser($base);
+    $owner = new AuthBrowser($base);
+    $attackerData = authData('verification-owner@example.test');
+    $attackerData['password'] = $attackerData['password_confirmation'] = 'Attacker chosen password!';
+    $ownerData = authData('verification-owner@example.test');
+    $ownerData['password'] = $ownerData['password_confirmation'] = 'Mailbox owner chosen password!';
+    same(200, $attacker->request('/register', 'POST', $attackerData)['status']);
+    same(200, $owner->request('/register', 'POST', $ownerData)['status']);
+    same(303, $attacker->request('/login', 'POST', $attackerData)['status']);
+    same(200, $attacker->request('/email/verify')['status']);
+    $id = (int) $authDb->execute('SELECT id FROM users WHERE email = ?', [$ownerData['email']])->fetchColumn();
+    $version = (int) $authDb->execute('SELECT session_version FROM users WHERE id = ?', [$id])->fetchColumn();
+    $token = authToken($authDb, $ownerData['email'], 'verify');
+    same(200, $owner->request('/forgot-password', 'POST', ['email' => $ownerData['email']])['status']);
+    $reset = authToken($authDb, $ownerData['email'], 'reset');
+    $legacyToken = 'pbz_' . bin2hex(random_bytes(32));
+    $authDb->execute(
+        'INSERT INTO api_tokens (user_id, name, token_hash, session_version, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)',
+        [$id, 'legacy', hash('sha256', $legacyToken), $version, time(), time() + 3600],
+    );
+    $path = '/verify-email?token=' . $token;
+    $form = $owner->request($path);
+    check(str_contains($form['body'], 'name="password"'));
+    check(str_contains($form['body'], 'name="password_confirmation"'));
+    check(str_contains($form['body'], 'replaces the registration password'));
+    same(200, $owner->request($path, 'HEAD')['status']);
+    $ownerCookie = $owner->cookie;
+    $ownerCsrf = $owner->csrf;
+    foreach ([
+        [],
+        ['password' => 'short', 'password_confirmation' => 'short'],
+        ['password' => $ownerData['password'], 'password_confirmation' => 'different'],
+        ['password' => str_repeat('a', 73), 'password_confirmation' => str_repeat('a', 73)],
+    ] as $invalid) {
+        $response = $owner->request('/verify-email', 'POST', $invalid + ['token' => $token]);
+        same(422, $response['status']);
+        check(!str_contains($response['body'], 'value="' . $ownerData['password'] . '"'));
+        same(null, $authDb->execute('SELECT email_verified_at FROM users WHERE id = ?', [$id])->fetchColumn());
+        same(1, (int) $authDb->execute('SELECT COUNT(*) FROM auth_tokens WHERE token_hash = ?', [hash('sha256', $token)])->fetchColumn());
+    }
+    $response = $owner->request('/verify-email', 'POST', $ownerData + ['token' => $token]);
+    same(200, $response['status']);
+    check(str_contains($response['body'], 'Log in with your chosen password.'));
+    check($owner->cookie !== $ownerCookie);
+    same(200, $owner->request('/login')['status']);
+    check($owner->csrf !== $ownerCsrf);
+    $user = $authDb->execute('SELECT * FROM users WHERE id = ?', [$id])->fetch();
+    check($user['email_verified_at'] !== null);
+    check(password_verify($ownerData['password'], $user['password_hash']));
+    check(!password_verify($attackerData['password'], $user['password_hash']));
+    same($version + 1, (int) $user['session_version']);
+    same(0, (int) $authDb->execute('SELECT COUNT(*) FROM auth_tokens WHERE user_id = ?', [$id])->fetchColumn());
+    same(0, (int) $authDb->execute('SELECT COUNT(*) FROM api_tokens WHERE user_id = ?', [$id])->fetchColumn());
+    $blocked = $attacker->request('/account');
+    same(303, $blocked['status']);
+    check(in_array('Location: /login', $blocked['headers'], true));
+    same(422, $attacker->request('/login', 'POST', $attackerData)['status']);
+    same(303, $owner->request('/account')['status']);
+    same(303, $owner->request('/login', 'POST', $ownerData)['status']);
+    same(200, $owner->request('/account')['status']);
+    same(400, $owner->request('/verify-email', 'POST', $ownerData + ['token' => $token])['status']);
+    same(400, $owner->request('/reset-password', 'POST', $attackerData + ['token' => $reset])['status']);
+    same(401, http($base, '/api/me', 'GET', '', ['Authorization: Bearer ' . $legacyToken])['status']);
+    $stale = bin2hex(random_bytes(32));
+    $authDb->execute(
+        'INSERT INTO auth_tokens (token_hash, user_id, purpose, expires_at) VALUES (?, ?, ?, ?)',
+        [hash('sha256', $stale), $id, 'verify', time() + 3600],
+    );
+    same(400, $owner->request('/verify-email', 'POST', $attackerData + ['token' => $stale])['status']);
+    same($user['password_hash'], $authDb->execute('SELECT password_hash FROM users WHERE id = ?', [$id])->fetchColumn());
+    same(200, $owner->request('/account')['status']);
+    $authDb->execute('DELETE FROM auth_tokens WHERE user_id = ?', [$id]);
     $authDb->execute('DELETE FROM auth_limits');
 });
 
