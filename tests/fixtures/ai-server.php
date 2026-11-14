@@ -70,7 +70,10 @@ if (isset($options['chunks'])) {
     }
     fwrite($client, "0\r\n\r\n");
 } else {
-    $output = $options['body'] ?? '{}';
+    $output = isset($options['body_base64']) ? base64_decode($options['body_base64'], true) : ($options['body'] ?? '{}');
+    if ($output === false) {
+        throw new RuntimeException('Invalid binary HTTPS fixture response.');
+    }
     $length = strlen($output) + (isset($options['truncate']) ? 100 : 0);
     fwrite($client, $response . "Content-Length: $length\r\n\r\n" . $output);
 }

@@ -24,6 +24,27 @@ jobs:
       - name: Run native tests
         run: php breeze test
 
+  storage-sftp:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.3', '8.5']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo_sqlite, openssl, curl, iconv, mbstring, zip, dom, intl, fileinfo, ssh2
+          coverage: none
+          tools: none
+      - name: Install native SFTP test server
+        run: sudo apt-get update && sudo apt-get install -y openssh-server
+      - name: Run native tests with isolated SFTP fixture
+        env:
+          PBREEZE_TEST_SSHD_BINARY: /usr/sbin/sshd
+        run: php breeze test
+
   web-servers:
     runs-on: ubuntu-latest
     strategy:

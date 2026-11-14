@@ -8,7 +8,7 @@ use RuntimeException;
 
 final class Filesystem
 {
-    public static function privateDirectory(string $root, ?string $storagePath = null, string $child = '', bool $create = true): string
+    public static function privateDirectory(string $root, ?string $storagePath = null, string $child = '', bool $create = true, bool $allowMissing = false): string
     {
         $root = realpath($root);
         if ($root === false) {
@@ -38,6 +38,9 @@ final class Filesystem
             if (file_exists($ancestor)) {
                 if (!is_dir($ancestor)) {
                     throw new RuntimeException('Private storage paths must be directories.');
+                }
+                if ($allowMissing && (!is_readable($ancestor) || PHP_OS_FAMILY !== 'Windows' && !is_executable($ancestor))) {
+                    throw new RuntimeException('Cannot access private storage ancestors.');
                 }
             } else {
                 array_unshift($missing, $ancestor);
@@ -82,7 +85,7 @@ final class Filesystem
                     restore_error_handler();
                 }
             }
-        } elseif ($missing !== []) {
+        } elseif ($missing !== [] && !$allowMissing) {
             throw new RuntimeException('Private storage directory does not exist.');
         }
         return $path;

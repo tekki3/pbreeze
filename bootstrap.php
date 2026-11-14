@@ -18,6 +18,7 @@ require_once __DIR__ . '/framework/Strings.php';
 require_once __DIR__ . '/framework/FileReader.php';
 require_once __DIR__ . '/framework/Ai.php';
 require_once __DIR__ . '/framework/Cache.php';
+require_once __DIR__ . '/framework/Storage.php';
 require_once __DIR__ . '/framework/documents/DocumentFile.php';
 require_once __DIR__ . '/framework/documents/Documents.php';
 require_once __DIR__ . '/framework/documents/PdfDocument.php';
@@ -70,6 +71,7 @@ $config = require __DIR__ . '/config/app.php';
 $config['mail'] = require __DIR__ . '/config/mail.php';
 $config['ai'] = require __DIR__ . '/config/ai.php';
 $config['cache'] = require __DIR__ . '/config/cache.php';
+$config['storage'] = require __DIR__ . '/config/storage.php';
 $config['scheduler'] = require __DIR__ . '/config/scheduler.php';
 $config['queue'] = require __DIR__ . '/config/queue.php';
 

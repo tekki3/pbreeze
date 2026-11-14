@@ -1847,6 +1847,228 @@ Streaming file responses have an empty `body` and initial file metadata in
 `headers`; test delivered bytes through HTTP or isolated output capture.
 Controllers should return responses, not call `send()` themselves.
 
+## File Storage Abstraction
+
+Use the application-owned `$app->storage` service so handlers do not depend
+on the physical location of their files:
+
+```php
+$app->storage->put('documents/test.pdf', $content);
+$content = $app->storage->get('documents/test.pdf');
+$exists = $app->storage->exists('documents/test.pdf');
+$deleted = $app->storage->delete('documents/test.pdf');
+```
+
+`put()` returns `void` and overwrites an existing key. `get()` returns exact
+binary bytes, including valid empty content; a missing file throws
+`RuntimeException`. `exists()` returns a boolean. `delete()` returns true for
+acknowledged deletion, false for absence. Invalid keys/configuration throw
+`InvalidArgumentException`; permissions, authentication, transport, provider
+errors and unsafe filesystem paths fail explicitly. A cloud HTTP 404 is
+treated as missing, so keep the selected bucket/container provisioned.
+
+The service is **not static**, matching the framework's application-owned
+services and avoiding mutable global configuration. Independent usage works
+without bootstrap/Composer:
+
+```php
+require_once __DIR__ . '/framework/Storage.php';
+
+$storage = new \PBreeze\Storage(__DIR__, [
+    'driver' => 'local',
+    'max_bytes' => 16777216,
+]);
+$storage->put('documents/readme.txt', 'Hello');
+```
+
+### Common configuration and keys
+
+```dotenv
+STORAGE_DRIVER=local
+STORAGE_MAX_BYTES=16777216
+STORAGE_TIMEOUT=30
+STORAGE_CA_FILE=
+```
+
+Configuration lives in `config/storage.php`; `.env.example` lists every
+setting. Existing installations can add only the settings they need; the real
+`.env` is never overwritten. Construction validates configuration without
+creating directories or connecting remotely. Choose `local`, `sftp`, `s3`,
+or `azure`; changing the driver does **not** migrate existing data.
+
+Keys are relative UTF-8 paths, at most 1024 bytes, with segments at most 255
+bytes. Use forward slashes; do not use leading/trailing slashes, empty/dot
+segments, hidden filenames, backslashes, percent escapes, `#`, controls,
+Windows-reserved characters/device names, or trailing dots/spaces. This shared
+portable subset behaves consistently across all drivers. Keys are validated,
+not silently normalized. Case sensitivity still follows the underlying
+filesystem/provider; avoid names that differ only by case.
+
+`max_bytes` applies to `put()` and `get()`, from 1 byte through 256 MiB, default
+16 MiB. Reads are bounded; arbitrary binary/empty files are supported. The API
+uses strings, not streaming handles, so allow memory for the content and
+transport buffers. Large/multipart transfers are intentionally not supplied.
+`STORAGE_TIMEOUT` is the S3/Azure HTTPS deadline, 1..300 seconds; SFTP has
+native SSH2 transport behavior rather than a guaranteed per-operation deadline.
+
+### Local driver
+
+Files live in **`STORAGE_PATH/files`**, separate from uploads, logs and compiled
+views. `storage:prepare` prepares this directory when local is selected:
+
+```sh
+php breeze storage:prepare
+```
+
+Local directories are created lazily on writes, with POSIX 0700 directories
+and 0600 files. Windows uses inherited NTFS ACLs: restrict them to the service
+identity. Reads/exists/deletes do not create missing directories. The driver
+rejects symlink ancestors/entries and storage within (or containing) `public/`.
+Writes use a same-directory temporary file and rename; failed writes do not
+publish partial content.
+
+Use a trusted, exclusively managed root. Path checks cannot prevent hostile
+concurrent OS users from replacing directories between validation and use.
+No hard-link isolation or cross-writer transaction/locking guarantee is added.
+Files remain private; authorize access before exposing their contents.
+
+### SFTP driver
+
+Requires the native **ext-ssh2** extension and an existing remote directory:
+
+```dotenv
+STORAGE_DRIVER=sftp
+STORAGE_SFTP_HOST=sftp.example.test
+STORAGE_SFTP_PORT=22
+STORAGE_SFTP_USERNAME=application
+STORAGE_SFTP_PASSWORD=
+STORAGE_SFTP_ROOT=/data/application
+STORAGE_SFTP_FINGERPRINT=
+STORAGE_SFTP_PUBLIC_KEY=/private/keys/application.pub
+STORAGE_SFTP_PRIVATE_KEY=/private/keys/application
+STORAGE_SFTP_PASSPHRASE=
+```
+
+Set the fingerprint to an **independently verified 40-character hexadecimal
+SHA-1 host-key fingerprint**, without colons, before connecting. The pin format
+comes from ext-ssh2; do not learn/trust it automatically on first connection.
+The host is verified before credentials are sent. Prefer RSA PEM key-file
+authentication:
+
+```sh
+ssh-keygen -t rsa -b 3072 -m PEM -f application
+```
+
+Key files must be local/readable and the RSA PEM private file at most 64 KiB.
+OpenSSH-format/ECDSA user keys are not accepted: native SSH2 compatibility is
+not reliable across supported runtimes. To use password authentication,
+configure `STORAGE_SFTP_PASSWORD` and leave both key-file settings empty.
+Never put actual passwords/private keys in the repository.
+
+The driver creates child directories, refuses symlinks via remote `lstat`,
+and checks directory listings so permission/network errors do not become
+false missing-file results. Use least-privilege server permissions/chroot;
+the remote root and its ancestors must be real directories. Operations use
+native SSH2 blocking behavior: supervise processes with an external deadline
+when needed.
+
+Writes stage a 0600 temporary file. Replacing an existing file stages the old
+file as a backup, publishes the new one, then removes the backup; a failed
+publish attempts restoration. Unlike local rename-overwrite, this is not
+atomic for concurrent readers/writers. A process crash can leave temporary/
+backup files or a gap; use an application-specific recovery policy and do not
+run competing writers for the same key.
+
+### S3-compatible driver
+
+Requires native **ext-curl**, an existing bucket and path-style addressing:
+
+```dotenv
+STORAGE_DRIVER=s3
+STORAGE_S3_ENDPOINT=https://s3.us-east-1.amazonaws.com
+STORAGE_S3_BUCKET=application-files
+STORAGE_S3_REGION=us-east-1
+STORAGE_S3_ACCESS_KEY=
+STORAGE_S3_SECRET_KEY=
+STORAGE_S3_SESSION_TOKEN=
+```
+
+Use the provider's trusted HTTPS origin and exact signing region. Requests
+use AWS Signature V4 with payload SHA-256, including optional temporary
+credential tokens. Private S3-compatible endpoints are supported, but HTTP,
+credential-bearing URLs, endpoint paths/query/fragment and redirects are not.
+For private certificate authorities set a readable `STORAGE_CA_FILE`; TLS
+certificate/hostname verification cannot be disabled.
+
+Provision least-privilege object read/write/delete permissions. `exists()`
+uses HEAD; `delete()` probes HEAD first, so deletion also requires read access.
+A successful delete is not proof that another writer did not race it.
+Versioned buckets may retain previous versions/delete markers according to
+their policies. Multipart uploads, public ACLs, credential discovery/automatic
+refresh, presigned URLs and bucket creation are not implemented.
+
+### Azure Blob driver
+
+Requires native **ext-curl**, an existing container and Shared Key access:
+
+```dotenv
+STORAGE_DRIVER=azure
+STORAGE_AZURE_ACCOUNT=applicationaccount
+STORAGE_AZURE_CONTAINER=documents
+STORAGE_AZURE_KEY=
+STORAGE_AZURE_ENDPOINT=
+```
+
+The key is the base64 account key (64 decoded bytes), not a connection string
+or SAS token. The default endpoint is
+`https://<account>.blob.core.windows.net`; an optional trusted HTTPS origin
+supports sovereign/custom hosts. Native HMAC-SHA256 Shared Key signs BlockBlob
+requests using REST version `2023-11-03`. Delete includes blob snapshots;
+versions, soft deletion and retention still follow Azure policy.
+
+Shared Key can grant broad account access: isolate accounts and protect/
+rotate credentials externally. Microsoft recommends Entra managed identities
+where possible, but Entra/SAS/managed-identity credential acquisition is not
+implemented here. No container provisioning, public access changes or chunked
+block uploads are performed.
+
+### File readers, responses and testing
+
+`FileReader::read()`/`iterate()` operate on local paths, not storage keys.
+Stored JSON can be decoded directly from bytes:
+
+```php
+$data = json_decode($app->storage->get('imports/users.json'), true, 64, JSON_THROW_ON_ERROR);
+```
+
+For CSV/XML/YAML, explicitly materialize retrieved content into a trusted
+private temporary file with the correct extension, invoke `FileReader`, and
+remove the temporary file in `finally`. Storage does not bypass the readers'
+parsing limits or extension requirements. CSV streaming remains local-file
+streaming; remote `get()` buffers bounded content.
+
+Logs, sessions, compiled views, migrations, uploads and generated documents
+keep their existing APIs/locations. Remote storage does not make a local
+`Response::file()`/`download()` path available. Small remote files can be
+returned through a deliberately authorized binary response; do not expose
+storage endpoints, credentials or raw user-selected keys.
+
+Tests use isolated local roots, verified loopback HTTPS fixtures, signing
+checks, missing/error cases, binary data, bounds and symlink rejection.
+The optional real SFTP integration uses a private loopback OpenSSH process,
+throwaway keys and ext-ssh2:
+
+```sh
+PBREEZE_TEST_SSHD_BINARY=/usr/sbin/sshd php breeze test
+```
+
+It runs in the Linux CI SFTP job; standard tests remain Windows/Linux
+compatible without requiring SSH2. Cloud tests do not contact real AWS/Azure
+accounts. Verify your provider's endpoint, permissions and retention policies
+before deploying. To add a format-independent backend, implement
+`PBreeze\Storage\DriverInterface`, explicitly load/register it in `Storage`,
+and run the shared contract tests; no implicit driver discovery is used.
+
 ## Application Logging
 
 ### Central exception handling

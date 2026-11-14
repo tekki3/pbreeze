@@ -68,6 +68,11 @@ final class Diagnostics
         $add('cache', $cacheDriver === 'none' ? 'pass' : (extension_loaded($cacheDriver) ? 'warn' : 'fail'),
             $cacheDriver === 'none' ? 'Shared cache is disabled; sessions and rate limits are unchanged.'
                 : 'Selected cache needs its native PHP extension. Manually verify connectivity, isolation, credentials, and network protection; no cache connection is attempted here.');
+        $storageDriver = $config['storage']['driver'] ?? 'local';
+        $storageExtension = $storageDriver === 'sftp' ? 'ssh2' : 'curl';
+        $add('file-storage', $storageDriver === 'local' ? 'pass' : (extension_loaded($storageExtension) ? 'warn' : 'fail'),
+            $storageDriver === 'local' ? 'File storage uses the private files directory; no remote connection is needed.'
+                : 'Selected file storage needs its native extension. Verify remote permissions, host/TLS identity, and connectivity manually; no remote connection is attempted.');
         try {
             $this->storage();
             $add('storage', 'pass', 'Configured private storage and required subdirectories exist and are writable.');

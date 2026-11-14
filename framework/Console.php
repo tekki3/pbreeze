@@ -151,6 +151,9 @@ TEXT;
                 foreach (['', 'logs', 'uploads', 'views'] as $child) {
                     Filesystem::privateDirectory($this->app->root, $this->app->storagePath, $child);
                 }
+                if (($this->app->config['storage']['driver'] ?? 'local') === 'local') {
+                    Filesystem::privateDirectory($this->app->root, $this->app->storagePath, 'files');
+                }
                 echo "Private storage prepared. Verify ownership and NTFS ACLs before serving requests.\n";
                 break;
             case 'key:generate':

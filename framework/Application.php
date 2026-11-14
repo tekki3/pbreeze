@@ -23,6 +23,7 @@ final class Application
     public readonly Uploads $uploads;
     public readonly Logger $log;
     public readonly ExceptionHandler $exceptions;
+    public readonly Storage $storage;
     public readonly string $storagePath;
     public readonly \PBreeze\Queue\Queue $queue;
     public readonly \PBreeze\Scheduler\Schedule $schedule;
@@ -30,13 +31,14 @@ final class Application
     public readonly \PBreeze\Worker\Worker $worker;
     private bool $backgroundLoaded = false;
 
-    /** @param array{name: string, storage_path?: string, locale?: string, timezone?: string, url?: string, key?: string, api_docs?: bool, upload_max_bytes?: int, log_retention_days?: int, log_level?: string, environment: string, debug: bool, secure_cookie: bool, session?: array{driver?: 'native'|'database', lifetime?: int, lock_timeout?: int}, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}, cache?: array<string, mixed>, scheduler?: array<string, mixed>, queue?: array<string, mixed>, ai?: array{provider?: string, timeout?: int, max_tokens?: int, ca_file?: string, openai?: array{key?: string, model?: string}, anthropic?: array{key?: string, model?: string}}} $config */
+    /** @param array{name: string, storage_path?: string, storage?: array<string, mixed>, locale?: string, timezone?: string, url?: string, key?: string, api_docs?: bool, upload_max_bytes?: int, log_retention_days?: int, log_level?: string, environment: string, debug: bool, secure_cookie: bool, session?: array{driver?: 'native'|'database', lifetime?: int, lock_timeout?: int}, database: array<string, string>, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}, cache?: array<string, mixed>, scheduler?: array<string, mixed>, queue?: array<string, mixed>, ai?: array{provider?: string, timeout?: int, max_tokens?: int, ca_file?: string, openai?: array{key?: string, model?: string}, anthropic?: array{key?: string, model?: string}}} $config */
     public function __construct(public readonly string $root, #[\SensitiveParameter] public readonly array $config)
     {
         $this->storagePath = Filesystem::databasePath($root, ($config['storage_path'] ?? '') !== '' ? $config['storage_path'] : 'storage');
         $this->router = new Router();
         $this->log = new Logger($root, $config['log_retention_days'] ?? 5, $config['log_level'] ?? 'debug', $this->storagePath);
         $this->exceptions = new ExceptionHandler($config['environment'], $config['debug'], $this->log);
+        $this->storage = new Storage($root, $config['storage'] ?? [], $this->storagePath);
         $this->uploads = new Uploads($root, $config['upload_max_bytes'] ?? 2097152, $this->storagePath);
         $this->format = new Formatter($config['locale'] ?? 'en-US', $config['timezone'] ?? 'UTC');
         $this->strings = new Strings();
