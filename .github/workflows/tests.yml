@@ -18,7 +18,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: pdo_sqlite, openssl, curl, iconv, mbstring, zip, dom, intl, fileinfo
+          extensions: pdo_sqlite, openssl, curl, iconv, mbstring, zip, dom, intl, fileinfo, yaml
           coverage: none
           tools: none
       - name: Run native tests

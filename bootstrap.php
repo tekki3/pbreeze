@@ -14,6 +14,7 @@ require_once __DIR__ . '/framework/UploadedFile.php';
 require_once __DIR__ . '/framework/Uploads.php';
 require_once __DIR__ . '/framework/Formatter.php';
 require_once __DIR__ . '/framework/Strings.php';
+require_once __DIR__ . '/framework/FileReader.php';
 require_once __DIR__ . '/framework/Ai.php';
 require_once __DIR__ . '/framework/Cache.php';
 require_once __DIR__ . '/framework/documents/DocumentFile.php';

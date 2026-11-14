@@ -646,6 +646,9 @@ Never use `php breeze serve` as the production web server.
 - **Document generation/uploads:** verify ZIP, DOM, iconv, fileinfo, PHP
   upload limits, and writable private storage. Application upload limits
   cannot raise PHP or web-server limits.
+- **Structured file reading:** JSON and CSV need no extra extension. XML
+  requires DOM; YAML/YML requires the native PHP YAML extension with
+  `yaml.decode_php=0`. See [Structured File Reading](#structured-file-reading).
 
 Refer to each integration's chapter before enabling it in production.
 
@@ -2137,6 +2140,199 @@ numeric cells separate when spreadsheet calculations are needed. JSON numbers
 must remain locale-independent; emit a separate display string if needed.
 PDF still has its documented Windows-1252 font limit, so localized digits or
 spacing outside that character set may require Word instead.
+
+## Structured File Reading
+
+Read CSV, JSON, XML, YAML, and YML with one API after loading bootstrap:
+
+```php
+use PBreeze\FileReader;
+
+$rows = FileReader::read($app->root . '/storage/import/customers.csv');
+$settings = FileReader::read($app->root . '/storage/import/settings.json');
+$data = FileReader::read($app->root . '/storage/import/data.txt', [
+    'format' => 'json',
+    'max_bytes' => 1048576,
+    'max_depth' => 32,
+]);
+```
+
+Extensions are case-insensitive. `format` overrides the extension; supported
+values are `csv`, `json`, `xml`, `yaml`, and `yml`. Every `read()` result is
+a PHP array, never a parser object. This does **not** make every format have
+the same schema: CSV produces rows, JSON/YAML preserve their data tree, and XML
+uses the explicit node structure below. JSON/YAML scalar roots are rejected;
+empty mappings and lists both become `[]`.
+
+The static utility is available without an Application instance by explicitly
+requiring `framework/FileReader.php`. It does not connect to any service.
+
+### Input safety and limits
+
+Only existing, readable, regular local files are accepted. Stream wrappers
+(including HTTP, `php://`, and `phar://`) are rejected. Text must be UTF-8;
+an optional UTF-8 BOM is removed. Convert UTF-16/UTF-32 files to UTF-8 before
+importing. Readers never evaluate PHP from input.
+
+The default `max_bytes` is **16 MiB**, including any BOM, even for streamed
+CSV. Set a positive integer explicitly for larger trusted workloads.
+`max_depth` defaults to 64 and accepts 1..256 for JSON/XML/YAML; it is not
+relevant to flat CSV records. XML also limits elements to 100000. YAML
+normalization limits its traversal to 100000 values/containers to reject cyclic
+or excessively expanding aliases. Whole-document parsers still need memory
+for their native parse tree; limits are safeguards, not a process sandbox.
+Use process memory/time limits appropriate to the workload.
+
+**Authorize paths in your application.** Local-file validation is not a
+directory allowlist, upload validator, schema validator, or permission system.
+Do not pass arbitrary request paths directly to `read()`; select authorized
+private files, validate required fields/types, and escape imported values when
+rendering. CSV strings beginning with spreadsheet formulas remain unchanged.
+
+### CSV rows and streaming
+
+```php
+$rows = FileReader::read($path, [
+    'headers' => true,
+    'delimiter' => ';',
+    'enclosure' => '"',
+    'escape' => '',
+    'skip_empty_lines' => true,
+]);
+// name;email followed by Ada;ada@example.test becomes:
+// [['name' => 'Ada', 'email' => 'ada@example.test']]
+
+foreach (FileReader::iterate($path, [
+    'headers' => true,
+    'max_bytes' => 268435456,
+]) as $row) {
+    importCustomer($row);
+}
+```
+
+The defaults are comma delimiter, double-quote enclosure, empty escape (standard
+doubled quotes), headers enabled, and empty physical records skipped.
+`headers: true` consumes the first nonblank record as unique nonempty names.
+Use `headers: false` for numeric cell lists or
+`headers: ['name', 'email']` to supply names without consuming a record.
+Records must match the header width. Empty files return `[]`.
+Cells remain strings, including numbers, booleans, and empty cells.
+
+Delimiter/enclosure/nonempty escape must be distinct single bytes other than
+CR, LF, and NUL. For a legacy backslash-escaped file, explicitly set
+`'escape' => '\\'`; native PHP preserves backslash escapes in returned cells.
+Quoted multiline fields and doubled quotes are supported. Invalid UTF-8,
+malformed quoting, empty/duplicate headers, and inconsistent header widths
+produce errors rather than silently dropping data. Whitespace outside closing
+quotes is rejected by the strict CSV syntax.
+
+`iterate()` is lazy: errors may appear after some rows were processed.
+Choose transaction boundaries/idempotency for partial imports. Memory use is
+proportional to the largest record, not total row count. The generator closes
+its file when exhausted or destroyed; unset an iterator you retain after an
+early break. JSON, XML, and YAML currently reject `iterate()` explicitly rather
+than pretending to stream a fully buffered document.
+
+### JSON data trees
+
+JSON objects become associative arrays and JSON lists remain numeric arrays.
+Nested strings, booleans, nulls, and numbers retain native PHP types. Integers
+outside PHP's integer range become strings to avoid precision loss; nonfinite
+float overflow is rejected.
+
+```php
+// {"customer":{"name":"Ada","roles":["reader"]}}
+$data = FileReader::read($path, ['format' => 'json']);
+$name = $data['customer']['name'];
+```
+
+Invalid JSON throws a `RuntimeException` explaining the native parse reason,
+with the original `JsonException` available through `getPrevious()`. Neither
+the message nor XML/YAML diagnostics include source snippets.
+
+### XML nodes, attributes, and namespaces
+
+XML requires PHP's native DOM extension. Its output always includes the root.
+Every node has `@attributes`, `@text`, and `@children`; child groups are
+**always lists**, even for a single child:
+
+```php
+// <catalog><item id="1">Book</item><item id="2"/></catalog>
+$data = FileReader::read($path, ['format' => 'xml']);
+$items = $data['catalog']['@children']['item'];
+$id = $items[0]['@attributes']['id']; // "1"
+$text = $items[0]['@text'];           // "Book"
+```
+
+Nested nodes use the same structure. Direct text/CDATA and whitespace are
+preserved; comments and processing instructions are ignored. Namespace names
+use `{URI}local`, independently of the chosen prefix. For example,
+`<x:item xmlns:x="urn:catalog"/>` is keyed by `{urn:catalog}item`.
+Namespace declarations are not returned as attributes. Mixed-content text is
+concatenated and children are grouped by name: this is a data import API,
+not a lossless XML round-trip representation.
+
+**DTDs and entity declarations are rejected.** External resolution and entity
+substitution are disabled, networking is disabled for libxml, and readers never
+load schemas or process XInclude. Normal predefined entities such as `&amp;`
+work. Do not enable additional entity-loading flags in custom readers.
+
+### YAML and YML setup
+
+Both extensions use the same `YamlReader`. There is intentionally no
+Composer dependency or limited handwritten YAML fallback.
+
+1. Install the native **ext-yaml** module compatible with your PHP version,
+   architecture, and thread-safety mode. On Linux, use the distribution's PHP
+   YAML package (for example `php-yaml`, or a version-specific package).
+   On Windows, use a matching supported PHP YAML extension build and its
+   required LibYAML DLLs.
+2. Enable it in the PHP configuration used for imports (CLI and/or web PHP).
+   Keep `yaml.decode_php=0`; PBreeze rejects an enabled PHP deserializer
+   rather than changing the process's INI configuration.
+3. Verify with `php --ri yaml`. Restart the web PHP service after INI changes.
+
+```php
+$settings = FileReader::read($path, ['format' => 'yaml']);
+// name: example
+// roles: [reader, editor]
+// becomes ['name' => 'example', 'roles' => ['reader', 'editor']]
+```
+
+Mappings, sequences, nested collections, block strings, anchors/aliases, and
+merge keys follow the installed ext-yaml/LibYAML semantics (including YAML 1.1
+scalar coercions such as `yes`/`no`). Quote values that must remain strings.
+Exactly one mapping/sequence document is accepted. PHP object tags, cyclic or
+excessively expanding aliases, unsupported PHP value types, nonfinite numbers,
+scalar roots, and multiple documents fail explicitly. Native INI options for
+timestamp/binary decoding still apply; do not enable PHP object decoding.
+Without ext-yaml, YAML reads throw a clear missing-extension exception.
+
+### Errors and additional formats
+
+Invalid options/unsupported formats throw `InvalidArgumentException`. Missing,
+unreadable, oversized files, malformed data, and unavailable extensions throw
+`RuntimeException`. No error becomes an empty successful result. Report failures
+through your application's existing logger/error response; do not expose
+private paths or imported data to users.
+
+`CsvReader`, `JsonReader`, `XmlReader`, and `YamlReader` live in
+`PBreeze\Readers` and implement `ReaderInterface`. Each is usable directly.
+To add a format, explicitly require trusted application code implementing
+`read(string $path, array $options = []): array` and
+`iterate(string $path, array $options = []): iterable`. Extending the abstract
+`PBreeze\Readers\Reader` reuses bounded local-file helpers and the explicit
+unsupported-streaming exception.
+
+```php
+// Treat an application-specific extension as JSON:
+FileReader::register('dataset', new \PBreeze\Readers\JsonReader());
+$data = FileReader::read($app->root . '/storage/import/customer.dataset');
+```
+
+Registrations are process-local and trusted; they can override built-in format
+names. Never construct or register reader classes from untrusted file content.
+No application service/configuration or autoloader is needed for this utility.
 
 ## Native File Creation
 
