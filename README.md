@@ -2153,6 +2153,86 @@ Plain PHP views should use `e($strings->upper($title))`. String operations do
 not escape HTML, sanitize rich text, or make SQL/URLs safe; keep normal
 context-appropriate output escaping and parameter binding.
 
+## Date/Time Utility
+
+Use the static `PBreeze\Date` utility for practical native date operations:
+
+```php
+use PBreeze\Date;
+
+$now = Date::now();
+$date = Date::parse('2026-11-14 12:30:00');
+$later = Date::addDays(5, $date);
+$start = Date::startOfDay($date);
+$text = Date::format('Y-m-d', $date);
+$relative = Date::diffForHumans('2026-11-13T12:00:00Z', '2026-11-14T12:00:00Z');
+// "1 day ago"
+
+// Omitting a base date uses current time:
+Date::addDays(5);
+Date::startOfDay();
+Date::format('Y-m-d');
+Date::diffForHumans(); // "just now"
+```
+
+Bootstrap loads the utility; standalone scripts can explicitly require
+`framework/Date.php`. No Composer or Intl extension is needed. Date-producing
+methods return native **DateTimeImmutable** objects, so arithmetic never changes
+your original date. This is a static utility, not a stateful fluent wrapper.
+
+### Parsing and timezone rules
+
+`parse()` accepts native `DateTimeInterface`, integer Unix timestamps in seconds
+(including zero/negative values), `YYYY-MM-DD`, or ISO/SQL date-time strings
+using `T`/space, minutes or seconds, optional fractional seconds up to six digits,
+and an optional `Z` or `+HH:MM`/`-HH:MM` offset.
+
+Empty strings, numeric timestamp strings, ambiguous locale dates, relative
+expressions such as `tomorrow`, invalid calendar dates, and rollover times fail
+with `InvalidArgumentException`; they never silently become now. Convert
+numeric timestamp strings explicitly after validating them.
+
+Defaults are **UTC**, not the machine's timezone. Input date objects keep
+their timezone; offset-bearing strings keep their stated offset. Supply an
+explicit IANA timezone to interpret timezone-less strings or convert an instant:
+
+```php
+$local = Date::parse('2026-11-14 12:30:00', 'Europe/Amsterdam');
+$utc = Date::parse($local, 'UTC');
+$today = Date::startOfDay($local);
+$display = Date::format('Y-m-d H:i:s P', $local);
+$configured = Date::now($app->config['timezone'] ?? 'UTC');
+```
+
+No helper changes PHP's global timezone or reads environment configuration
+implicitly. Timezone names must be UTC or recognized IANA identifiers, not
+ambiguous abbreviations/numeric offsets. Explicit offset strings are supported
+as date input.
+
+Timezone-less input that lands in a DST gap is rejected. Repeated local times
+follow PHP's native timezone interpretation; supply an explicit offset when
+the precise repeated instant matters. `addDays()` uses calendar days, preserving
+local wall-time/microseconds where timezone rules allow, not fixed 24-hour
+durations. A DST day can be 23 or 25 hours; arithmetic landing in a gap follows
+native normalization. Allowed day offsets are -365000..365000.
+`startOfDay()` resets microseconds too; a nonexistent local midnight follows
+native normalization to a valid time.
+
+### Formatting and human differences
+
+`format()` uses **PHP** date patterns, not ICU:
+`Date::format('Y-m-d H:i', $date)`. Patterns must be nonempty UTF-8, at most
+256 bytes, without control characters. Format results are not HTML-escaped.
+Use the existing `$app->format` service for locale-aware date/time output.
+
+`diffForHumans($date, $relativeTo = null)` reports past/future direction and the
+largest whole elapsed-time unit: `"2 minutes ago"`, `"in 1 hour"`, or `"just now"`
+for differences below a second. Days are 86400 seconds, months are approximated
+as 30 days, and years as 365 days; it is not a calendar-month or financial-age
+calculation. Fractions are truncated, not rounded. The output is concise
+US English; no translation system is introduced. Providing an explicit
+reference date makes examples/tests deterministic.
+
 ## Date, Time, Money, and Decimal Formatting
 
 The shared `$app->format` service uses native PHP Intl/ICU without Composer

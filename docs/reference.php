@@ -397,6 +397,7 @@ $reference += require __DIR__ . '/background-scheduler-reference.php';
 $reference += require __DIR__ . '/file-reader-reference.php';
 $reference += require __DIR__ . '/html-reference.php';
 $reference += require __DIR__ . '/validation-reference.php';
+$reference += require __DIR__ . '/date-reference.php';
 
 return [
     'classes' => $reference,
