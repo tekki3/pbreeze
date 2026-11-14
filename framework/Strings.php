@@ -34,7 +34,10 @@ final class Strings
     {
         $this->unicode($text);
         $length = grapheme_strlen($text);
-        return $length === false ? throw new RuntimeException('Cannot measure the string.') : $length;
+        if ($length === false) {
+            throw new RuntimeException('Cannot measure the string.');
+        }
+        return $length;
     }
 
     public function slice(string $text, int $offset, ?int $length = null): string
@@ -47,7 +50,10 @@ final class Strings
             return '';
         }
         $result = grapheme_substr($text, $offset, $length);
-        return $result === false ? throw new RuntimeException('Cannot slice the string.') : $result;
+        if ($result === false) {
+            throw new RuntimeException('Cannot slice the string.');
+        }
+        return $result;
     }
 
     public function contains(string $text, string $needle): bool
@@ -119,7 +125,10 @@ final class Strings
             throw new RuntimeException('Cannot transliterate the string.');
         }
         $slug = preg_replace('/[^a-z0-9]+/', $separator, $ascii);
-        return $slug === null ? throw new RuntimeException('Cannot create a slug.') : trim($slug, $separator);
+        if ($slug === null) {
+            throw new RuntimeException('Cannot create a slug.');
+        }
+        return trim($slug, $separator);
     }
 
     public function snake(string $text): string
@@ -210,6 +219,9 @@ final class Strings
         $text = preg_replace('/([\p{Ll}\p{N}])(\p{Lu})/u', '$1 $2', $text)
             ?? throw new RuntimeException('Cannot split string words.');
         $words = preg_split('/[^\p{L}\p{M}\p{N}]+/u', $text, -1, PREG_SPLIT_NO_EMPTY);
-        return $words === false ? throw new RuntimeException('Cannot split string words.') : $words;
+        if ($words === false) {
+            throw new RuntimeException('Cannot split string words.');
+        }
+        return $words;
     }
 }
