@@ -142,6 +142,25 @@ test('SQL Server quotes identifiers and compiles TOP and ordered OFFSET/FETCH', 
     raises(static fn () => $db->limit('SELECT * FROM notes', 0), InvalidArgumentException::class);
 });
 
+test('Row locks require a transaction and use driver-specific query syntax', static function (): void {
+    [$db, $pdo] = sqlServerRecordingDatabase();
+    $query = $db->table('notes')->where('id', 42)->lockForUpdate();
+    raises(static fn () => $query->first(), LogicException::class);
+    $pdo->transaction = true;
+    $query->first();
+    same('SELECT TOP (1) * FROM [notes] WITH (UPDLOCK, ROWLOCK) WHERE [id] = ?', end($pdo->sql));
+    same([1 => [42, PDO::PARAM_INT]], end($pdo->bindings));
+    raises(static fn () => $query->count(), LogicException::class);
+
+    global $temp;
+    $mysql = new \PBreeze\Database($temp, ['driver' => 'mysql', 'database' => 'test']);
+    $mysqlPdo = new SqlServerRecordingPdo('mysql');
+    (new ReflectionProperty(\PBreeze\Database::class, 'connection'))->setValue($mysql, $mysqlPdo);
+    $mysqlPdo->transaction = true;
+    $mysql->table('notes')->where('id', 42)->lockForUpdate()->first();
+    same('SELECT * FROM `notes` WHERE `id` = ? LIMIT 1 FOR UPDATE', end($mysqlPdo->sql));
+});
+
 test('SQL Server inserts use scoped OUTPUT, custom keys, default rows, and typed bindings', static function (): void {
     [$db, $pdo] = sqlServerRecordingDatabase();
     same(42, $db->table('notes')->insert(['title' => 'Unicode: café', 'active' => true, 'extra' => null]));

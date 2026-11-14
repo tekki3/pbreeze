@@ -13,7 +13,6 @@ use LogicException;
 abstract class Model implements JsonSerializable
 {
     protected string $table = '';
-    protected string $primaryKey = 'id';
     protected bool $incrementing = true;
     protected bool $timestamps = false;
     /** @var list<string> */
@@ -32,9 +31,29 @@ abstract class Model implements JsonSerializable
     final public function __construct(protected readonly Database $db)
     {
         Query::identifier($this->table);
-        Query::identifier($this->primaryKey);
+        $primaryKey = $this->configuredPrimaryKey();
+        if (!is_string($primaryKey) && !is_array($primaryKey)) {
+            throw new InvalidArgumentException('Primary keys must be a column name or a nonempty list of column names.');
+        }
+        $keyNames = $this->keyNames();
+        if ($keyNames === [] || is_array($primaryKey)
+            && (!array_is_list($primaryKey) || $primaryKey === [])) {
+            throw new InvalidArgumentException('Primary keys must be a column name or a nonempty list of column names.');
+        }
+        foreach ($keyNames as $key) {
+            if (!is_string($key)) {
+                throw new InvalidArgumentException('Primary-key column names must be strings.');
+            }
+        }
+        if (count(array_unique($keyNames)) !== count($keyNames)
+            || count($keyNames) > 1 && $this->incrementing) {
+            throw new LogicException('A composite primary key must be nonincrementing and contain distinct columns.');
+        }
+        foreach ($keyNames as $key) {
+            Query::identifier($key);
+        }
         foreach ($this->casts as $key => $cast) {
-            if ($this->encrypted($key) && ($key === $this->primaryKey || $this->timestamps && in_array($key, ['created_at', 'updated_at'], true))) {
+            if ($this->encrypted($key) && (in_array($key, $keyNames, true) || $this->timestamps && in_array($key, ['created_at', 'updated_at'], true))) {
                 throw new LogicException('Primary keys and automatic timestamps cannot be encrypted.');
             }
         }
@@ -48,6 +67,27 @@ abstract class Model implements JsonSerializable
 
     final public function keyName(): string
     {
+        $keyNames = $this->keyNames();
+        if (count($keyNames) !== 1) {
+            throw new LogicException('A composite primary key has multiple column names; use keyNames().');
+        }
+        return $keyNames[0];
+    }
+
+    /** @return non-empty-list<string> */
+    final public function keyNames(): array
+    {
+        $primaryKey = $this->configuredPrimaryKey();
+        return is_string($primaryKey) ? [$primaryKey] : array_values($primaryKey);
+    }
+
+    /** @return string|list<string> */
+    private function configuredPrimaryKey(): mixed
+    {
+        // A base declaration would make legacy typed subclass properties incompatible.
+        if (!property_exists($this, 'primaryKey')) {
+            return 'id';
+        }
         return $this->primaryKey;
     }
 
@@ -80,9 +120,10 @@ abstract class Model implements JsonSerializable
     final public function encodeFill(#[\SensitiveParameter] array $data): array
     {
         $result = [];
+        $keyNames = $this->keyNames();
         foreach ($data as $key => $value) {
             if (!is_string($key) || !in_array($key, $this->fillable, true)
-                || $key === $this->primaryKey && ($this->incrementing || $this->persisted)
+                || in_array($key, $keyNames, true) && ($this->incrementing || $this->persisted)
                 || $this->timestamps && in_array($key, ['created_at', 'updated_at'], true)) {
                 throw new InvalidArgumentException('Model field is not writable: ' . $key);
             }
@@ -92,7 +133,8 @@ abstract class Model implements JsonSerializable
                 && $this->decode($key, $this->attributes[$key]) === $value) {
                 $result[$key] = $this->attributes[$key];
             }
-            if ($key === $this->primaryKey && ((!is_int($result[$key]) && !is_string($result[$key])) || $result[$key] === '')) {
+            if (in_array($key, $keyNames, true)
+                && ((!is_int($result[$key]) && !is_string($result[$key])) || $result[$key] === '')) {
                 throw new InvalidArgumentException('A primary key must be an int or a nonempty string.');
             }
         }
@@ -102,8 +144,10 @@ abstract class Model implements JsonSerializable
     /** @internal @param array<string, mixed> $data */
     final public function hydrate(array $data): static
     {
-        if (!isset($data[$this->primaryKey]) || !is_int($data[$this->primaryKey]) && !is_string($data[$this->primaryKey])) {
-            throw new LogicException('A model record requires an int/string primary key.');
+        foreach ($this->keyNames() as $key) {
+            if (!isset($data[$key]) || (!is_int($data[$key]) && !is_string($data[$key])) || $data[$key] === '') {
+                throw new LogicException('A model record requires int/string values for every primary-key column.');
+            }
         }
         $record = new static($this->db);
         foreach ($data as $key => $value) {
@@ -134,17 +178,21 @@ abstract class Model implements JsonSerializable
         }
         if ($this->persisted) {
             $changes = $this->changes($values);
-            $query = $this->db->table($this->table)->where($this->primaryKey, $this->key());
+            $query = $this->identityQuery();
             if ($query->update($changes) === 0 && !$query->exists()) {
                 throw new RecordNotFoundException('The model record no longer exists.');
             }
         } else {
-            if (!$this->incrementing && !isset($values[$this->primaryKey])) {
-                throw new LogicException('A nonincrementing model requires a primary key.');
+            if (!$this->incrementing) {
+                foreach ($this->keyNames() as $key) {
+                    if (!isset($values[$key])) {
+                        throw new LogicException('A nonincrementing model requires all primary-key values.');
+                    }
+                }
             }
-            $id = $this->db->table($this->table)->insert($values, $this->incrementing ? $this->primaryKey : null);
+            $id = $this->db->table($this->table)->insert($values, $this->incrementing ? $this->keyName() : null);
             if ($this->incrementing) {
-                $values[$this->primaryKey] = $id;
+                $values[$this->keyName()] = $id;
             }
             $this->persisted = true;
         }
@@ -168,7 +216,7 @@ abstract class Model implements JsonSerializable
         if (!$this->persisted) {
             throw new LogicException('delete requires a saved model.');
         }
-        $deleted = $this->db->table($this->table)->where($this->primaryKey, $this->key())->delete() === 1;
+        $deleted = $this->identityQuery()->delete() === 1;
         if (!$deleted) {
             throw new RecordNotFoundException('The model record no longer exists.');
         }
@@ -182,7 +230,7 @@ abstract class Model implements JsonSerializable
         if (!$this->persisted) {
             throw new LogicException('refresh requires a saved model.');
         }
-        $data = $this->db->table($this->table)->where($this->primaryKey, $this->key())->firstOrFail();
+        $data = $this->identityQuery()->firstOrFail();
         $record = $this->hydrate($data);
         $this->attributes = $record->attributes;
         $this->original = $record->original;
@@ -257,22 +305,44 @@ abstract class Model implements JsonSerializable
     /** @param class-string<Model> $related
      *  @return Query<Model>
      */
-    final protected function hasMany(string $related, string $foreignKey, ?string $localKey = null): Query
+    final protected function hasMany(string $related, string|array $foreignKey, string|array|null $localKey = null): Query
     {
-        $value = $this->relationValue($localKey ?? $this->primaryKey);
+        $foreignKeys = self::keyList($foreignKey);
+        $localKeys = self::keyList($localKey ?? $this->keyNames());
+        if (count($foreignKeys) !== count($localKeys)) {
+            throw new InvalidArgumentException('Relationship foreign and local keys must have the same number of columns.');
+        }
         $query = $this->related($related)->query();
-        return $value === null ? $query->whereIn($foreignKey, []) : $query->where($foreignKey, $value);
+        foreach ($localKeys as $index => $key) {
+            $value = $this->relationValue($key);
+            if ($value === null) {
+                return $query->whereIn($foreignKeys[$index], []);
+            }
+            $query = $query->where($foreignKeys[$index], $value);
+        }
+        return $query;
     }
 
     /** @param class-string<Model> $related
      *  @return Query<Model>
      */
-    final protected function belongsTo(string $related, string $foreignKey, ?string $ownerKey = null): Query
+    final protected function belongsTo(string $related, string|array $foreignKey, string|array|null $ownerKey = null): Query
     {
         $model = $this->related($related);
-        $value = $this->relationValue($foreignKey);
-        $key = $ownerKey ?? $model->keyName();
-        return $value === null ? $model->query()->whereIn($key, []) : $model->query()->where($key, $value);
+        $foreignKeys = self::keyList($foreignKey);
+        $ownerKeys = self::keyList($ownerKey ?? $model->keyNames());
+        if (count($foreignKeys) !== count($ownerKeys)) {
+            throw new InvalidArgumentException('Relationship foreign and owner keys must have the same number of columns.');
+        }
+        $query = $model->query();
+        foreach ($foreignKeys as $index => $key) {
+            $value = $this->relationValue($key);
+            if ($value === null) {
+                return $query->whereIn($ownerKeys[$index], []);
+            }
+            $query = $query->where($ownerKeys[$index], $value);
+        }
+        return $query;
     }
 
     private function related(string $class): Model
@@ -297,13 +367,38 @@ abstract class Model implements JsonSerializable
         return $value;
     }
 
-    private function key(): int|string
+    /** @param string|list<string> $keys
+     *  @return non-empty-list<string>
+     */
+    private static function keyList(string|array $keys): array
     {
-        $key = $this->attributes[$this->primaryKey] ?? null;
-        if (!is_int($key) && !is_string($key)) {
-            throw new LogicException('A primary key must be an int or string.');
+        $list = is_string($keys) ? [$keys] : $keys;
+        if ($list === [] || !array_is_list($list)) {
+            throw new InvalidArgumentException('Relationship keys must be a nonempty list of columns.');
         }
-        return $key;
+        foreach ($list as $key) {
+            if (!is_string($key)) {
+                throw new InvalidArgumentException('Relationship keys must be strings.');
+            }
+            Query::identifier($key);
+        }
+        if (count(array_unique($list)) !== count($list)) {
+            throw new InvalidArgumentException('Relationship keys must be distinct.');
+        }
+        return $list;
+    }
+
+    private function identityQuery(): Query
+    {
+        $query = $this->db->table($this->table);
+        foreach ($this->keyNames() as $key) {
+            $value = $this->attributes[$key] ?? null;
+            if (!is_int($value) && !is_string($value)) {
+                throw new LogicException('A primary key must be an int or string.');
+            }
+            $query = $query->where($key, $value);
+        }
+        return $query;
     }
 
     private function encode(string $key, #[\SensitiveParameter] mixed $value): string|int|float|bool|null

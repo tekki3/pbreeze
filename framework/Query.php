@@ -20,6 +20,7 @@ final class Query
     private array $orders = [];
     private ?int $take = null;
     private int $skip = 0;
+    private bool $updateLock = false;
 
     public function __construct(
         private readonly Database $db,
@@ -141,10 +142,27 @@ final class Query
         return $query;
     }
 
+    public function lockForUpdate(): self
+    {
+        if (!in_array($this->db->driver(), ['mysql', 'pgsql', 'sqlsrv'], true)) {
+            throw new LogicException('Row locking is not supported by this database driver.');
+        }
+        $query = clone $this;
+        $query->updateLock = true;
+        return $query;
+    }
+
     /** @return list<T> */
     public function get(): array
     {
-        $sql = 'SELECT * FROM ' . $this->quote($this->table) . $this->whereSql();
+        if ($this->updateLock && !$this->db->pdo()->inTransaction()) {
+            throw new LogicException('lockForUpdate() requires an active database transaction.');
+        }
+        $from = $this->quote($this->table);
+        if ($this->updateLock && $this->db->driver() === 'sqlsrv') {
+            $from .= ' WITH (UPDLOCK, ROWLOCK)';
+        }
+        $sql = 'SELECT * FROM ' . $from . $this->whereSql();
         if ($this->orders !== []) {
             $sql .= ' ORDER BY ' . implode(', ', $this->orders);
         }
@@ -155,6 +173,9 @@ final class Query
             $sql = $this->db->limit($sql, $this->take, $this->skip);
         } elseif ($this->skip !== 0) {
             throw new LogicException('offset requires an explicit limit.');
+        }
+        if ($this->updateLock && $this->db->driver() !== 'sqlsrv') {
+            $sql .= ' FOR UPDATE';
         }
         $rows = $this->execute($sql, $this->bindings)->fetchAll();
         return $this->model === null ? $rows : array_map($this->model->hydrate(...), $rows);
@@ -172,35 +193,70 @@ final class Query
         return $this->first() ?? throw new RecordNotFoundException('Record not found.');
     }
 
-    /** @return T|null */
-    public function find(int|string $id): Model|array|null
+    /** @param int|string|array<string, int|string> $id
+     *  @return T|null
+     */
+    public function find(int|string|array $id): Model|array|null
     {
-        return $this->where($this->model?->keyName() ?? 'id', $id)->first();
+        $keys = $this->model?->keyNames() ?? ['id'];
+        if (count($keys) === 1) {
+            if (!is_int($id) && !is_string($id)) {
+                throw new InvalidArgumentException('A single-column primary key requires an int or string identifier.');
+            }
+            return $this->where($keys[0], $id)->first();
+        }
+        if (!is_array($id) || array_is_list($id) || count($id) !== count($keys)) {
+            throw new InvalidArgumentException('A composite primary key requires an associative array of column values.');
+        }
+        foreach ($id as $key => $value) {
+            if (!is_string($key) || !in_array($key, $keys, true)
+                || (!is_int($value) && !is_string($value)) || $value === '') {
+                throw new InvalidArgumentException('A composite primary key requires a nonempty int/string value for every column.');
+            }
+        }
+        $query = $this;
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $id)) {
+                throw new InvalidArgumentException('A composite primary key requires a value for every column.');
+            }
+            $query = $query->where($key, $id[$key]);
+        }
+        return $query->first();
     }
 
-    /** @return T */
-    public function findOrFail(int|string $id): Model|array
+    /** @param int|string|array<string, int|string> $id
+     *  @return T
+     */
+    public function findOrFail(int|string|array $id): Model|array
     {
         return $this->find($id) ?? throw new RecordNotFoundException('Record not found.');
     }
 
     public function count(): int
     {
+        $this->assertUnlockedRead();
         return (int) $this->execute('SELECT COUNT(*) FROM ' . $this->quote($this->table) . $this->whereSql(), $this->bindings)->fetchColumn();
     }
 
     public function exists(): bool
     {
+        $this->assertUnlockedRead();
         return $this->execute($this->db->limit('SELECT 1 FROM ' . $this->quote($this->table) . $this->whereSql(), 1), $this->bindings)->fetchColumn() !== false;
     }
 
     /** @return array{data: list<T>, total: int, per_page: int, current_page: int, last_page: int} */
     public function paginate(int $perPage = 20, int $page = 1): array
     {
+        $this->assertUnlockedRead();
         if ($perPage < 1 || $perPage > 100 || $page < 1 || $page - 1 > intdiv(PHP_INT_MAX, $perPage)) {
             throw new InvalidArgumentException('Use a positive page number and 1 to 100 records per page.');
         }
-        $query = $this->orders === [] ? $this->orderBy($this->model?->keyName() ?? 'id') : $this;
+        $query = $this;
+        if ($this->orders === []) {
+            foreach ($this->model?->keyNames() ?? ['id'] as $key) {
+                $query = $query->orderBy($key);
+            }
+        }
         $total = $this->count();
         return [
             'data' => $query->limit($perPage)->offset(($page - 1) * $perPage)->get(),
@@ -237,7 +293,7 @@ final class Query
     {
         $this->assertWrite();
         if ($this->model !== null) {
-            if (array_key_exists($this->model->keyName(), $data)) {
+            if (array_intersect($this->model->keyNames(), array_keys($data)) !== []) {
                 throw new InvalidArgumentException('A model update cannot change the primary key.');
             }
             $data = $this->model->encodeFill($data);
@@ -259,13 +315,16 @@ final class Query
 
     private function assertInsert(): void
     {
-        if ($this->conditions !== [] || $this->orders !== [] || $this->take !== null || $this->skip !== 0) {
+        if ($this->conditions !== [] || $this->orders !== [] || $this->take !== null || $this->skip !== 0 || $this->updateLock) {
             throw new LogicException('insert/create does not accept filters, sorting, or pagination.');
         }
     }
 
     private function assertWrite(): void
     {
+        if ($this->updateLock) {
+            throw new LogicException('A locking read cannot be used for an update or delete.');
+        }
         if ($this->conditions === []) {
             throw new LogicException('An update/delete requires an explicit filter.');
         }
@@ -277,6 +336,13 @@ final class Query
     private function whereSql(): string
     {
         return $this->conditions === [] ? '' : ' WHERE ' . implode(' AND ', $this->conditions);
+    }
+
+    private function assertUnlockedRead(): void
+    {
+        if ($this->updateLock) {
+            throw new LogicException('lockForUpdate() is only valid for row-returning reads.');
+        }
     }
 
     /** @param array<string, mixed> $data

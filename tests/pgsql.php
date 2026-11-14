@@ -35,6 +35,17 @@ test('PostgreSQL quotes identifiers, binds values, and uses LIMIT/OFFSET and RET
     same('INSERT INTO "api_limits" (bucket, expires_at) VALUES (?, ?) ON CONFLICT(bucket) DO NOTHING', end($pdo->sql));
 });
 
+test('PostgreSQL row locks require a transaction and follow pagination clauses', static function (): void {
+    [$db, $pdo] = pgsqlRecordingDatabase();
+    $query = $db->table('notes')->where('id', 42)->lockForUpdate();
+    raises(static fn () => $query->first(), LogicException::class);
+    $pdo->transaction = true;
+    $query->first();
+    same('SELECT * FROM "notes" WHERE "id" = ? LIMIT 1 FOR UPDATE', end($pdo->sql));
+    same([1 => [42, PDO::PARAM_INT]], end($pdo->bindings));
+    raises(static fn () => $query->paginate(), LogicException::class);
+});
+
 test('PostgreSQL duplicate registration and IMAP import avoid aborted transactions', static function (): void {
     [$db, $pdo] = pgsqlRecordingDatabase();
     $mail = new \PBreeze\Mail\Mailer($db, ['from' => 'noreply@example.test']);

@@ -58,6 +58,30 @@ final class OrmKey extends Model
     }
 }
 
+final class OrmComposite extends Model
+{
+    protected string $table = 'orm_composites';
+    protected array $primaryKey = ['tenant_id', 'code'];
+    protected bool $incrementing = false;
+    protected array $fillable = ['tenant_id', 'code', 'label'];
+
+    public function children(): Query
+    {
+        return $this->hasMany(OrmCompositeChild::class, ['tenant_id', 'parent_code'], ['tenant_id', 'code']);
+    }
+}
+
+final class OrmCompositeChild extends Model
+{
+    protected string $table = 'orm_composite_children';
+    protected array $fillable = ['tenant_id', 'parent_code', 'label'];
+
+    public function parent(): Query
+    {
+        return $this->belongsTo(OrmComposite::class, ['tenant_id', 'parent_code'], ['tenant_id', 'code']);
+    }
+}
+
 function ormDatabase(): Database
 {
     global $temp;
@@ -69,6 +93,14 @@ function ormDatabase(): Database
         metadata TEXT NULL, published_at TEXT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )');
     $db->execute('CREATE TABLE orm_keys (code TEXT PRIMARY KEY, value TEXT NULL)');
+    $db->execute('CREATE TABLE orm_composites (
+        tenant_id INTEGER NOT NULL, code TEXT NOT NULL, label TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, code)
+    )');
+    $db->execute('CREATE TABLE orm_composite_children (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, parent_code TEXT NOT NULL, label TEXT NOT NULL,
+        FOREIGN KEY (tenant_id, parent_code) REFERENCES orm_composites (tenant_id, code)
+    )');
     return $db;
 }
 
@@ -352,6 +384,45 @@ test('Nonincrementing primary keys work with find, updates, and relationships', 
     same(0, $keys->query()->count());
 });
 
+test('Composite primary keys support model CRUD, lookup, pagination, and relationships', static function (): void {
+    $db = ormDatabase();
+    $records = new OrmComposite($db);
+    raises(fn () => $records->create(['tenant_id' => 1, 'label' => 'Missing code']), LogicException::class);
+    raises(fn () => $records->create(['tenant_id' => 1, 'code' => null, 'label' => 'Invalid']), InvalidArgumentException::class);
+    $records->create(['tenant_id' => 2, 'code' => 'A', 'label' => 'Second tenant']);
+    $record = $records->create(['tenant_id' => 1, 'code' => 'Z', 'label' => 'Last']);
+    $records->create(['tenant_id' => 1, 'code' => 'B', 'label' => 'First']);
+    same(['tenant_id', 'code'], $records->keyNames());
+    raises(fn () => $records->keyName(), LogicException::class);
+    same('Last', $records->query()->find(['code' => 'Z', 'tenant_id' => 1])->label);
+    same(null, $records->query()->find(['tenant_id' => 1, 'code' => 'missing']));
+    same('Last', $records->query()->findOrFail(['tenant_id' => 1, 'code' => 'Z'])->label);
+    foreach ([[], ['tenant_id' => 1], ['tenant_id' => 1, 'code' => 'Z', 'extra' => true], [1, 'Z'], ['tenant_id' => null, 'code' => 'Z']] as $invalid) {
+        raises(fn () => $records->query()->find($invalid), InvalidArgumentException::class);
+    }
+    raises(fn () => $records->query()->where('tenant_id', 1)->where('code', 'Z')->update(['code' => 'Changed']), InvalidArgumentException::class);
+    raises(fn () => $record->update(['tenant_id' => 3]), InvalidArgumentException::class);
+    $record->update(['label' => 'Updated']);
+    same('Updated', $records->query()->find(['tenant_id' => 1, 'code' => 'Z'])->label);
+    $db->table('orm_composites')->where('tenant_id', 1)->where('code', 'Z')->update(['label' => 'External']);
+    same('External', $record->refresh()->label);
+    same([[1, 'B'], [1, 'Z'], [2, 'A']], array_map(
+        static fn (OrmComposite $row): array => [$row->tenant_id, $row->code],
+        $records->query()->paginate(10)['data'],
+    ));
+    $child = (new OrmCompositeChild($db))->create(['tenant_id' => 1, 'parent_code' => 'Z', 'label' => 'Child']);
+    same(1, $record->children()->count());
+    same('External', $child->parent()->firstOrFail()->label);
+    $child->delete();
+    same(true, $record->delete());
+    same(null, $records->query()->find(['tenant_id' => 1, 'code' => 'Z']));
+    raises(fn () => (new class($db) extends Model {
+        protected string $table = 'orm_composites';
+        protected array $primaryKey = ['tenant_id', 'code'];
+        protected array $fillable = ['tenant_id', 'code'];
+    })->query(), LogicException::class);
+});
+
 test('Deleted records and database errors are not disguised as successful model writes', static function (): void {
     $db = ormDatabase();
     $model = new OrmAuthor($db);
@@ -362,6 +433,13 @@ test('Deleted records and database errors are not disguised as successful model 
     raises(fn () => $record->delete(), RecordNotFoundException::class);
     raises(fn () => $model->create([]), PDOException::class);
     same(0, $model->query()->count());
+});
+
+test('Row locks are explicit, transaction-bound, and unsupported on SQLite', static function (): void {
+    $db = ormDatabase();
+    $query = $db->table('orm_authors');
+    raises(fn () => $query->lockForUpdate(), LogicException::class);
+    same(0, $query->count());
 });
 
 test('ORM transactions use Database::transaction without a global connection', static function (): void {

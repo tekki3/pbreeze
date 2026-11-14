@@ -4863,6 +4863,30 @@ automatic timestamps are not writable. For manual/string keys, set
 `$incrementing = false`, choose `$primaryKey`, and add that key to
 `$fillable` for creation.
 
+Composite primary keys use a nonincrementing list of column names; every key
+column must be fillable for inserts:
+
+```php
+final class TenantSetting extends \PBreeze\Model
+{
+    protected string $table = 'tenant_settings';
+    protected array $primaryKey = ['tenant_id', 'code'];
+    protected bool $incrementing = false;
+    protected array $fillable = ['tenant_id', 'code', 'value'];
+}
+
+$setting = (new TenantSetting($app->db))->query()->findOrFail([
+    'tenant_id' => 7,
+    'code' => 'locale',
+]);
+```
+
+Composite lookup arrays must name exactly the configured key columns, but may
+list them in any order. CRUD, refresh, delete, and default pagination ordering
+use every key column. `keyNames()` returns all key columns; `keyName()` remains
+available for a single-column key and throws for a composite key. Relationship
+key arguments may be lists paired by position when relating composite keys.
+
 Model queries also support filtered bulk `update`/`delete`.
 `update` checks fillable fields and casts, but works without model instances:
 automatic timestamps are **not** updated. Use `save()` or `update()` on a
@@ -4929,7 +4953,9 @@ $authorArticles = $author->articles()->where('published', true)->get();
 
 `hasMany(Related::class, foreignKey, localKey)` uses the model's primary
 key as localKey by default. `belongsTo(Related::class, foreignKey, ownerKey)`
-uses the related model's primary key by default.
+uses the related model's primary key by default. For composite-key
+relationships, pass lists of corresponding foreign/local or foreign/owner
+columns in the same order.
 Both return a new, filterable **model query** on the same
 database connection. A null relationship key returns no results.
 Relationships on unsaved models are rejected; records are not automatically
@@ -4977,6 +5003,22 @@ model events have not been added. After rollback, use new/reloaded
 instances: a rollback restores the database, not previously changed
 PHP objects. The ORM does not replace validation, route guards, or
 per-record authorization.
+
+For a transaction-scoped row lock, use `lockForUpdate()` on a row-returning
+query inside `Database::transaction()`. MySQL and PostgreSQL use `FOR UPDATE`;
+SQL Server uses `UPDLOCK, ROWLOCK` hints. Calling it outside a transaction or
+on SQLite throws explicitly. Locks remain subject to the database engine's
+isolation level and lock-escalation behavior.
+
+```php
+$app->db->transaction(function () use ($app, $id): void {
+    $job = $app->db->table('background_jobs')
+        ->where('id', $id)
+        ->lockForUpdate()
+        ->firstOrFail();
+    // Validate the locked state and perform related writes here.
+});
+```
 
 ## Encryption
 
