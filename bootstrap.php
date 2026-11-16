@@ -47,6 +47,7 @@ require_once __DIR__ . '/framework/mail/MailStore.php';
 require_once __DIR__ . '/framework/mail/Mailer.php';
 require_once __DIR__ . '/framework/mail/MailConsole.php';
 require_once __DIR__ . '/framework/Totp.php';
+require_once __DIR__ . '/framework/QrCode.php';
 require_once __DIR__ . '/framework/Auth.php';
 require_once __DIR__ . '/framework/ApiTokens.php';
 require_once __DIR__ . '/framework/Api.php';

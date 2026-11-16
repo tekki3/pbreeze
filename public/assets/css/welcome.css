@@ -123,6 +123,8 @@ code { font-size: .9em; }
 .auth-logout { padding-top: 24px; border-top: 1px solid var(--line); margin-top: 32px; }
 .auth-logout button { margin-top: 0; }
 .mfa-secret { padding-block: 16px; font-size: 18px; }
+.mfa-qr { margin-block: 16px 24px; }
+.mfa-qr svg { display: block; max-width: 100%; height: auto; }
 .mfa-recovery-codes { padding-left: 24px; margin-block: 24px; }
 .mfa-recovery-codes li { margin-block: 8px; }
 .button-secondary { color: var(--green); background: transparent; border-color: var(--green); }

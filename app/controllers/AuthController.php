@@ -20,7 +20,7 @@ final class AuthController
         'account' => ['Your account', 'You are logged in and your email address is verified.', '', ''],
         'mfa' => ['Verify your login', 'Enter the code from your authenticator app or one of your recovery codes. This login challenge expires after five minutes.', '/login/mfa', 'Verify and log in'],
         'mfa-setup' => ['Set up multi-factor authentication', 'Add an authenticator app to protect your account. Confirm your current password to start.', '/account/mfa/setup', 'Start authenticator setup'],
-        'mfa-confirm' => ['Confirm your authenticator', 'Save the setup key in your authenticator app, then enter its six-digit code. Setup expires after ten minutes.', '/account/mfa/confirm', 'Enable multi-factor authentication'],
+        'mfa-confirm' => ['Confirm your authenticator', 'Scan the QR code or add the setup key in your authenticator app, then enter its six-digit code. Setup expires after ten minutes.', '/account/mfa/confirm', 'Enable multi-factor authentication'],
         'mfa-recovery' => ['Save your recovery codes', 'Multi-factor authentication is enabled. Store these codes somewhere safe, separate from your password.', '', ''],
         'mfa-disable' => ['Manage multi-factor authentication', 'Multi-factor authentication is enabled. To turn it off, enter your current password and an unused authenticator or recovery code.', '/account/mfa/disable', 'Disable multi-factor authentication'],
     ];
@@ -171,7 +171,7 @@ final class AuthController
             return Response::redirect('/login/mfa');
         }
         if ($mode === 'mfa-setup') {
-            return $this->page('mfa-confirm', ['setup' => $result]);
+            return $this->page('mfa-confirm', ['setup' => $result, 'setupQr' => \PBreeze\QrCode::svg($result['uri'])]);
         }
         if ($mode === 'mfa-confirm') {
             return $this->page('mfa-recovery', ['recoveryCodes' => $result]);
@@ -197,7 +197,7 @@ final class AuthController
             'action' => $action, 'button' => $button, 'user' => $user,
             'errors' => [], 'message' => null, 'oldName' => '', 'oldEmail' => '', 'token' => '',
             'captcha' => $captcha, 'captchaRefreshed' => false,
-            'setup' => null, 'recoveryCodes' => [],
+            'setup' => null, 'setupQr' => null, 'recoveryCodes' => [],
         ]), $status, [
             'Content-Type' => 'text/html; charset=UTF-8',
             'Referrer-Policy' => 'no-referrer',

@@ -4390,9 +4390,10 @@ verified owner enables MFA.
    `.env`. **Never replace an existing key** to enable MFA. Back up the key;
    losing it prevents decrypting enrolled authenticator secrets.
 3. Log in, open **My account**, and choose **Set up multi-factor authentication**.
-   Enter your current password, then manually add the displayed Base32 key
-   to an authenticator app. On the same device, the authenticator link can
-   open a compatible app; no QR service or external request is used.
+   Enter your current password, then scan the QR code with your authenticator
+   app or manually add the displayed Base32 key. The QR code is generated
+   locally, never sent to a QR service or embedded in a public image URL.
+   On the same device, the authenticator link can open a compatible app.
 4. Enter a code from the app within ten minutes to enable MFA. Save the ten
    recovery codes shown on the confirmation page. They are displayed only
    once, and each code can replace an authenticator code once.

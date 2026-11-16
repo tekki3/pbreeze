@@ -504,6 +504,13 @@ test('MFA enrollment requires a verified session, password, and code, and revoke
     check(preg_match('/<code>([A-Z2-7]{32})<\/code>/', $setup['body'], $match) === 1);
     $secret = $match[1];
     check(str_contains($setup['body'], 'otpauth://totp/auth.example.test%3Amfa%40example.test?'));
+    check(preg_match('/<div class="mfa-qr">(<svg.*?<\/svg>)<\/div>/s', $setup['body'], $qr) === 1);
+    check(preg_match('/href="(otpauth:[^"]+)"/', $setup['body'], $uri) === 1);
+    same(PBreeze\QrCode::svg(html_entity_decode($uri[1], ENT_QUOTES | ENT_HTML5, 'UTF-8')), $qr[1]);
+    check(!str_contains($qr[1], $secret));
+    check(in_array('Cache-Control: no-store', $setup['headers'], true));
+    $csp = implode("\n", $setup['headers']);
+    check(str_contains($csp, "img-src 'self'") && str_contains($csp, "script-src 'none'"));
     $file = $temp . '/http-sessions/sess_' . substr($client->cookie, strlen('pbreeze_session='));
     $state = unserialize(file_get_contents($file), ['allowed_classes' => false]);
     check(!str_contains(file_get_contents($file), $secret));
@@ -532,6 +539,7 @@ test('MFA enrollment requires a verified session, password, and code, and revoke
     check(str_contains($settings['body'], 'Disable multi-factor authentication'));
     check(str_contains($settings['body'], 'name="password"') && str_contains($settings['body'], 'name="code"'));
     check(!str_contains($settings['body'], $secret) && !str_contains($settings['body'], $codes[1][0]));
+    check(!str_contains($settings['body'], 'class="mfa-qr"'));
     same(303, $other->request('/account')['status']);
     same(401, http($base, '/api/me', 'GET', '', ['Authorization: Bearer ' . $token['token']])['status']);
     same(400, $client->request('/account/mfa/confirm', 'POST', ['code' => authMfaCode($secret, time())])['status']);

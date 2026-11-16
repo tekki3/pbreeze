@@ -131,6 +131,7 @@ try {
     require __DIR__ . '/sqlsrv.php';
     require __DIR__ . '/pgsql.php';
     require __DIR__ . '/encryption.php';
+    require __DIR__ . '/qrcode.php';
     require __DIR__ . '/bot-protection.php';
     require __DIR__ . '/api.php';
     require __DIR__ . '/english.php';

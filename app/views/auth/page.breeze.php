@@ -53,7 +53,9 @@
             @endif
             @if($mode === 'mfa-confirm')
                 @if($setup !== null)
-                    <p>In your authenticator app, add a time-based account using this setup key:</p>
+                    <p>Scan this QR code with your authenticator app:</p>
+                    <div class="mfa-qr">{!! $setupQr !!}</div>
+                    <p>Or add a time-based account manually using this setup key:</p>
                     <p class="mfa-secret"><code>{{ $setup['secret'] }}</code></p>
                     <p class="auth-next"><a href="{{ $setup['uri'] }}">Open in an authenticator app on this device</a></p>
                     <p class="field-hint">Use SHA-1, six digits, and a 30-second period. Keep this key private.</p>
