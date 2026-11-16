@@ -4309,7 +4309,8 @@ this does not change production code.
 
 ## Authentication
 
-Run `php breeze migrate` to create `users`, `auth_tokens`, and `auth_limits`.
+Run `php breeze migrate` to create `users`, `auth_tokens`, `auth_limits`,
+`auth_mfa`, and `auth_mfa_recovery` (plus the other framework tables).
 Also set the public origin in your existing `.env`:
 
 ```dotenv
@@ -4327,6 +4328,7 @@ Host or proxy headers. If you use a different local port, update `APP_URL`.
 |---|---|
 | `GET/POST /register` | Create an account and queue a verification email |
 | `GET/POST /login` | Sign in with an email address and password |
+| `GET/POST /login/mfa` | Complete a pending MFA login with an authenticator or recovery code |
 | `POST /logout` | Clear the session, regenerate ID and CSRF |
 | `GET/POST /forgot-password` | Request a reset link |
 | `GET/POST /reset-password` | Choose a new password with a token |
@@ -4334,6 +4336,10 @@ Host or proxy headers. If you use a different local port, update `APP_URL`.
 | `GET /email/verify` | Verification notice for signed-in users |
 | `POST /email/verification-notification` | Request a new verification email |
 | `GET /account` | Example page requiring login and email verification |
+| `GET /account/mfa` | Set up or manage optional per-user MFA |
+| `POST /account/mfa/setup` | Confirm the current password and start authenticator enrollment |
+| `POST /account/mfa/confirm` | Confirm enrollment and display recovery codes once |
+| `POST /account/mfa/disable` | Disable MFA with the current password and an unused second-factor code |
 
 After registration, sign in; unverified accounts are sent to the verification page.
 Open the verification link and **choose and confirm the password to use from
@@ -4368,6 +4374,77 @@ forms, emailed, or stored other than using `password_hash()`/bcrypt,
 cost 12. Login uses `password_verify()` and rehashing when needed.
 Email addresses are ASCII and are trimmed and lowercased;
 name and other fields are not automatically copied to database fields.
+
+### Optional Authenticator MFA
+
+The included account pages support time-based one-time passwords (TOTP),
+compatible with authenticator apps that support SHA-1, six digits, and a
+30-second period. Existing accounts keep password-only login until their
+verified owner enables MFA.
+
+1. Apply pending migrations with `php breeze migrate`. On an existing
+   deployment, back up the database and follow the normal production
+   migration procedure.
+2. Ensure a valid `APP_KEY` is configured. For a new installation only, run
+   `php breeze key:generate` and copy its printed assignment into your private
+   `.env`. **Never replace an existing key** to enable MFA. Back up the key;
+   losing it prevents decrypting enrolled authenticator secrets.
+3. Log in, open **My account**, and choose **Set up multi-factor authentication**.
+   Enter your current password, then manually add the displayed Base32 key
+   to an authenticator app. On the same device, the authenticator link can
+   open a compatible app; no QR service or external request is used.
+4. Enter a code from the app within ten minutes to enable MFA. Save the ten
+   recovery codes shown on the confirmation page. They are displayed only
+   once, and each code can replace an authenticator code once.
+
+Enabling or disabling MFA rotates the current session/CSRF token and
+invalidates other sessions and existing API tokens through the account's
+session version. The current browser stays logged in. Enabling MFA consumes
+the enrollment code, so wait for the next app code before using it again.
+Disabling requires both the current password and an unused authenticator or
+recovery code. To replace lost recovery codes while you can still
+authenticate, disable MFA and enroll again.
+
+Password login for an enrolled account creates only a pending challenge,
+not an authenticated user. Complete `/login/mfa` within five minutes;
+protected routes remain inaccessible until then. Successful completion
+clears pending state and rotates the session and CSRF token again.
+Canceling the challenge clears the pending login. There are no trusted-device
+or remember-MFA cookies.
+
+Authenticator verification allows one adjacent 30-second step in either
+direction for clock drift. Keep the server and device clocks synchronized.
+Accepted counters cannot be reused, including across browsers; accepting a
+future counter also blocks earlier ones. Secrets (including pending setup)
+use authenticated encryption bound to the user ID. Only SHA-256 hashes of
+the 80-bit random recovery codes are stored. Protect setup keys, recovery
+codes, session storage, the database, and backups; never log them.
+
+Password reset **does not remove MFA** and invalidates pending login/setup
+state through the session version. If both the authenticator and all
+recovery codes are lost, there is no self-service bypass. An administrator
+must use a separately designed, trusted identity-recovery procedure; no
+unauthenticated MFA-reset endpoint is included. Stateless API bearer
+authentication remains separate: newly issued tokens do not prompt for TOTP,
+so keep token issuance restricted to trusted administrators or fully
+authenticated, authorized application flows.
+
+For custom browser controllers, retain CSRF protection and the same session:
+
+```php
+// After the existing password/CAPTCHA checks:
+$app->auth->login($request->all(), $request->clientIp());
+return \PBreeze\Response::redirect(
+    $app->auth->mfaPending() ? '/login/mfa' : '/account'
+);
+
+// In the CSRF-protected second-step POST handler:
+$app->auth->completeMfaLogin(['code' => $request->input('code')], $request->clientIp());
+```
+
+`login()` still returns void: custom callers must not assume a successful
+password check means the user is authenticated. Use `mfaPending()` to choose
+the challenge and `user()`/`protect()` to authorize access.
 
 ### Sending Email
 
@@ -4415,7 +4492,7 @@ The guard redirects guests to `/login` and unverified accounts to `/email/verify
 There is no automatic redirect back to a supplied URL. Also protect your
 POST/PUT/PATCH/DELETE routes with the guard. Existing example routes remain
 public and work without auth tables as long as there is no signed-in session.
-Roles, per-object permissions, MFA, remember-me, and external providers are
+Roles, per-object permissions, remember-me, and external providers are
 not included; add authorization before exposing user data.
 
 Sessions expire after 30 minutes of inactivity or a maximum of 12 hours from login.
@@ -4432,6 +4509,8 @@ Fixed, database-backed time windows limit attempts, including across sessions:
 | Submit reset | 20 per IP per hour |
 | Resend verification email | 5 per user and 20 per IP per hour |
 | Submit verification token | 30 per IP per 15 minutes |
+| MFA code (login, enrollment, or disabling) | 5 per user and 30 per IP per 5 minutes, shared across those actions |
+| MFA password confirmation (setup or disabling) | 10 per user and 30 per IP per 15 minutes |
 
 Requests that are invalid in content also count toward the IP limit once the
 CAPTCHA and honeypot have passed. Expired limit records are cleaned up on

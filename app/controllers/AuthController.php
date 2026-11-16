@@ -18,6 +18,11 @@ final class AuthController
         'verify' => ['Verify your email address', 'Choose and confirm the password you will use to log in. This replaces the registration password and ends existing login sessions.', '/verify-email', 'Verify email address'],
         'notice' => ['Check your inbox', 'To continue, verify your email address using the link in our email.', '/email/verification-notification', 'Request new verification email'],
         'account' => ['Your account', 'You are logged in and your email address is verified.', '', ''],
+        'mfa' => ['Verify your login', 'Enter the code from your authenticator app or one of your recovery codes. This login challenge expires after five minutes.', '/login/mfa', 'Verify and log in'],
+        'mfa-setup' => ['Set up multi-factor authentication', 'Add an authenticator app to protect your account. Confirm your current password to start.', '/account/mfa/setup', 'Start authenticator setup'],
+        'mfa-confirm' => ['Confirm your authenticator', 'Save the setup key in your authenticator app, then enter its six-digit code. Setup expires after ten minutes.', '/account/mfa/confirm', 'Enable multi-factor authentication'],
+        'mfa-recovery' => ['Save your recovery codes', 'Multi-factor authentication is enabled. Store these codes somewhere safe, separate from your password.', '', ''],
+        'mfa-disable' => ['Manage multi-factor authentication', 'Multi-factor authentication is enabled. To turn it off, enter your current password and an unused authenticator or recovery code.', '/account/mfa/disable', 'Disable multi-factor authentication'],
     ];
 
     public function __construct(private readonly Application $app)
@@ -26,6 +31,9 @@ final class AuthController
 
     public function loginForm(Request $request): Response
     {
+        if ($this->app->auth->mfaPending()) {
+            return Response::redirect('/login/mfa');
+        }
         return $this->app->auth->user() === null ? $this->page('login') : Response::redirect('/account');
     }
 
@@ -58,7 +66,42 @@ final class AuthController
 
     public function account(Request $request): Response
     {
-        return $this->page('account');
+        return $this->page('account', ['mfaEnabled' => $this->app->auth->mfaEnabled()]);
+    }
+
+    public function mfaForm(Request $request): Response
+    {
+        return $this->app->auth->mfaPending() ? $this->page('mfa') : Response::redirect('/login');
+    }
+
+    public function mfa(Request $request): Response
+    {
+        return $this->submit($request, 'mfa',
+            fn () => $this->app->auth->completeMfaLogin($request->all(), $request->clientIp()), redirect: '/account');
+    }
+
+    public function mfaSettings(Request $request): Response
+    {
+        return $this->page($this->app->auth->mfaEnabled() ? 'mfa-disable' : 'mfa-setup');
+    }
+
+    public function mfaSetup(Request $request): Response
+    {
+        return $this->submit($request, 'mfa-setup',
+            fn () => $this->app->auth->beginMfaSetup($request->input('password'), $request->clientIp()));
+    }
+
+    public function mfaConfirm(Request $request): Response
+    {
+        return $this->submit($request, 'mfa-confirm',
+            fn () => $this->app->auth->confirmMfaSetup($request->input('code'), $request->clientIp()));
+    }
+
+    public function mfaDisable(Request $request): Response
+    {
+        return $this->submit($request, 'mfa-disable',
+            fn () => $this->app->auth->disableMfa($request->input('password'), $request->input('code'), $request->clientIp()),
+            redirect: '/account');
     }
 
     public function register(Request $request): Response
@@ -120,9 +163,18 @@ final class AuthController
             }
         }
         try {
-            $work();
+            $result = $work();
         } catch (AuthException $error) {
             return $this->page($mode, $data + ['errors' => $error->errors], $error->status, $error->retryAfter);
+        }
+        if ($mode === 'login' && $this->app->auth->mfaPending()) {
+            return Response::redirect('/login/mfa');
+        }
+        if ($mode === 'mfa-setup') {
+            return $this->page('mfa-confirm', ['setup' => $result]);
+        }
+        if ($mode === 'mfa-confirm') {
+            return $this->page('mfa-recovery', ['recoveryCodes' => $result]);
         }
         return $redirect !== null ? Response::redirect($redirect) : $this->page($mode, ['message' => $message]);
     }
@@ -145,6 +197,7 @@ final class AuthController
             'action' => $action, 'button' => $button, 'user' => $user,
             'errors' => [], 'message' => null, 'oldName' => '', 'oldEmail' => '', 'token' => '',
             'captcha' => $captcha, 'captchaRefreshed' => false,
+            'setup' => null, 'recoveryCodes' => [],
         ]), $status, [
             'Content-Type' => 'text/html; charset=UTF-8',
             'Referrer-Policy' => 'no-referrer',

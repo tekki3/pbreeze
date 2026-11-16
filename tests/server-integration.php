@@ -75,7 +75,7 @@ try {
     $db = $app->db;
     $migrator = new Migrator($db, $temporary);
     $ownsSchema = true;
-    sqlsrvCheck(count($migrator->migrate()) === 6, 'Expected all six migrations.');
+    sqlsrvCheck(count($migrator->migrate()) === 7, 'Expected all seven migrations.');
     sqlsrvCheck($migrator->migrate() === [], 'Repeated migration must be a no-op.');
     sqlsrvCheck(!in_array(null, $migrator->status(), true), 'Pending migration after migrate.');
     $bucket = hash('sha256', 'integration-limiter');
@@ -230,8 +230,8 @@ try {
         'Queue dispatch committed a caller-owned transaction.');
     $app->worker->registry()->stopped($workerId);
 
-    sqlsrvCheck(count($migrator->rollback()) === 6, 'Rollback did not revert all migrations.');
-    sqlsrvCheck(count($migrator->migrate()) === 6, 'Schema could not be migrated after rollback.');
+    sqlsrvCheck(count($migrator->rollback()) === 7, 'Rollback did not revert all migrations.');
+    sqlsrvCheck(count($migrator->migrate()) === 7, 'Schema could not be migrated after rollback.');
     echo "$label integration passed: schema, seed, Unicode CRUD, ORM, pagination, transactions, database sessions, auth/reset, API tokens, rate limits, mail queue, and durable queue claims/uniqueness/rollback. No SMTP was sent.\n";
 } finally {
     try {

@@ -529,6 +529,7 @@ PHP);
         $environment['DB_CONNECTION'] = 'sqlite';
         $environment['DB_DATABASE'] = $temp . '/http.sqlite';
         $environment['APP_URL'] = 'https://auth.example.test';
+        $environment['APP_KEY'] = \PBreeze\Encryption::generateKey();
         $environment['MAIL_FROM'] = 'noreply@example.test';
         $environment['MAIL_LOG'] = 'false';
         $environment['STORAGE_PATH'] = $temp . '/storage';

@@ -123,11 +123,185 @@ final class Auth
                 password_hash($data['password'], PASSWORD_BCRYPT, ['cost' => 12]), $user['id'], $user['password_hash'],
             ]);
         }
+        if ($this->db->execute('SELECT user_id FROM auth_mfa WHERE user_id = ?', [$user['id']])->fetchColumn() !== false) {
+            $this->session->reset();
+            $this->session->put('_auth_mfa_pending', [
+                'id' => (int) $user['id'], 'version' => (int) $user['session_version'], 'issued' => time(),
+            ]);
+            return;
+        }
+        $this->establishSession((int) $user['id'], (int) $user['session_version']);
+    }
+
+    private function establishSession(int $id, int $version): void
+    {
         $this->session->reset();
         $this->session->put('_auth', [
-            'id' => (int) $user['id'], 'version' => (int) $user['session_version'],
+            'id' => $id, 'version' => $version,
             'issued' => time(), 'seen' => time(),
         ]);
+    }
+
+    public function mfaPending(): bool
+    {
+        $pending = $this->session->get('_auth_mfa_pending');
+        return is_array($pending) && isset($pending['id'], $pending['version'], $pending['issued'])
+            && is_int($pending['id']) && is_int($pending['version']) && is_int($pending['issued'])
+            && $pending['issued'] > time() - 300 && $pending['issued'] <= time();
+    }
+
+    /** @param array<string, mixed> $data */
+    public function completeMfaLogin(#[\SensitiveParameter] array $data, string $ip): void
+    {
+        $this->limit('mfa-ip', $ip, 30, 300);
+        if (!$this->mfaPending()) {
+            $this->session->put('_auth_mfa_pending', null);
+            throw new AuthException(['code' => ['Your login challenge has expired. Log in again.']], 401);
+        }
+        $pending = $this->session->get('_auth_mfa_pending');
+        $this->limit('mfa-user', (string) $pending['id'], 5, 300);
+        $this->db->transaction(function () use ($pending, $data): void {
+            $version = $this->db->execute('SELECT session_version FROM users WHERE id = ?', [$pending['id']])->fetchColumn();
+            if ($version === false || (int) $version !== $pending['version']) {
+                $this->session->put('_auth_mfa_pending', null);
+                throw new AuthException(['code' => ['Your login challenge has expired. Log in again.']], 401);
+            }
+            $this->consumeMfaCode($pending['id'], $data['code'] ?? null);
+        });
+        $this->establishSession($pending['id'], $pending['version']);
+    }
+
+    public function mfaEnabled(): bool
+    {
+        $user = $this->mfaUser();
+        return $this->db->execute('SELECT user_id FROM auth_mfa WHERE user_id = ?', [$user['id']])->fetchColumn() !== false;
+    }
+
+    /** @return array{secret: string, uri: string} */
+    public function beginMfaSetup(#[\SensitiveParameter] mixed $password, string $ip): array
+    {
+        $user = $this->mfaUser();
+        $this->checkMfaPassword($user['id'], $password, $ip);
+        if ($this->mfaEnabled()) {
+            throw new AuthException(['form' => ['Multi-factor authentication is already enabled.']]);
+        }
+        $secret = Totp::generateSecret();
+        $state = $this->session->get('_auth');
+        $this->session->put('_auth_mfa_setup', [
+            'id' => $user['id'], 'version' => $state['version'], 'issued' => time(),
+            'secret' => $this->db->encryption->encrypt($secret, 'auth:mfa:' . $user['id']),
+        ]);
+        $issuer = parse_url($this->baseUrl(), PHP_URL_HOST);
+        return [
+            'secret' => $secret,
+            'uri' => 'otpauth://totp/' . rawurlencode($issuer . ':' . $user['email']) . '?' . http_build_query([
+                'secret' => $secret, 'issuer' => $issuer, 'algorithm' => 'SHA1', 'digits' => 6, 'period' => 30,
+            ], '', '&', PHP_QUERY_RFC3986),
+        ];
+    }
+
+    /** @return list<string> */
+    public function confirmMfaSetup(#[\SensitiveParameter] mixed $code, string $ip): array
+    {
+        $user = $this->mfaUser();
+        $this->limit('mfa-ip', $ip, 30, 300);
+        $this->limit('mfa-user', (string) $user['id'], 5, 300);
+        $setup = $this->session->get('_auth_mfa_setup');
+        $state = $this->session->get('_auth');
+        if (!is_array($setup) || ($setup['id'] ?? null) !== $user['id']
+            || ($setup['version'] ?? null) !== $state['version'] || ($setup['issued'] ?? 0) <= time() - 600) {
+            throw new AuthException(['code' => ['Authenticator setup has expired. Start setup again.']], 400);
+        }
+        $secret = $this->db->encryption->decrypt($setup['secret'], 'auth:mfa:' . $user['id']);
+        $counter = is_string($code) ? Totp::matchCounter($secret, $code, time()) : null;
+        if ($counter === null) {
+            throw new AuthException(['code' => ['Enter a valid six-digit authenticator code.']]);
+        }
+        $codes = $this->db->transaction(function () use ($user, $state, $setup, $counter): array {
+            $this->advanceMfaVersion($user['id'], $state['version']);
+            $this->db->execute('INSERT INTO auth_mfa (user_id, secret, last_counter) VALUES (?, ?, ?)', [
+                $user['id'], $setup['secret'], $counter,
+            ]);
+            $codes = [];
+            for ($i = 0; $i < 10; $i++) {
+                $code = bin2hex(random_bytes(10));
+                $codes[] = $code;
+                $this->db->execute('INSERT INTO auth_mfa_recovery (user_id, code_hash) VALUES (?, ?)', [
+                    $user['id'], hash('sha256', $code),
+                ]);
+            }
+            return $codes;
+        });
+        $this->establishSession($user['id'], $state['version'] + 1);
+        return $codes;
+    }
+
+    public function disableMfa(#[\SensitiveParameter] mixed $password, #[\SensitiveParameter] mixed $code, string $ip): void
+    {
+        $user = $this->mfaUser();
+        $this->checkMfaPassword($user['id'], $password, $ip);
+        $this->limit('mfa-ip', $ip, 30, 300);
+        $this->limit('mfa-user', (string) $user['id'], 5, 300);
+        $state = $this->session->get('_auth');
+        $this->db->transaction(function () use ($user, $state, $code): void {
+            $this->advanceMfaVersion($user['id'], $state['version']);
+            $this->consumeMfaCode($user['id'], $code);
+            $this->db->execute('DELETE FROM auth_mfa WHERE user_id = ?', [$user['id']])->closeCursor();
+        });
+        $this->establishSession($user['id'], $state['version'] + 1);
+    }
+
+    /** @return array{id: int, name: string, email: string, email_verified_at: ?int} */
+    private function mfaUser(): array
+    {
+        $user = $this->user();
+        if ($user === null || $user['email_verified_at'] === null) {
+            throw new HttpException(403, 'Log in with a verified email address first.');
+        }
+        return $user;
+    }
+
+    private function checkMfaPassword(int $id, #[\SensitiveParameter] mixed $password, string $ip): void
+    {
+        $this->limit('mfa-password-ip', $ip, 30, 900);
+        $this->limit('mfa-password-user', (string) $id, 10, 900);
+        $hash = $this->db->execute('SELECT password_hash FROM users WHERE id = ?', [$id])->fetchColumn();
+        if (!is_string($password) || strlen($password) > 72 || !is_string($hash) || !password_verify($password, $hash)) {
+            throw new AuthException(['password' => ['Your current password is incorrect.']]);
+        }
+    }
+
+    private function advanceMfaVersion(int $id, int $version): void
+    {
+        if ($this->db->execute('UPDATE users SET session_version = session_version + 1 WHERE id = ? AND session_version = ?', [
+            $id, $version,
+        ])->rowCount() !== 1) {
+            throw new AuthException(['form' => ['Your account changed. Log in again before changing MFA.']], 409);
+        }
+    }
+
+    private function consumeMfaCode(int $id, #[\SensitiveParameter] mixed $code): void
+    {
+        $mfa = $this->db->execute('SELECT secret, last_counter FROM auth_mfa WHERE user_id = ?', [$id])->fetch();
+        if ($mfa !== false && is_string($code)) {
+            if (preg_match('/^[a-f0-9]{20}$/D', $code) === 1) {
+                if ($this->db->execute('DELETE FROM auth_mfa_recovery WHERE user_id = ? AND code_hash = ?', [
+                    $id, hash('sha256', $code),
+                ])->rowCount() === 1) {
+                    return;
+                }
+            } else {
+                $secret = $this->db->encryption->decrypt($mfa['secret'], 'auth:mfa:' . $id);
+                $counter = Totp::matchCounter($secret, $code, time());
+                if ($counter !== null && $counter > (int) $mfa['last_counter']
+                    && $this->db->execute('UPDATE auth_mfa SET last_counter = ? WHERE user_id = ? AND last_counter < ?', [
+                        $counter, $id, $counter,
+                    ])->rowCount() === 1) {
+                    return;
+                }
+            }
+        }
+        throw new AuthException(['code' => ['The authenticator or recovery code is invalid or has already been used.']]);
     }
 
     public function logout(): void

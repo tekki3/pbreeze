@@ -86,7 +86,8 @@ test('Registration validates input and does not store invalid accounts', static 
 });
 
 test('All authentication actions require CSRF, including verification and logout', static function () use ($base): void {
-    foreach (['/register', '/login', '/logout', '/forgot-password', '/reset-password', '/verify-email', '/email/verification-notification'] as $path) {
+    foreach (['/register', '/login', '/logout', '/forgot-password', '/reset-password', '/verify-email', '/email/verification-notification',
+        '/login/mfa', '/account/mfa/setup', '/account/mfa/confirm', '/account/mfa/disable'] as $path) {
         same(419, http($base, $path, 'POST')['status']);
     }
 });
@@ -404,6 +405,195 @@ test('Mail queue failure rolls back registration and unsafe APP_URL is rejected'
     raises(fn () => $app->auth->forgotPassword(['email' => 'ada@example.test'], '192.0.2.6'), PDOException::class);
     same($hash, $app->db->execute("SELECT token_hash FROM auth_tokens WHERE purpose = 'reset'")->fetchColumn());
     $migration->down($app->db->pdo());
+});
+
+function authMfaCode(string $secret, int $timestamp): string
+{
+    $bits = '';
+    foreach (str_split($secret) as $character) {
+        $bits .= sprintf('%05b', strpos('ABCDEFGHIJKLMNOPQRSTUVWXYZ234567', $character));
+    }
+    $key = '';
+    foreach (str_split($bits, 8) as $byte) {
+        $key .= chr(bindec($byte));
+    }
+    $digest = hash_hmac('sha1', pack('N2', 0, intdiv($timestamp, 30)), $key, true);
+    $offset = ord(substr($digest, -1)) & 0x0f;
+    $number = unpack('N', substr($digest, $offset, 4))[1] & 0x7fffffff;
+    return sprintf('%06d', $number % 1000000);
+}
+
+test('TOTP matches RFC 6238 SHA-1 vectors, adjacent windows, and strict input boundaries', static function (): void {
+    $secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+    foreach ([59 => '287082', 1111111109 => '081804', 1111111111 => '050471', 1234567890 => '005924',
+        2000000000 => '279037', 20000000000 => '353130'] as $timestamp => $code) {
+        $counter = intdiv($timestamp, 30);
+        same($counter, PBreeze\Totp::matchCounter($secret, $code, $timestamp));
+        same($counter, PBreeze\Totp::matchCounter($secret, $code, $timestamp + 30));
+        same($counter, PBreeze\Totp::matchCounter($secret, $code, $timestamp - 30));
+        same(null, PBreeze\Totp::matchCounter($secret, $code, $timestamp + 60));
+    }
+    foreach (['', '81804', '081804 ', '081804' . "\n", 'abcdef', '1234567'] as $invalid) {
+        same(null, PBreeze\Totp::matchCounter($secret, $invalid, 1111111109));
+    }
+    raises(fn () => PBreeze\Totp::matchCounter('invalid', '123456', 59), InvalidArgumentException::class);
+    raises(fn () => PBreeze\Totp::matchCounter($secret, '123456', -1), InvalidArgumentException::class);
+});
+
+test('MFA enrollment requires a verified session, password, and code, and revokes older sessions and API tokens', static function () use ($base, $authDb, &$mfaFixture): void {
+    $authDb->execute('DELETE FROM auth_limits');
+    $guest = new AuthBrowser($base);
+    same(303, $guest->request('/account/mfa')['status']);
+    same(303, $guest->request('/account/mfa/setup', 'POST', ['password' => authData()['password']])['status']);
+    $data = authData('mfa@example.test');
+    $id = (int) $authDb->insert('users', [
+        'name' => 'MFA User', 'email' => $data['email'], 'password_hash' => password_hash($data['password'], PASSWORD_BCRYPT, ['cost' => 12]),
+        'email_verified_at' => time(), 'created_at' => time(),
+    ]);
+    $client = new AuthBrowser($base);
+    $other = new AuthBrowser($base);
+    same(303, $client->request('/login', 'POST', $data)['status']);
+    same(303, $other->request('/login', 'POST', $data)['status']);
+    $token = (new PBreeze\ApiTokens($authDb))->create($id);
+    same(200, $client->request('/account/mfa')['status']);
+    same(422, $client->request('/account/mfa/setup', 'POST', ['password' => 'wrong'])['status']);
+    same(400, $client->request('/account/mfa/confirm', 'POST', ['code' => '123456'])['status']);
+    $setup = $client->request('/account/mfa/setup', 'POST', ['password' => $data['password']]);
+    same(200, $setup['status']);
+    check(str_contains($setup['body'], 'name="code"') && str_contains($setup['body'], 'autocomplete="one-time-code"'));
+    check(preg_match('/<code>([A-Z2-7]{32})<\/code>/', $setup['body'], $match) === 1);
+    $secret = $match[1];
+    check(str_contains($setup['body'], 'otpauth://totp/auth.example.test%3Amfa%40example.test?'));
+    same(0, (int) $authDb->execute('SELECT COUNT(*) FROM auth_mfa WHERE user_id = ?', [$id])->fetchColumn());
+    same(422, $client->request('/account/mfa/confirm', 'POST', ['code' => ['invalid']])['status']);
+    $response = $client->request('/account/mfa/confirm', 'POST', ['code' => authMfaCode($secret, time())]);
+    same(200, $response['status']);
+    check(preg_match_all('/<code>([a-f0-9]{20})<\/code>/', $response['body'], $codes) === 10);
+    $encrypted = $authDb->execute('SELECT secret FROM auth_mfa WHERE user_id = ?', [$id])->fetchColumn();
+    check(str_starts_with($encrypted, 'pbreeze:v1:') && !str_contains($encrypted, $secret));
+    $stored = $authDb->execute('SELECT code_hash FROM auth_mfa_recovery WHERE user_id = ?', [$id])->fetchAll(PDO::FETCH_COLUMN);
+    same(10, count($stored));
+    check(in_array(hash('sha256', $codes[1][0]), $stored, true));
+    check(!in_array($codes[1][0], $stored, true));
+    same(200, $client->request('/account')['status']);
+    $settings = $client->request('/account/mfa');
+    check(str_contains($settings['body'], 'Disable multi-factor authentication'));
+    check(str_contains($settings['body'], 'name="password"') && str_contains($settings['body'], 'name="code"'));
+    check(!str_contains($settings['body'], $secret) && !str_contains($settings['body'], $codes[1][0]));
+    same(303, $other->request('/account')['status']);
+    same(401, http($base, '/api/me', 'GET', '', ['Authorization: Bearer ' . $token['token']])['status']);
+    same(400, $client->request('/account/mfa/confirm', 'POST', ['code' => authMfaCode($secret, time())])['status']);
+    $mfaFixture = ['id' => $id, 'data' => $data, 'secret' => $secret, 'codes' => $codes[1]];
+    $authDb->execute('DELETE FROM auth_limits');
+});
+
+test('MFA login isolates pending sessions, rejects replay, consumes recovery codes once, and rotates identity', static function () use ($base, $authDb, &$mfaFixture): void {
+    ['id' => $id, 'data' => $data, 'secret' => $secret, 'codes' => $codes] = $mfaFixture;
+    $first = new AuthBrowser($base);
+    $second = new AuthBrowser($base);
+    $cookie = $first->cookie;
+    $login = $first->request('/login', 'POST', $data);
+    same(303, $login['status']);
+    check(in_array('Location: /login/mfa', $login['headers'], true));
+    check($cookie !== $first->cookie);
+    same(303, $first->request('/account')['status']);
+    same(303, $first->request('/account/mfa')['status']);
+    $form = $first->request('/login/mfa');
+    same(200, $form['status']);
+    check(str_contains($form['body'], 'name="code"') && str_contains($form['body'], 'maxlength="20"'));
+    check(!str_contains($form['body'], $secret));
+    $enrollmentCounter = (int) $authDb->execute('SELECT last_counter FROM auth_mfa WHERE user_id = ?', [$id])->fetchColumn();
+    same(422, $first->request('/login/mfa', 'POST', ['code' => authMfaCode($secret, $enrollmentCounter * 30)])['status']);
+    same(303, $second->request('/login', 'POST', $data)['status']);
+    same(200, $second->request('/login/mfa')['status']);
+    $cookie = $first->cookie;
+    $csrf = $first->csrf;
+    same(303, $first->request('/login/mfa', 'POST', ['code' => $codes[0]])['status']);
+    check($cookie !== $first->cookie);
+    same(200, $first->request('/account')['status']);
+    check($csrf !== $first->csrf);
+    same(419, $first->request('/logout', 'POST', ['_token' => $csrf])['status']);
+    same(401, $first->request('/login/mfa', 'POST', ['code' => $codes[1]])['status']);
+    same(422, $second->request('/login/mfa', 'POST', ['code' => $codes[0]])['status']);
+    same(9, (int) $authDb->execute('SELECT COUNT(*) FROM auth_mfa_recovery WHERE user_id = ?', [$id])->fetchColumn());
+    $authDb->execute('DELETE FROM auth_limits');
+    $freshTime = time() + 30;
+    $freshCode = authMfaCode($secret, $freshTime);
+    same(303, $second->request('/login/mfa', 'POST', ['code' => $freshCode])['status']);
+    same(200, $second->request('/account')['status']);
+    $third = new AuthBrowser($base);
+    same(303, $third->request('/login', 'POST', $data)['status']);
+    same(200, $third->request('/login/mfa')['status']);
+    same(422, $third->request('/login/mfa', 'POST', ['code' => $freshCode])['status']);
+    same(303, $third->request('/logout', 'POST')['status']);
+    same(200, $third->request('/login')['status']);
+    same(401, $third->request('/login/mfa', 'POST', ['code' => $codes[1]])['status']);
+    $authDb->execute('DELETE FROM auth_limits');
+});
+
+test('Expired and revoked MFA challenges fail and MFA attempts are limited across browser sessions', static function () use ($base, $authDb, $temp, &$mfaFixture): void {
+    ['id' => $id, 'data' => $data, 'codes' => $codes] = $mfaFixture;
+    $client = new AuthBrowser($base);
+    same(303, $client->request('/login', 'POST', $data)['status']);
+    same(200, $client->request('/login/mfa')['status']);
+    $file = $temp . '/http-sessions/sess_' . substr($client->cookie, strlen('pbreeze_session='));
+    $state = unserialize(file_get_contents($file), ['allowed_classes' => false]);
+    $state['_auth_mfa_pending']['issued'] = time() - 300;
+    file_put_contents($file, serialize($state));
+    same(401, $client->request('/login/mfa', 'POST', ['code' => $codes[1]])['status']);
+    same(303, $client->request('/login', 'POST', $data)['status']);
+    same(200, $client->request('/login/mfa')['status']);
+    $authDb->execute('UPDATE users SET session_version = session_version + 1 WHERE id = ?', [$id]);
+    same(401, $client->request('/login/mfa', 'POST', ['code' => $codes[1]])['status']);
+    same(200, $client->request('/login')['status']);
+    $authDb->execute('DELETE FROM auth_limits');
+    for ($i = 0; $i < 5; $i++) {
+        $client = new AuthBrowser($base);
+        same(303, $client->request('/login', 'POST', $data)['status']);
+        same(200, $client->request('/login/mfa')['status']);
+        same(422, $client->request('/login/mfa', 'POST', ['code' => 'invalid'])['status']);
+    }
+    $response = $client->request('/login/mfa', 'POST', ['code' => $codes[1]]);
+    same(429, $response['status']);
+    check(preg_match('/Retry-After: [1-9][0-9]*/', implode("\n", $response['headers'])) === 1);
+    $authDb->execute('DELETE FROM auth_limits');
+});
+
+test('Password reset preserves MFA and disabling requires both factors and revokes existing sessions', static function () use ($base, $authDb, &$mfaFixture): void {
+    ['id' => $id, 'data' => $data, 'codes' => $codes] = $mfaFixture;
+    $pending = new AuthBrowser($base);
+    same(303, $pending->request('/login', 'POST', $data)['status']);
+    same(200, $pending->request('/login/mfa')['status']);
+    $client = new AuthBrowser($base);
+    same(200, $client->request('/forgot-password', 'POST', ['email' => $data['email']])['status']);
+    $token = authToken($authDb, $data['email'], 'reset');
+    same(200, $client->request('/reset-password', 'POST', $data + ['token' => $token])['status']);
+    same(401, $pending->request('/login/mfa', 'POST', ['code' => $codes[1]])['status']);
+    same(303, $client->request('/login', 'POST', $data)['status']);
+    same(200, $client->request('/login/mfa')['status']);
+    same(303, $client->request('/login/mfa', 'POST', ['code' => $codes[1]])['status']);
+    same(200, $client->request('/account/mfa')['status']);
+    same(422, $client->request('/account/mfa/disable', 'POST', ['password' => 'wrong', 'code' => $codes[2]])['status']);
+    same(422, $client->request('/account/mfa/disable', 'POST', ['password' => $data['password'], 'code' => 'invalid'])['status']);
+    same(1, (int) $authDb->execute('SELECT COUNT(*) FROM auth_mfa WHERE user_id = ?', [$id])->fetchColumn());
+    $other = new AuthBrowser($base);
+    same(303, $other->request('/login', 'POST', $data)['status']);
+    same(200, $other->request('/login/mfa')['status']);
+    same(303, $other->request('/login/mfa', 'POST', ['code' => $codes[2]])['status']);
+    same(200, $other->request('/account')['status']);
+    same(303, $client->request('/account/mfa/disable', 'POST', ['password' => $data['password'], 'code' => $codes[3]])['status']);
+    same(0, (int) $authDb->execute('SELECT COUNT(*) FROM auth_mfa WHERE user_id = ?', [$id])->fetchColumn());
+    same(0, (int) $authDb->execute('SELECT COUNT(*) FROM auth_mfa_recovery WHERE user_id = ?', [$id])->fetchColumn());
+    same(200, $client->request('/account')['status']);
+    same(303, $other->request('/account')['status']);
+    same(303, $client->request('/logout', 'POST')['status']);
+    same(200, $client->request('/login')['status']);
+    $response = $client->request('/login', 'POST', $data);
+    check(in_array('Location: /account', $response['headers'], true));
+    same(200, $client->request('/account')['status']);
+    $authDb->execute('DELETE FROM users WHERE id = ?', [$id]);
+    $authDb->execute('DELETE FROM auth_limits');
+    $mfaFixture = null;
 });
 
 $authDb = null;
