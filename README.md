@@ -248,7 +248,7 @@ authentication scaffolding.
 
 | Area | PBreeze | Laravel 13.x | CodeIgniter 4 |
 |---|---|---|---|
-| Authentication | Included registration/login, verification, password reset, and database-backed bearer tokens; application-specific roles and record ownership remain your responsibility | Core authentication facilities; starter kits provide ready-made UI flows, with additional first-party packages for other authentication needs | Official Shield package provides authentication and authorization, including access tokens, roles, and permissions; it is separate from the core |
+| Authentication | Included registration/login, verification, password reset, optional authenticator MFA, and database-backed bearer tokens; application-specific roles and record ownership remain your responsibility | Core authentication facilities; starter kits provide ready-made UI flows, with additional first-party packages for other authentication needs | Official Shield package provides authentication and authorization, including access tokens, roles, and permissions; it is separate from the core |
 | Sessions | Native PHP storage or opt-in database sessions; Redis/Memcached cache support does not add session drivers | Includes file, database, cookie, Redis, Memcached, DynamoDB, and nonpersistent array drivers, subject to prerequisites | Includes file, database, Redis, and Memcached session handlers, subject to driver prerequisites |
 | Shared cache | Native Redis or Memcached extensions; intentionally limited cache API | Multiple cache backends and a broader framework cache API | Built-in cache component with multiple handlers, including file, Redis, and Memcached |
 | Background work | Native scheduler and database-backed general-purpose queue with explicit job registries, retries and uncertain-work recovery; separate outgoing-email queue | General-purpose job queues, workers, retries, job chaining/batching, and task scheduling | General-purpose Queue and Tasks scheduler are available as separate official packages |
@@ -5123,8 +5123,9 @@ Run the command in a private terminal, not in shared CI logs.
 The key must contain exactly 32 random bytes, canonically base64-encoded
 with the `base64:` prefix; a password or custom text key is rejected.
 No key is automatically generated at boot or per request.
-Without `APP_KEY`, the framework continues to work until you use encryption or a
-non-null encrypted cast; then an explicit `EncryptionException` is thrown.
+Without `APP_KEY`, the framework continues to work until you use encryption, a
+non-null encrypted cast, or authenticator MFA enrollment/verification; then an
+explicit `EncryptionException` is thrown.
 
 Store a secure key backup **separately from the database**. Share the same
 key with the web app, CLI, and workers that must decrypt the same data;

@@ -440,7 +440,41 @@ test('TOTP matches RFC 6238 SHA-1 vectors, adjacent windows, and strict input bo
     raises(fn () => PBreeze\Totp::matchCounter($secret, '123456', -1), InvalidArgumentException::class);
 });
 
-test('MFA enrollment requires a verified session, password, and code, and revokes older sessions and API tokens', static function () use ($base, $authDb, &$mfaFixture): void {
+test('MFA setup and verification fail explicitly when encryption keys are missing or ciphertext is damaged', static function () use ($root): void {
+    $savedSession = $_SESSION;
+    try {
+        foreach (['', PBreeze\Encryption::generateKey()] as $key) {
+            $app = new Application($root, [
+                'name' => 'MFA test', 'environment' => 'testing', 'debug' => false, 'secure_cookie' => false, 'key' => $key,
+                'database' => ['driver' => 'sqlite', 'database' => ':memory:'],
+            ]);
+            foreach (['20261113160000_create_auth.php', '20261116220000_create_auth_mfa.php'] as $file) {
+                (require $root . '/database/migrations/' . $file)->up($app->db->pdo());
+            }
+            $data = authData();
+            $id = (int) $app->db->insert('users', [
+                'name' => $data['name'], 'email' => $data['email'], 'created_at' => time(), 'email_verified_at' => time(),
+                'password_hash' => password_hash($data['password'], PASSWORD_BCRYPT, ['cost' => 12]),
+            ]);
+            if ($key === '') {
+                $_SESSION = ['_auth' => ['id' => $id, 'version' => 1, 'issued' => time(), 'seen' => time()]];
+                raises(fn () => $app->auth->beginMfaSetup($data['password'], '192.0.2.1'), PBreeze\EncryptionException::class);
+                same(null, $app->session->get('_auth_mfa_setup'));
+                same(0, (int) $app->db->execute('SELECT COUNT(*) FROM auth_mfa')->fetchColumn());
+            } else {
+                $app->db->execute('INSERT INTO auth_mfa (user_id, secret, last_counter) VALUES (?, ?, ?)', [$id, 'damaged', -1]);
+                $_SESSION = ['_auth_mfa_pending' => ['id' => $id, 'version' => 1, 'issued' => time()]];
+                raises(fn () => $app->auth->completeMfaLogin(['code' => '123456'], '192.0.2.1'), PBreeze\EncryptionException::class);
+                same(null, $app->auth->user());
+                same(-1, (int) $app->db->execute('SELECT last_counter FROM auth_mfa')->fetchColumn());
+            }
+        }
+    } finally {
+        $_SESSION = $savedSession;
+    }
+});
+
+test('MFA enrollment requires a verified session, password, and code, and revokes older sessions and API tokens', static function () use ($base, $authDb, $temp, &$mfaFixture): void {
     $authDb->execute('DELETE FROM auth_limits');
     $guest = new AuthBrowser($base);
     same(303, $guest->request('/account/mfa')['status']);
@@ -448,11 +482,17 @@ test('MFA enrollment requires a verified session, password, and code, and revoke
     $data = authData('mfa@example.test');
     $id = (int) $authDb->insert('users', [
         'name' => 'MFA User', 'email' => $data['email'], 'password_hash' => password_hash($data['password'], PASSWORD_BCRYPT, ['cost' => 12]),
-        'email_verified_at' => time(), 'created_at' => time(),
+        'email_verified_at' => null, 'created_at' => time(),
     ]);
     $client = new AuthBrowser($base);
     $other = new AuthBrowser($base);
     same(303, $client->request('/login', 'POST', $data)['status']);
+    $unverified = $client->request('/account/mfa');
+    same(303, $unverified['status']);
+    check(in_array('Location: /email/verify', $unverified['headers'], true));
+    same(200, $client->request('/email/verify')['status']);
+    same(303, $client->request('/account/mfa/setup', 'POST', ['password' => $data['password']])['status']);
+    $authDb->execute('UPDATE users SET email_verified_at = ? WHERE id = ?', [time(), $id]);
     same(303, $other->request('/login', 'POST', $data)['status']);
     $token = (new PBreeze\ApiTokens($authDb))->create($id);
     same(200, $client->request('/account/mfa')['status']);
@@ -464,7 +504,19 @@ test('MFA enrollment requires a verified session, password, and code, and revoke
     check(preg_match('/<code>([A-Z2-7]{32})<\/code>/', $setup['body'], $match) === 1);
     $secret = $match[1];
     check(str_contains($setup['body'], 'otpauth://totp/auth.example.test%3Amfa%40example.test?'));
+    $file = $temp . '/http-sessions/sess_' . substr($client->cookie, strlen('pbreeze_session='));
+    $state = unserialize(file_get_contents($file), ['allowed_classes' => false]);
+    check(!str_contains(file_get_contents($file), $secret));
+    check(str_starts_with($state['_auth_mfa_setup']['secret'], 'pbreeze:v1:'));
+    $state['_auth_mfa_setup']['issued'] = time() - 600;
+    file_put_contents($file, serialize($state));
+    same(400, $client->request('/account/mfa/confirm', 'POST', ['code' => authMfaCode($secret, time())])['status']);
     same(0, (int) $authDb->execute('SELECT COUNT(*) FROM auth_mfa WHERE user_id = ?', [$id])->fetchColumn());
+    $setup = $client->request('/account/mfa/setup', 'POST', ['password' => $data['password']]);
+    same(200, $setup['status']);
+    check(preg_match('/<code>([A-Z2-7]{32})<\/code>/', $setup['body'], $match) === 1);
+    check($secret !== $match[1]);
+    $secret = $match[1];
     same(422, $client->request('/account/mfa/confirm', 'POST', ['code' => ['invalid']])['status']);
     $response = $client->request('/account/mfa/confirm', 'POST', ['code' => authMfaCode($secret, time())]);
     same(200, $response['status']);
