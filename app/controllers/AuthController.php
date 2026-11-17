@@ -42,6 +42,33 @@ final class AuthController
         return $this->app->auth->user() === null ? $this->page('register') : Response::redirect('/account');
     }
 
+    public function ssoStart(Request $request): Response
+    {
+        return new Response('', 303, [
+            'Location' => $this->app->sso->begin(),
+            'Cache-Control' => 'no-store', 'Referrer-Policy' => 'no-referrer',
+        ]);
+    }
+
+    public function ssoCallback(Request $request): Response
+    {
+        if ($request->method !== 'GET') {
+            throw new \PBreeze\HttpException(405, 'The single sign-on callback requires GET.', ['Allow' => 'GET']);
+        }
+        try {
+            $this->app->auth->loginWithOidc($this->app->sso, [
+                'state' => $request->query('state'), 'code' => $request->query('code'),
+                'error' => $request->query('error'), 'iss' => $request->query('iss'),
+            ], $request->clientIp());
+        } catch (AuthException $error) {
+            return $this->page('login', ['errors' => $error->errors], $error->status, $error->retryAfter);
+        }
+        return new Response('', 303, [
+            'Location' => $this->app->auth->mfaPending() ? '/login/mfa' : '/account',
+            'Cache-Control' => 'no-store', 'Referrer-Policy' => 'no-referrer',
+        ]);
+    }
+
     public function forgotForm(Request $request): Response
     {
         return $this->page('forgot');
@@ -198,6 +225,7 @@ final class AuthController
             'errors' => [], 'message' => null, 'oldName' => '', 'oldEmail' => '', 'token' => '',
             'captcha' => $captcha, 'captchaRefreshed' => false,
             'setup' => null, 'setupQr' => null, 'recoveryCodes' => [],
+            'ssoEnabled' => $this->app->sso->enabled(), 'ssoName' => $this->app->sso->name(),
         ]), $status, [
             'Content-Type' => 'text/html; charset=UTF-8',
             'Referrer-Policy' => 'no-referrer',

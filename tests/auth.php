@@ -87,7 +87,7 @@ test('Registration validates input and does not store invalid accounts', static 
 
 test('All authentication actions require CSRF, including verification and logout', static function () use ($base): void {
     foreach (['/register', '/login', '/logout', '/forgot-password', '/reset-password', '/verify-email', '/email/verification-notification',
-        '/login/mfa', '/account/mfa/setup', '/account/mfa/confirm', '/account/mfa/disable'] as $path) {
+        '/login/mfa', '/account/mfa/setup', '/account/mfa/confirm', '/account/mfa/disable', '/sso/login'] as $path) {
         same(419, http($base, $path, 'POST')['status']);
     }
 });

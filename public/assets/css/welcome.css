@@ -111,6 +111,8 @@ code { font-size: .9em; }
 .auth-body form:first-child { margin-top: 0; }
 .auth-field + .auth-field, .field-hint + .auth-field { margin-top: 20px; }
 .auth-body button { width: 100%; justify-content: center; }
+.auth-sso { margin-bottom: 20px; }
+.auth-sso button { margin-top: 0; }
 .auth-next { margin-top: 20px; font-size: 13px; }
 .auth-body .feedback:first-child { margin-top: 0; }
 .auth-body .feedback ul { margin: 8px 0 0; padding-left: 20px; }

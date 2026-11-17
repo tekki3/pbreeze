@@ -21,6 +21,8 @@ $router->get('/register', [$auth, 'registerForm']);
 $router->post('/register', [$auth, 'register']);
 $router->get('/login', [$auth, 'loginForm']);
 $router->post('/login', [$auth, 'login']);
+$router->post('/sso/login', [$auth, 'ssoStart']);
+$router->get('/sso/callback', [$auth, 'ssoCallback']);
 $router->get('/login/mfa', [$auth, 'mfaForm']);
 $router->post('/login/mfa', [$auth, 'mfa']);
 $router->post('/logout', [$auth, 'logout']);

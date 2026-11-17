@@ -4568,8 +4568,9 @@ The guard redirects guests to `/login` and unverified accounts to `/email/verify
 There is no automatic redirect back to a supplied URL. Also protect your
 POST/PUT/PATCH/DELETE routes with the guard. Existing example routes remain
 public and work without auth tables as long as there is no signed-in session.
-Roles, per-object permissions, remember-me, and external providers are
-not included; add authorization before exposing user data.
+Roles, per-object permissions, and remember-me are not included; add
+authorization before exposing user data. Optional external login is described
+in the Single Sign-On chapter below.
 
 Sessions expire after 30 minutes of inactivity or a maximum of 12 hours from login.
 Each check reads the current user and session version from the database.
@@ -4581,6 +4582,7 @@ Fixed, database-backed time windows limit attempts, including across sessions:
 |---|---|
 | Registration | 5 per IP per hour |
 | Login | 10 per email address and 40 per IP per 15 minutes |
+| SSO callback | 40 per IP per 15 minutes |
 | Reset link | 5 per email address and 20 per IP per hour |
 | Submit reset | 20 per IP per hour |
 | Resend verification email | 5 per user and 20 per IP per hour |
@@ -4597,6 +4599,135 @@ one limit: configure the real client IP only on a trusted web server/proxy,
 and also apply rate limiting at the edge.
 Registration and reset return the same message for existing and nonexistent
 accounts; these messages do not prevent analysis of timing or email delivery.
+
+## Single Sign-On (SSO) (optional)
+
+PBreeze supports optional OpenID Connect (OIDC) login alongside local accounts,
+using one configured provider per installation. Keycloak, Microsoft Entra ID,
+Okta, Google Workspace, Authentik, and other providers can be configured when
+they meet the protocol requirements below. Provider-specific live certification
+is not implied.
+
+### Configure a provider
+
+1. Run `php breeze migrate` against your reviewed application database to add
+   `auth_identities`. Back up production data and follow the normal migration
+   deployment procedure.
+2. Register a web application at your identity provider. Enable authorization
+   code flow, PKCE with S256, RS256 ID-token signing, and the scopes `openid email
+   profile`. Register the exact redirect URI `https://app.example.com/sso/callback`;
+   replace the origin with your own trusted HTTPS origin. Wildcards are not needed.
+3. Edit your private `.env`, or set process environment variables:
+
+```dotenv
+APP_URL=https://app.example.com
+SESSION_SECURE_COOKIE=true
+SSO_ENABLED=true
+SSO_NAME="Company login"
+SSO_ISSUER=https://identity.example.com/realms/company
+SSO_CLIENT_ID=pbreeze
+SSO_CLIENT_SECRET=replace-with-your-private-client-secret
+SSO_TIMEOUT=10
+SSO_CA_FILE=
+```
+
+Keep the real client secret out of source control. Native cURL, OpenSSL, and
+the normal framework extensions are required; no Composer package is used.
+The issuer must exactly match discovery and ID-token `iss`, including any
+trailing slash. PBreeze discovers endpoints from
+`<issuer>/.well-known/openid-configuration`. All endpoints and `APP_URL` must
+use HTTPS, even for local SSO testing. Trust only administrator-controlled
+issuers and their discovery endpoints; they determine outbound destinations.
+`SSO_CA_FILE` optionally selects a readable local CA bundle without disabling
+certificate or hostname verification. Construction does not contact the provider.
+
+| Provider | Issuer and setup notes |
+|---|---|
+| Keycloak | Use the realm issuer, normally `https://host/realms/realm`. Enable the client authentication mode matching your secret and S256 PKCE. |
+| Microsoft Entra ID | Use a tenant-specific v2.0 issuer, normally `https://login.microsoftonline.com/TENANT-ID/v2.0`, not `common` or `organizations`. Register a Web redirect URI. Standard Entra tokens generally do not supply `email_verified=true`; pre-link accounts as described below rather than treating `email` or `preferred_username` as verified. |
+| Okta | Use the exact authorization-server issuer from its discovery document; an organization issuer and `/oauth2/default` are different. Enable the requested scopes and email claims. |
+| Google Workspace | Use `https://accounts.google.com` and a Web application client. Limit access to the intended organization in provider policy; an email domain or login-screen hint alone is not authorization. |
+| Authentik | Use the exact issuer advertised by the application's OpenID configuration. Configure signing keys, S256 PKCE, and email/profile scope mappings. |
+
+Client authentication uses `client_secret_basic` when advertised (or when
+the discovery list is absent), otherwise `client_secret_post`. A client without
+a secret is accepted only when discovery explicitly advertises `none`.
+Private-key JWT, encrypted ID tokens, algorithms other than RS256, SAML,
+implicit flow, and `form_post` callbacks are not implemented.
+
+### Browser flow and account policy
+
+With SSO enabled, `/login` displays **Continue with Company login** above the
+unchanged local login form. The button submits a CSRF-protected `POST /sso/login`.
+The provider returns a query-mode `GET /sso/callback`. This callback is the
+protocol-specific exception to mutation-free GETs: a session-bound, single-use
+state, nonce, and PKCE verifier protect it. HEAD is rejected without consuming
+the pending login. Starting a new SSO attempt replaces the previous one in that
+browser session; attempts expire after ten minutes.
+
+PBreeze validates the RSA signature against newly fetched provider JWKS,
+exact issuer, audience/authorized party, expiry, issue time, optional not-before,
+nonce, and optional access-token/code hash claims. A failure consumes the pending
+attempt; restart from `/login`. Provider error descriptions, codes, and tokens
+are not echoed. Responses are capped at 1 MiB and each HTTPS request has the
+configured 1..60-second deadline; redirects are not followed.
+
+- Identities are keyed by the exact **issuer + subject**, not email. Existing
+  mappings continue to select the same account even if provider profile/email
+  claims change. Local profile data is not silently overwritten.
+- A new identity creates an account only with a valid ID-token email and the
+  boolean claim `email_verified=true`. It receives a random, unknown password
+  hash and a verified local email; no verification email is sent.
+- An email matching an existing local account is **never automatically linked**,
+  even when the provider marks the email verified. Use local login and contact
+  an administrator for deliberate linking.
+- Enabled local MFA still requires its usual authenticator or recovery code
+  after provider login. SSO does not issue API bearer tokens or bypass account
+  session-version checks. Resetting a local password does not delete the mapping
+  or enrolled MFA.
+- A provisioned user can use the existing password-reset email flow to establish
+  a local password, including for password-confirmed MFA setup. Mail must be
+  configured and processed. Keep local recovery access protected.
+- Logging out ends the PBreeze browser session only. Provider logout, global
+  logout, directory synchronization, and automatic revocation of existing
+  PBreeze sessions after provider disablement are not implemented. Revoke local
+  sessions through the account's session version when required.
+
+### Deliberately link an existing account
+
+There is no public linking/unlinking endpoint. A trusted administrator must
+independently verify ownership of both identities and obtain the exact stable
+OIDC `sub` for this client from the provider, not an email address or display
+name. In reviewed, private administrative PHP code after loading bootstrap:
+
+```php
+// Trusted, independently verified administrative inputs, never request fields.
+$issuer = 'https://identity.example.com/realms/company';
+$subject = 'exact-provider-subject';
+$userId = 42;
+$app->db->insert('auth_identities', [
+    'identity_hash' => hash('sha256', json_encode([$issuer, $subject], JSON_THROW_ON_ERROR)),
+    'issuer' => $issuer,
+    'subject' => $subject,
+    'user_id' => $userId,
+], null);
+```
+
+Run this only after checking the target user and provider ownership. Existing
+unverified local accounts remain unverified and still require the local
+verification flow. A unique identity cannot be linked to two users; foreign
+keys remove mappings when their user is deleted. Remove a mapping by its exact
+identity hash through reviewed administrative code; do not rewrite applied
+migrations. SSO does not grant application roles or record ownership.
+
+Keep callback query strings out of proxy/server/access logs and protect session
+storage, identity tables, client secrets, and backups. SSO pages/redirects use
+`no-store` and `no-referrer`. Use provider-side access policies and edge rate limits.
+Disable the feature with `SSO_ENABLED=false` to hide the button and reject new
+SSO attempts; this does not remove accounts, mappings, or existing local sessions.
+The native suite uses isolated signed-token fixtures, not real provider calls.
+Validate your provider, claims, TLS, tenant restrictions, and deployment end to
+end before production.
 
 ## Database and Models
 

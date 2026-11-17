@@ -14,6 +14,13 @@
         @endif
     </div>
     <div class="auth-body">
+        @if($mode === 'login' && $ssoEnabled)
+            <form method="post" action="/sso/login" class="auth-sso">
+                @csrf($session)
+                <button type="submit" class="button-secondary">Continue with {{ $ssoName }}</button>
+            </form>
+            <p class="field-hint">Or use your local account below.</p>
+        @endif
         @if($errors !== [])
             <div class="feedback feedback-error" role="alert" id="auth-errors" tabindex="-1">
                 <strong>Check your input</strong>

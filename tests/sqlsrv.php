@@ -198,10 +198,11 @@ test('SQL Server migrations select overrides, use transactional DDL, and lock th
     [$db, $pdo] = sqlServerRecordingDatabase();
     $migrator = new \PBreeze\Migrator($db, $root);
     $files = (new ReflectionMethod($migrator, 'files'))->invoke($migrator);
-    same(7, count($files));
+    same(8, count($files));
     foreach ($files as $file) {
         check(str_contains($file, '/sqlsrv/') || basename($file) === '20261113220000_create_sessions.php'
-            || str_ends_with($file, '_create_background_work.php') || str_ends_with($file, '_create_auth_mfa.php'),
+            || str_ends_with($file, '_create_background_work.php') || str_ends_with($file, '_create_auth_mfa.php')
+            || str_ends_with($file, '_create_auth_identities.php'),
             'SQL Server migration override was not selected.');
         (require $file)->up($pdo);
     }

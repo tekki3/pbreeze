@@ -126,6 +126,7 @@ try {
     require __DIR__ . '/web-servers.php';
     require __DIR__ . '/mail.php';
     require __DIR__ . '/ai.php';
+    require __DIR__ . '/oidc.php';
     require __DIR__ . '/templates.php';
     require __DIR__ . '/orm.php';
     require __DIR__ . '/sqlsrv.php';

@@ -24,6 +24,10 @@ final class Diagnostics
         }
         $db->execute('SELECT 1')->closeCursor();
         $tables = ['users', 'auth_tokens', 'auth_limits', 'api_tokens', 'api_limits', 'emails'];
+        if ($this->app->sso->enabled()) {
+            $tables[] = 'auth_identities';
+            $tables[] = 'auth_mfa';
+        }
         if (($this->app->config['session']['driver'] ?? 'native') === 'database') {
             $tables[] = 'sessions';
         }

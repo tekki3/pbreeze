@@ -49,6 +49,7 @@ require_once __DIR__ . '/framework/mail/MailConsole.php';
 require_once __DIR__ . '/framework/Totp.php';
 require_once __DIR__ . '/framework/QrCode.php';
 require_once __DIR__ . '/framework/Auth.php';
+require_once __DIR__ . '/framework/Oidc.php';
 require_once __DIR__ . '/framework/ApiTokens.php';
 require_once __DIR__ . '/framework/Api.php';
 require_once __DIR__ . '/framework/ExceptionHandler.php';
@@ -77,5 +78,6 @@ $config['cache'] = require __DIR__ . '/config/cache.php';
 $config['storage'] = require __DIR__ . '/config/storage.php';
 $config['scheduler'] = require __DIR__ . '/config/scheduler.php';
 $config['queue'] = require __DIR__ . '/config/queue.php';
+$config['sso'] = require __DIR__ . '/config/sso.php';
 
 return new \PBreeze\Application(__DIR__, $config);

@@ -123,14 +123,72 @@ final class Auth
                 password_hash($data['password'], PASSWORD_BCRYPT, ['cost' => 12]), $user['id'], $user['password_hash'],
             ]);
         }
-        if ($this->db->execute('SELECT user_id FROM auth_mfa WHERE user_id = ?', [$user['id']])->fetchColumn() !== false) {
+        $this->finishLogin((int) $user['id'], (int) $user['session_version']);
+    }
+
+    /** @param array<string, mixed> $query */
+    public function loginWithOidc(Oidc $oidc, #[\SensitiveParameter] array $query, string $ip): void
+    {
+        if (!$oidc->enabled()) {
+            throw new HttpException(404, 'Single sign-on is not enabled.');
+        }
+        $this->limit('sso-ip', $ip, 40, 900);
+        $identity = $oidc->complete($query);
+        $hash = hash('sha256', json_encode([$identity['issuer'], $identity['subject']], JSON_THROW_ON_ERROR));
+        $find = fn () => $this->db->execute(
+            'SELECT u.id, u.session_version FROM users u JOIN auth_identities i ON i.user_id = u.id WHERE i.identity_hash = ?',
+            [$hash],
+        )->fetch();
+        $user = $find();
+        if ($user === false) {
+            if ($identity['email'] === null) {
+                throw new AuthException(['sso' => ['This identity needs an administrator-linked account or a verified provider email.']], 403);
+            }
+            $conflict = static fn (): AuthException => new AuthException([
+                'sso' => ['This account cannot be created through single sign-on. Use local login or contact your administrator.'],
+            ], 403);
+            if ($this->db->execute('SELECT id FROM users WHERE email = ?', [$identity['email']])->fetchColumn() !== false) {
+                throw $conflict();
+            }
+            try {
+                $user = $this->db->transaction(function () use ($identity, $hash): array {
+                    $id = $this->db->insert('users', [
+                        'name' => $identity['name'] ?? 'SSO user', 'email' => $identity['email'],
+                        'password_hash' => password_hash(bin2hex(random_bytes(32)), PASSWORD_BCRYPT, ['cost' => 12]),
+                        'email_verified_at' => time(), 'created_at' => time(),
+                    ]);
+                    $this->db->insert('auth_identities', [
+                        'identity_hash' => $hash, 'issuer' => $identity['issuer'],
+                        'subject' => $identity['subject'], 'user_id' => $id,
+                    ], null);
+                    return ['id' => (int) $id, 'session_version' => 1];
+                });
+            } catch (PDOException $error) {
+                if (!in_array((string) $error->getCode(), ['23000', '23505'], true)) {
+                    throw $error;
+                }
+                $user = $find();
+                if ($user === false) {
+                    if ($this->db->execute('SELECT id FROM users WHERE email = ?', [$identity['email']])->fetchColumn() !== false) {
+                        throw $conflict();
+                    }
+                    throw $error;
+                }
+            }
+        }
+        $this->finishLogin((int) $user['id'], (int) $user['session_version']);
+    }
+
+    private function finishLogin(int $id, int $version): void
+    {
+        if ($this->db->execute('SELECT user_id FROM auth_mfa WHERE user_id = ?', [$id])->fetchColumn() !== false) {
             $this->session->reset();
             $this->session->put('_auth_mfa_pending', [
-                'id' => (int) $user['id'], 'version' => (int) $user['session_version'], 'issued' => time(),
+                'id' => $id, 'version' => $version, 'issued' => time(),
             ]);
             return;
         }
-        $this->establishSession((int) $user['id'], (int) $user['session_version']);
+        $this->establishSession($id, $version);
     }
 
     private function establishSession(int $id, int $version): void
