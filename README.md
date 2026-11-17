@@ -13,8 +13,9 @@ Frontend exception: the official Swagger UI is included locally under
 Apache-2.0 for interactive API documentation; no CDN or npm required.
 
 Includes native SMTP, IMAP, configurable email logging, and a database queue.
-With registration, login/logout, password reset, and required email verification
-for protected routes.
+With registration, login/logout, password reset, required email verification
+for protected routes, and optional authenticator MFA with local QR-code setup
+and single-use recovery codes.
 Includes a native PDO query builder and optional ORM with models, casts,
 and explicit relationships. No global database connection or autoloading.
 Native AES-256-GCM encryption is available as a service and through ORM casts.
@@ -50,6 +51,7 @@ outgoing-email queue.
 | Validate arrays, forms, imports and API payloads | [Validation Component](#validation-component) |
 | Build escaped HTML | [HTML Helpers](#html-helpers) |
 | Parse dates, add calendar days and show relative time | [Date/Time Utility](#datetime-utility) |
+| Enable authenticator MFA, scan a setup QR code, and use recovery codes | [Optional Authenticator MFA](#optional-authenticator-mfa) |
 
 Read the complete [HTML user manual](docs/index.html) for beginner walkthroughs,
 every public function, CLI commands, and environment settings. Open it directly
@@ -4382,6 +4384,8 @@ compatible with authenticator apps that support SHA-1, six digits, and a
 30-second period. Existing accounts keep password-only login until their
 verified owner enables MFA.
 
+#### Enabling MFA
+
 1. Apply pending migrations with `php breeze migrate`. On an existing
    deployment, back up the database and follow the normal production
    migration procedure.
@@ -4398,13 +4402,31 @@ verified owner enables MFA.
    recovery codes shown on the confirmation page. They are displayed only
    once, and each code can replace an authenticator code once.
 
+The QR code contains the same secret as the manual setup key. Do not share
+either one, upload a screenshot to another service, or include it in support
+requests. You do not need a QR-code package, browser script, image extension,
+CDN, or separate QR endpoint. Keep the white border around the code intact
+when customizing its appearance.
+
 Enabling or disabling MFA rotates the current session/CSRF token and
 invalidates other sessions and existing API tokens through the account's
 session version. The current browser stays logged in. Enabling MFA consumes
 the enrollment code, so wait for the next app code before using it again.
-Disabling requires both the current password and an unused authenticator or
-recovery code. To replace lost recovery codes while you can still
-authenticate, disable MFA and enroll again.
+
+#### Signing In and Using Recovery Codes
+
+1. Submit your email address and password on `/login` as usual.
+2. On **Verify your login**, enter the current six-digit authenticator code,
+   including any leading zero. If your authenticator is unavailable, enter
+   one unused recovery code in the same **Authenticator or recovery code**
+   field. Copy the full 20-character lowercase hexadecimal recovery code
+   exactly, without spaces.
+3. Select **Verify and log in**. A successful challenge opens your account.
+   Mark a recovery code as used after it succeeds; it cannot be used again.
+
+Using a recovery code does not disable MFA or replace your authenticator.
+Recovery codes cannot confirm the initial enrollment, which requires an
+app-generated six-digit code.
 
 Password login for an enrolled account creates only a pending challenge,
 not an authenticated user. Complete `/login/mfa` within five minutes;
@@ -4412,6 +4434,23 @@ protected routes remain inaccessible until then. Successful completion
 clears pending state and rotates the session and CSRF token again.
 Canceling the challenge clears the pending login. There are no trusted-device
 or remember-MFA cookies.
+
+#### Disabling MFA or Replacing an Authenticator
+
+1. While fully logged in with a verified email address, open **My account**
+   and select **Manage multi-factor authentication**.
+2. Enter your current password and an unused authenticator or recovery code,
+   then select **Disable multi-factor authentication**.
+3. To replace an authenticator or get new recovery codes, select **Set up
+   multi-factor authentication** and enroll again. Add the new QR code or key
+   to your app and save the new recovery codes.
+
+Disabling deletes the old enrollment and its remaining recovery codes.
+The old authenticator entry no longer works after re-enrollment; remove it
+from your app once the replacement is confirmed. There is no separate
+recovery-code regeneration action.
+
+#### Security and Recovery Limits
 
 Authenticator verification allows one adjacent 30-second step in either
 direction for clock drift. Keep the server and device clocks synchronized.
@@ -4430,22 +4469,58 @@ authentication remains separate: newly issued tokens do not prompt for TOTP,
 so keep token issuance restricted to trusted administrators or fully
 authenticated, authorized application flows.
 
+#### Custom Login and Enrollment Pages
+
 For custom browser controllers, retain CSRF protection and the same session:
 
+In your existing login POST handler, after the CAPTCHA check:
+
 ```php
-// After the existing password/CAPTCHA checks:
 $app->auth->login($request->all(), $request->clientIp());
 return \PBreeze\Response::redirect(
     $app->auth->mfaPending() ? '/login/mfa' : '/account'
 );
+```
 
-// In the CSRF-protected second-step POST handler:
+In a separate CSRF-protected second-step POST handler:
+
+```php
 $app->auth->completeMfaLogin(['code' => $request->input('code')], $request->clientIp());
+return \PBreeze\Response::redirect('/account');
 ```
 
 `login()` still returns void: custom callers must not assume a successful
 password check means the user is authenticated. Use `mfaPending()` to choose
 the challenge and `user()`/`protect()` to authorize access.
+
+For a custom enrollment page, call `beginMfaSetup()` only in an
+authenticated, email-verified, CSRF-protected POST handler after the owner
+submits their current password. Generate its QR markup with
+`\PBreeze\QrCode::svg($setup['uri'])` and pass that string to your view as
+`qrSvg`, alongside the setup data. Bootstrap already loads `QrCode`; it is a
+static utility, not an `$app->qr` service.
+
+In your custom `.breeze.php` enrollment template, render **only the SVG
+returned by this utility** as trusted markup:
+
+```html
+<div class="mfa-qr">{!! $qrSvg !!}</div>
+<p>Manual setup key: <code>{{ $setup['secret'] }}</code></p>
+```
+
+Keep the response private with `Cache-Control: no-store` and
+`Referrer-Policy: no-referrer`, retain the manual key and confirmation form,
+and call `confirmMfaSetup()` in a separate protected POST. Creating or
+scanning a QR code alone does not enable MFA.
+
+`QrCode::svg()` also accepts other printable ASCII payloads of 1-2953
+bytes. It returns an inline black-on-white SVG using QR Model 2, byte mode,
+error correction level L, automatic version/mask selection, and a
+four-module white border. Empty, oversized, control-character, or non-ASCII
+input throws `InvalidArgumentException`. Percent-encoded authenticator URIs
+fit this input format; arbitrary Unicode text must not be passed directly.
+The utility does not authorize requests or protect where callers save
+the SVG.
 
 ### Sending Email
 
