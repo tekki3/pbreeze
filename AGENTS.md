@@ -182,9 +182,10 @@ Read [Database](framework/Database.php), [Query](framework/Query.php), and
   MySQL DDL is not transactionally rolled back. Preserve migration locking.
 - Seeders are trusted callbacks, not production fixtures to run automatically.
   Destructive production database commands require reviewed backups and `--force`.
-- MySQL defaults to certificate-verified TLS; plaintext opt-out is limited
-  to isolated localhost nonproduction use. Preserve PostgreSQL/SQL Server
-  certificate and encryption validation.
+- MySQL TLS is controlled by `DB_MYSQL_TLS`: `disabled` by default,
+  `required` for encryption, or `verify_ca` with a readable CA file.
+  Preserve verification for existing `required` configurations with a CA,
+  respect `DB_HOST`, and preserve PostgreSQL/SQL Server TLS validation.
 - `key:generate` prints an APP_KEY assignment; it does not edit configuration.
   Never replace an existing key to fix decryption. Preserve authenticated
   AES-256-GCM contexts and encrypted-cast restrictions; randomized ciphertext

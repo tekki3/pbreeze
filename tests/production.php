@@ -129,24 +129,83 @@ test('Doctor reports actionable redacted checks and uses exit codes without sche
     raises(static fn () => (new Console($bad))->run(['storage:prepare', '--force']), InvalidArgumentException::class);
 });
 
-test('MySQL TLS is required by default and plaintext opt-out is restricted to local development', static function () use ($temp): void {
+test('MySQL TLS and host configuration load from the environment without implicit enforcement', static function () use ($root): void {
+    $keys = ['DB_MYSQL_TLS', 'DB_MYSQL_SSL_CA', 'DB_HOST'];
+    $previous = [];
+    foreach ($keys as $key) {
+        $previous[$key] = getenv($key);
+    }
+    try {
+        putenv('DB_MYSQL_TLS');
+        same('disabled', (require $root . '/config/app.php')['database']['tls']);
+        foreach (['disabled', 'required', 'verify_ca'] as $tls) {
+            putenv('DB_MYSQL_TLS=' . $tls);
+            putenv('DB_MYSQL_SSL_CA=/absolute/path/to/ca.pem');
+            putenv('DB_HOST=localhost');
+            $database = (require $root . '/config/app.php')['database'];
+            same($tls, $database['tls']);
+            same('/absolute/path/to/ca.pem', $database['ssl_ca']);
+            same('localhost', $database['host']);
+        }
+    } finally {
+        foreach ($previous as $key => $value) {
+            putenv($value === false ? $key : $key . '=' . $value);
+        }
+    }
+});
+
+test('MySQL TLS defaults to disabled without SSL options regardless of host or environment', static function () use ($temp): void {
     $method = new ReflectionMethod(Database::class, 'mysqlOptions');
     $base = ['driver' => 'mysql', 'host' => '127.0.0.1', 'database' => 'test', 'port' => '3306'];
-    raises(static fn () => $method->invoke(new Database($temp, $base)), RuntimeException::class);
-    foreach ([
-        [$base + ['tls' => 'invalid'], false],
-        [$base + ['tls' => 'disabled'], true],
-        [array_replace($base, ['host' => 'database.example.test', 'tls' => 'disabled']), false],
-        [$base + ['ssl_ca' => '/missing-ca.pem'], false],
-    ] as [$settings, $production]) {
-        raises(static fn () => $method->invoke(new Database($temp, $settings, production: $production)), RuntimeException::class);
+    foreach (['localhost', '127.0.0.1', 'database.example.test'] as $host) {
+        foreach ([false, true] as $production) {
+            foreach ([[], ['tls' => 'disabled', 'ssl_ca' => '/ignored-ca.pem']] as $tls) {
+                $settings = array_replace($base, ['host' => $host], $tls);
+                same([PDO::ATTR_TIMEOUT => 15], $method->invoke(new Database($temp, $settings, production: $production)));
+            }
+        }
     }
-    same([PDO::ATTR_TIMEOUT => 15], $method->invoke(new Database($temp, $base + ['tls' => 'disabled'])));
+});
+
+test('MySQL TLS validates modes and CA files and preserves required with CA verification', static function () use ($temp): void {
+    $method = new ReflectionMethod(Database::class, 'mysqlOptions');
+    $base = ['driver' => 'mysql', 'host' => 'localhost', 'database' => 'test', 'port' => '3306'];
+    foreach ([
+        ['tls' => 'invalid'],
+        ['tls' => ''],
+        ['tls' => 'verify_ca'],
+        ['tls' => 'verify_ca', 'ssl_ca' => $temp . '/missing-ca.pem'],
+        ['tls' => 'verify_ca', 'ssl_ca' => $temp],
+        ['tls' => 'required', 'ssl_ca' => $temp . '/missing-ca.pem'],
+    ] as $settings) {
+        raises(static fn () => $method->invoke(new Database($temp, $base + $settings)), RuntimeException::class);
+    }
+    if (PHP_OS_FAMILY !== 'Windows') {
+        $unreadable = $temp . '/unreadable-mysql-ca.pem';
+        file_put_contents($unreadable, 'Unreadable CA fixture.');
+        chmod($unreadable, 0000);
+        try {
+            if (!is_readable($unreadable)) {
+                foreach (['required', 'verify_ca'] as $tls) {
+                    raises(static fn () => $method->invoke(new Database($temp, $base + ['tls' => $tls, 'ssl_ca' => $unreadable])), RuntimeException::class);
+                }
+            }
+        } finally {
+            chmod($unreadable, 0600);
+            unlink($unreadable);
+        }
+    }
     if (in_array('mysql', PDO::getAvailableDrivers(), true)) {
         $ca = mailCertificate();
-        $options = $method->invoke(new Database($temp, $base + ['ssl_ca' => $ca]));
         $prefix = class_exists(\Pdo\Mysql::class) ? 'Pdo\\Mysql::' : 'PDO::MYSQL_';
-        same($ca, $options[constant($prefix . 'ATTR_SSL_CA')]);
-        same(true, $options[constant($prefix . 'ATTR_SSL_VERIFY_SERVER_CERT')]);
+        foreach (['required', 'verify_ca'] as $tls) {
+            $options = $method->invoke(new Database($temp, $base + ['tls' => $tls, 'ssl_ca' => $ca]));
+            same($ca, $options[constant($prefix . 'ATTR_SSL_CA')]);
+            same(true, $options[constant($prefix . 'ATTR_SSL_VERIFY_SERVER_CERT')]);
+        }
+        $options = $method->invoke(new Database($temp, $base + ['tls' => 'required']));
+        same('DEFAULT', $options[constant($prefix . 'ATTR_SSL_CIPHER')]);
+        same(false, $options[constant($prefix . 'ATTR_SSL_VERIFY_SERVER_CERT')]);
+        check(!array_key_exists(constant($prefix . 'ATTR_SSL_CA'), $options));
     }
 });

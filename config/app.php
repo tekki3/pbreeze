@@ -63,7 +63,7 @@ return [
         'trust_server_certificate' => Env::get('DB_TRUST_SERVER_CERTIFICATE', 'false'),
         'sslmode' => Env::get('DB_SSLMODE', 'verify-full'),
         'sslrootcert' => Env::get('DB_SSLROOTCERT'),
-        'tls' => Env::get('DB_MYSQL_TLS', 'required'),
+        'tls' => Env::get('DB_MYSQL_TLS', 'disabled'),
         'ssl_ca' => Env::get('DB_MYSQL_SSL_CA'),
     ],
 ];

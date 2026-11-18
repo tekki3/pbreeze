@@ -604,7 +604,7 @@ For another database, configure it **before migrating**:
 | Database | Install/prepare | Required environment changes |
 |---|---|---|
 | SQLite | Native `pdo_sqlite`; writable local database directory | `DB_CONNECTION=sqlite`, file path in `DB_DATABASE` |
-| MySQL | Native `pdo_mysql`; create an empty database and dedicated account | `DB_CONNECTION=mysql`, host/port/database/username/password, `DB_MYSQL_TLS=required`, readable `DB_MYSQL_SSL_CA` |
+| MySQL | Native `pdo_mysql`; create an empty database and dedicated account | `DB_CONNECTION=mysql`, host/port/database/username/password; optional `DB_MYSQL_TLS` (default `disabled`) |
 | PostgreSQL | Native `pdo_pgsql` and libpq; create a database and dedicated account | `DB_CONNECTION=pgsql`, `DB_PORT=5432`, connection credentials, `DB_SSLMODE=verify-full`, CA configuration as required |
 | SQL Server | Native `pdo_sqlsrv` plus Microsoft's compatible ODBC Driver; create database/login | `DB_CONNECTION=sqlsrv`, `DB_PORT=1433`, connection credentials, `DB_ENCRYPT=true`, `DB_TRUST_SERVER_CERTIFICATE=false` |
 
@@ -615,11 +615,12 @@ deployment's least-privilege runtime policy. Keep driver, port, and TLS
 settings consistent. See the PostgreSQL, SQL Server, and production chapters
 for their detailed requirements.
 
-MySQL's default is certificate-verified TLS, **not** plaintext. Configure a
-CA bundle and certificate matching `DB_HOST`. An explicit
-`DB_MYSQL_TLS=disabled` opt-out exists only for isolated
-`localhost`/`127.0.0.1` connections outside production. Do not disable
-certificate verification to work around an installation error.
+MySQL TLS is optional and configured through `.env`: `DB_MYSQL_TLS=disabled`
+(default) passes no SSL/TLS PDO options, `required` requires encryption, and
+`verify_ca` also verifies the server certificate using `DB_MYSQL_SSL_CA`.
+Choose the mode appropriate for your deployment; verified TLS is recommended
+for remote production databases. See [MySQL TLS configuration](#mysql-tls-configuration)
+for examples and compatibility details.
 
 ### 7. Check the installation and start the application
 
@@ -5801,28 +5802,49 @@ is also independent: configure the web SAPI's `session.save_handler` and
 sessions or appropriate sticky routing and common upload storage. SQLite on
 network filesystems is not supported.
 
-### MySQL verified TLS: upgrade requirement
+### MySQL TLS configuration
 
-MySQL now defaults to verified TLS. Before upgrading a MySQL installation,
-configure:
+MySQL TLS is optional. Select a mode in `.env`; the default is `disabled`
+in every environment, including production:
+
+```dotenv
+DB_MYSQL_TLS=disabled
+```
+
+This creates a normal MySQL connection without SSL/TLS PDO options. PBreeze
+does not require a CA, restrict the host, or override `DB_HOST`. The MySQL
+client/server configuration may still impose its own transport requirements.
+
+To require encryption without certificate verification:
 
 ```dotenv
 DB_MYSQL_TLS=required
-DB_MYSQL_SSL_CA=/etc/ssl/certs/mysql-ca.pem
 ```
 
-The CA must be a readable local certificate bundle and the server certificate
-must match `DB_HOST`. Use a TCP hostname/address; `localhost` may select a Unix
-socket instead of TLS. Native PDO verifies the certificate and the framework
-rejects connections without a negotiated TLS cipher. No plaintext fallback
-is attempted. Windows certificate paths can use forward slashes.
+To require encryption and verify the server certificate with a CA:
 
-Only isolated local development/testing can explicitly set
-`DB_MYSQL_TLS=disabled`, with `DB_HOST=localhost` or `127.0.0.1` and
-`APP_ENV` other than `production`. Production always rejects that opt-out.
-Programmatic Database settings use `tls` and `ssl_ca`; standalone production
-instances must pass `production: true`. PostgreSQL and SQL Server keep their
-existing TLS settings.
+```dotenv
+DB_MYSQL_TLS=verify_ca
+DB_MYSQL_SSL_CA=/absolute/path/to/ca.pem
+```
+
+The CA must exist as a readable local file, not a directory; use an absolute
+path. Native PDO verifies the certificate, which should match `DB_HOST`.
+Windows paths can use forward slashes, for example `C:/certs/mysql-ca.pem`.
+Both enabled modes reject connections without a negotiated TLS cipher; PBreeze
+does not retry in plaintext.
+
+For backward compatibility, existing `DB_MYSQL_TLS=required` configurations
+with `DB_MYSQL_SSL_CA` continue to verify the server certificate. An invalid
+configured CA remains an error in either enabled mode. Applications that
+previously relied on the implicit TLS default must explicitly select
+`required` or `verify_ca` to retain TLS.
+
+`DB_HOST` is always respected, including `localhost`. On systems where
+`localhost` selects a Unix socket, an enabled TLS mode fails if TLS is not
+negotiated; choose a TCP host explicitly when your deployment needs it.
+Programmatic Database settings use `tls` and `ssl_ca` with the same modes and
+default. PostgreSQL and SQL Server keep their existing TLS settings.
 
 ### Request limits and reverse proxies
 

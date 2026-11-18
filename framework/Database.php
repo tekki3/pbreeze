@@ -104,7 +104,7 @@ final class Database
             $options += $this->mysqlOptions();
         }
         $pdo = new PDO($dsn, $this->config['username'] ?? '', $this->config['password'] ?? '', $options);
-        if ($driver === 'mysql' && ($this->config['tls'] ?? 'required') === 'required') {
+        if ($driver === 'mysql' && ($this->config['tls'] ?? 'disabled') !== 'disabled') {
             $cipher = $pdo->query("SHOW SESSION STATUS LIKE 'Ssl_cipher'")->fetch();
             if (!is_array($cipher) || !is_string($cipher['Value'] ?? null) || $cipher['Value'] === '') {
                 throw new RuntimeException('MySQL did not negotiate the required TLS connection.');
@@ -126,25 +126,25 @@ final class Database
     /** @return array<int, mixed> */
     private function mysqlOptions(): array
     {
-        $tls = $this->config['tls'] ?? 'required';
-        if (!in_array($tls, ['required', 'disabled'], true)) {
-            throw new RuntimeException('DB_MYSQL_TLS must be required or disabled.');
+        $tls = $this->config['tls'] ?? 'disabled';
+        if (!in_array($tls, ['disabled', 'required', 'verify_ca'], true)) {
+            throw new RuntimeException('DB_MYSQL_TLS must be disabled, required, or verify_ca.');
         }
         if ($tls === 'disabled') {
-            if ($this->production || !in_array($this->config['host'] ?? '', ['localhost', '127.0.0.1'], true)) {
-                throw new RuntimeException('Unencrypted MySQL is allowed only on localhost outside production.');
-            }
             return [PDO::ATTR_TIMEOUT => 15];
         }
         $ca = $this->config['ssl_ca'] ?? '';
-        if ($ca === '' || !is_file($ca) || !is_readable($ca)) {
+        if (($tls === 'verify_ca' || $ca !== '') && ($ca === '' || !is_file($ca) || !is_readable($ca))) {
             throw new RuntimeException('Verified MySQL TLS requires a readable DB_MYSQL_SSL_CA certificate bundle.');
         }
         if (!in_array('mysql', PDO::getAvailableDrivers(), true)) {
             throw new RuntimeException('MySQL requires the native pdo_mysql extension.');
         }
         $attribute = static fn (string $name): int => constant((class_exists(\Pdo\Mysql::class) ? 'Pdo\\Mysql::' : 'PDO::MYSQL_') . $name);
-        return [PDO::ATTR_TIMEOUT => 15, $attribute('ATTR_SSL_CA') => $ca, $attribute('ATTR_SSL_VERIFY_SERVER_CERT') => true];
+        if ($ca !== '') {
+            return [PDO::ATTR_TIMEOUT => 15, $attribute('ATTR_SSL_CA') => $ca, $attribute('ATTR_SSL_VERIFY_SERVER_CERT') => true];
+        }
+        return [PDO::ATTR_TIMEOUT => 15, $attribute('ATTR_SSL_CIPHER') => 'DEFAULT', $attribute('ATTR_SSL_VERIFY_SERVER_CERT') => false];
     }
 
     /** @param array<string|int, mixed> $parameters */
