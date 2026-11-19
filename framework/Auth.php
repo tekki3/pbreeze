@@ -20,13 +20,19 @@ final class Auth
 {
     private const DUMMY_HASH = '$2y$12$YMP.MQkPJkcdb88aANF7PO19Iy.qHE776ziQIClMRwmRTwUJq/Hn6';
 
+    /** @var (\Closure('reset'|'verify', string, int): array{subject: string, text: string, html: string})|null */
+    private readonly ?\Closure $emailComposer;
+
+    /** @param (callable('reset'|'verify', string, int): array{subject: string, text: string, html: string})|null $emailComposer */
     public function __construct(
         private readonly Database $db,
         private readonly Session $session,
         private readonly Mailer $mail,
         private readonly string $url,
         private readonly bool $production = false,
+        ?callable $emailComposer = null,
     ) {
+        $this->emailComposer = $emailComposer === null ? null : \Closure::fromCallable($emailComposer);
     }
 
     /** @return array{id: int, name: string, email: string, email_verified_at: ?int}|null */
@@ -438,19 +444,27 @@ final class Auth
     private function issueToken(int $id, string $email, string $purpose): void
     {
         $token = bin2hex(random_bytes(32));
+        $validFor = $purpose === 'reset' ? 1800 : 86400;
         $this->db->execute('DELETE FROM auth_tokens WHERE (user_id = ? AND purpose = ?) OR expires_at <= ?', [$id, $purpose, time()]);
         $this->db->execute('INSERT INTO auth_tokens (token_hash, user_id, purpose, expires_at) VALUES (?, ?, ?, ?)', [
-            hash('sha256', $token), $id, $purpose, time() + ($purpose === 'reset' ? 1800 : 86400),
+            hash('sha256', $token), $id, $purpose, time() + $validFor,
         ]);
         $path = $purpose === 'reset' ? '/reset-password' : '/verify-email';
         $link = $this->baseUrl() . $path . '?token=' . $token;
         $subject = $purpose === 'reset' ? 'Reset your password' : 'Verify your email address';
         $duration = $purpose === 'reset' ? '30 minutes' : '24 hours';
-        $this->mail->queue($this->mail->compose([
-            'to' => [$email], 'subject' => $subject,
+        $content = $this->emailComposer === null ? [
+            'subject' => $subject,
             'text' => "$subject\n\nOpen this link:\n$link\n\nThis link is valid for $duration and can only be used once. "
                 . 'If you did not request this, ignore this email.',
-        ]));
+            'html' => '',
+        ] : ($this->emailComposer)($purpose, $link, $validFor);
+        if (!is_array($content) || count($content) !== 3
+            || !is_string($content['subject'] ?? null) || !is_string($content['text'] ?? null)
+            || !is_string($content['html'] ?? null)) {
+            throw new \InvalidArgumentException('Authentication email composer must return exactly subject, text, and html strings.');
+        }
+        $this->mail->queue($this->mail->compose(['to' => [$email]] + $content));
     }
 
     private function consumeToken(#[\SensitiveParameter] mixed $token, string $purpose): int

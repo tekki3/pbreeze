@@ -67,6 +67,144 @@ function authToken(Database $db, string $email, string $purpose): string
     return $match[1];
 }
 
+function authMailApp(?callable $composer = null, array $mail = []): Application
+{
+    global $root;
+    $app = new Application($root, [
+        'name' => 'Test', 'environment' => 'testing', 'debug' => false, 'secure_cookie' => false,
+        'url' => 'https://auth.example.test', 'database' => ['driver' => 'sqlite', 'database' => ':memory:'],
+        'mail' => $mail + ['from' => 'noreply@example.test', 'log' => false],
+        'auth' => ['email_composer' => $composer],
+    ]);
+    foreach (['20261113150000_create_emails.php', '20261113160000_create_auth.php'] as $file) {
+        (require $root . '/database/migrations/' . $file)->up($app->db->pdo());
+    }
+    return $app;
+}
+
+test('Default authentication emails retain their exact plain-text content', static function (): void {
+    $app = authMailApp();
+    $app->auth->register(authData(), '192.0.2.1');
+    $app->auth->forgotPassword(['email' => 'ada@example.test'], '192.0.2.1');
+    foreach (['verify' => ['Verify your email address', '24 hours', '/verify-email'],
+        'reset' => ['Reset your password', '30 minutes', '/reset-password']] as $purpose => [$subject, $duration, $path]) {
+        $token = authToken($app->db, 'ada@example.test', $purpose);
+        $row = $app->db->execute('SELECT * FROM emails WHERE subject = ?', [$subject])->fetch();
+        same("$subject\n\nOpen this link:\nhttps://auth.example.test$path?token=$token\n\n"
+            . "This link is valid for $duration and can only be used once. If you did not request this, ignore this email.",
+            $row['text_body']);
+        same('', $row['html_body']);
+        same('queued', $row['status']);
+        $wire = $app->mail->store->claim((int) $row['id'])->wire();
+        check(str_contains($wire, 'Content-Type: text/plain; charset=UTF-8'));
+        check(!str_contains($wire, 'multipart/alternative'));
+    }
+});
+
+test('Custom auth composers receive trusted links and seconds and deliver escaped multipart messages', static function (): void {
+    foreach (['verify' => 86400, 'reset' => 1800] as $purpose => $seconds) {
+        $calls = [];
+        $brand = 'Example " & <em>Company</em>';
+        $composer = static function (string $actualPurpose, string $url, int $validFor) use (&$calls, $brand): array {
+            $calls[] = [$actualPurpose, $url, $validFor];
+            $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            return [
+                'subject' => "$brand: $actualPurpose",
+                'text' => "$brand\n$url\nValid for $validFor seconds.",
+                'html' => '<h1>' . $escape($brand) . '</h1><a href="' . $escape($url) . '">Continue</a>',
+            ];
+        };
+        $transcript = mailFixture(['protocol' => 'smtp'], static function (array $smtp) use ($composer, $purpose, $seconds, &$calls, $brand): void {
+            $app = authMailApp($composer, ['smtp' => $smtp]);
+            $app->auth->register(authData(), '192.0.2.1');
+            if ($purpose === 'reset') {
+                $app->auth->forgotPassword(['email' => 'ada@example.test'], '192.0.2.1');
+            } else {
+                $previous = $_SESSION ?? [];
+                try {
+                    $app->session->put('_auth', ['id' => 1, 'version' => 1, 'issued' => time(), 'seen' => time()]);
+                    $app->auth->resendVerification('192.0.2.1');
+                } finally {
+                    $_SESSION = $previous;
+                }
+            }
+            same(2, count($calls));
+            $app->auth->register(authData(), '192.0.2.1');
+            $app->auth->forgotPassword(['email' => 'missing@example.test'], '192.0.2.1');
+            same(2, count($calls));
+            [$actualPurpose, $url, $validFor] = $calls[1];
+            same($purpose, $actualPurpose);
+            same($seconds, $validFor);
+            $path = $purpose === 'reset' ? '/reset-password' : '/verify-email';
+            check(preg_match('~^https://auth\.example\.test' . $path . '\?token=([a-f0-9]{64})$~D', $url, $match) === 1);
+            $token = $app->db->execute('SELECT * FROM auth_tokens WHERE purpose = ?', [$purpose])->fetch();
+            same(hash('sha256', $match[1]), $token['token_hash']);
+            check((int) $token['expires_at'] >= time() + $seconds - 5);
+            check((int) $token['expires_at'] <= time() + $seconds);
+            $row = $app->db->execute('SELECT * FROM emails ORDER BY id DESC')->fetch();
+            same("$brand: $purpose", $row['subject']);
+            same("$brand\n$url\nValid for $seconds seconds.", $row['text_body']);
+            same('<h1>Example &quot; &amp; &lt;em&gt;Company&lt;/em&gt;</h1><a href="' . $url . '">Continue</a>', $row['html_body']);
+            same('["ada@example.test"]', $row['to_addresses']);
+            same('noreply@example.test', $row['from_address']);
+            same('queued', $row['status']);
+            $app->mail->sendQueued((int) $row['id']);
+            same('sent', $app->mail->store->find((int) $row['id'])['status']);
+        });
+        check(str_contains($transcript['data'], 'Content-Type: multipart/alternative;'));
+        $parsed = PBreeze\Mail\Mime::parse($transcript['data']);
+        same("$brand: $purpose", $parsed['subject']);
+        same("$brand\n{$calls[1][1]}\nValid for $seconds seconds.", $parsed['text']);
+        check(str_contains($parsed['html'], '&lt;em&gt;Company&lt;/em&gt;'));
+        check(!str_contains($parsed['html'], '<em>'));
+    }
+});
+
+test('Composer exceptions and invalid output roll back registration and token replacement', static function (): void {
+    $failure = new LogicException('Composition failed.');
+    foreach ([
+        [static function () use ($failure): never { throw $failure; }, LogicException::class],
+        [static fn () => null, InvalidArgumentException::class],
+        [static fn () => ['subject' => 'Missing HTML', 'text' => 'Body'], InvalidArgumentException::class],
+        [static fn () => ['subject' => 'Wrong type', 'text' => [], 'html' => '<p>Body</p>'], InvalidArgumentException::class],
+        [static fn () => ['subject' => 'Override', 'text' => 'Body', 'html' => '', 'to' => ['other@example.test']], InvalidArgumentException::class],
+        [static fn () => ['subject' => "Header\r\nInjection", 'text' => 'Body', 'html' => ''], InvalidArgumentException::class],
+    ] as [$invalid, $exception]) {
+        $fail = false;
+        $app = null;
+        $composer = static function (string $purpose, string $url, int $seconds) use (&$fail, &$app, $invalid): mixed {
+            check($app->db->pdo()->inTransaction());
+            if ($fail) {
+                return $invalid();
+            }
+            return ['subject' => $purpose, 'text' => "$url ($seconds)", 'html' => ''];
+        };
+        $app = authMailApp($composer);
+        $fail = true;
+        raises(fn () => $app->auth->register(authData(), '192.0.2.1'), $exception);
+        foreach (['users', 'auth_tokens', 'emails'] as $table) {
+            same(0, $app->db->table($table)->count());
+        }
+        $fail = false;
+        $app->auth->register(authData(), '192.0.2.1');
+        $app->auth->forgotPassword(['email' => 'ada@example.test'], '192.0.2.1');
+        $tokens = $app->db->execute('SELECT * FROM auth_tokens ORDER BY purpose')->fetchAll();
+        $emails = $app->db->execute('SELECT * FROM emails ORDER BY id')->fetchAll();
+        $fail = true;
+        raises(fn () => $app->auth->forgotPassword(['email' => 'ada@example.test'], '192.0.2.1'), $exception);
+        $previous = $_SESSION ?? [];
+        try {
+            $app->session->put('_auth', ['id' => 1, 'version' => 1, 'issued' => time(), 'seen' => time()]);
+            raises(fn () => $app->auth->resendVerification('192.0.2.1'), $exception);
+        } finally {
+            $_SESSION = $previous;
+        }
+        same($tokens, $app->db->execute('SELECT * FROM auth_tokens ORDER BY purpose')->fetchAll());
+        same($emails, $app->db->execute('SELECT * FROM emails ORDER BY id')->fetchAll());
+        same(1, $app->db->table('users')->count());
+    }
+});
+
 $authDb = new Database($root, ['driver' => 'sqlite', 'database' => $temp . '/http.sqlite']);
 (new Migrator($authDb, $root))->migrate();
 

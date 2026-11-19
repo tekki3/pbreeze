@@ -4598,6 +4598,93 @@ Delete old emails according to your retention policy and configure web server/pr
 not to retain token-bearing query strings. Authentication pages use
 `no-store` and `Referrer-Policy: no-referrer`. Disable debug in production.
 
+#### Branded Authentication Emails
+
+By default, reset and verification emails keep the built-in plain-text
+subject and body. To customize them without editing framework code, register
+an application-owned composer in `config/auth.php`. Bootstrap loads this
+configuration for both browser requests and CLI commands before constructing
+`$app->auth`; no controller or mail-worker changes are needed.
+
+Create `app/mail/auth-email.php` (create the `app/mail` directory first):
+
+```php
+<?php
+declare(strict_types=1);
+
+return static function (string $purpose, string $actionUrl, int $validForSeconds): array {
+    $brand = 'Example Company';
+    $action = match ($purpose) {
+        'reset' => 'Reset your password',
+        'verify' => 'Verify your email address',
+        default => throw new InvalidArgumentException('Unsupported authentication email purpose.'),
+    };
+    $validity = match ($validForSeconds) {
+        1800 => '30 minutes',
+        86400 => '24 hours',
+        default => "$validForSeconds seconds",
+    };
+    $escape = static fn (string $value): string =>
+        htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $notice = "This link is valid for $validity and can only be used once. "
+        . 'If you did not request this, ignore this email.';
+
+    return [
+        'subject' => "$brand: $action",
+        'text' => "$brand\n\n$action\n\n$actionUrl\n\n$notice",
+        'html' => '<!doctype html><html lang="en-US"><body>'
+            . '<h1>' . $escape($brand) . '</h1>'
+            . '<p><a href="' . $escape($actionUrl) . '">' . $escape($action) . '</a></p>'
+            . '<p>' . $escape($notice) . '</p></body></html>',
+    ];
+};
+```
+
+Replace the contents of `config/auth.php` with:
+
+```php
+<?php
+declare(strict_types=1);
+
+return [
+    'email_composer' => require dirname(__DIR__) . '/app/mail/auth-email.php',
+];
+```
+
+The callable receives purpose **`reset` or `verify`**, the complete action URL
+derived from trusted `APP_URL` (not request headers), and validity in
+**seconds**: 1800 for reset, 86400 for verification. It runs for registration,
+verification resend, and password recovery only when an email is actually
+needed. Duplicate registration and unknown recovery addresses retain their
+generic responses and do not invoke it.
+
+Return exactly three string fields: `subject`, `text`, and `html`. PBreeze
+validates them using the existing mail rules, including UTF-8, size limits,
+and subject header-injection rejection. Returning both bodies produces
+`multipart/alternative` on delivery; `html => ''` keeps a custom message
+plain-text only. Set `email_composer` back to `null` to restore the built-in
+messages. Applications constructing `Application` themselves can supply
+the same callable as `$config['auth']['email_composer']`.
+
+The composer owns HTML escaping: PBreeze does **not** sanitize or autoescape
+the returned markup. Escape all dynamic HTML text and attribute values,
+including the URL, as shown above. Keep the plain-text body and subject as
+plain strings, not HTML-escaped strings. Preserve the supplied action URL
+and describe its actual validity and one-time use; do not reconstruct it
+from user-controlled hosts or add external tracking resources.
+
+Composition and mail validation happen inside the existing token-and-queue
+transaction. Exceptions and malformed results propagate as server errors,
+not successful submissions or a fallback email. They roll back the new
+token and queued mail, restore any replaced token, and also roll back a new
+registration. Rate-limit counters remain in force. Do not start/commit
+transactions or perform external side effects in the composer; keep it
+limited to rendering trusted local templates/strings. Never log its
+arguments, returned bodies, or token-bearing URLs, including in custom
+exception messages. The configured sender and actual recipient remain
+under PBreeze's control. The worker sends the already composed content;
+token generation, expiry, consumption, and delivery policy are unchanged.
+
 ### Protecting Custom Routes
 
 ```php
