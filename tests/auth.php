@@ -376,6 +376,90 @@ test('Verification defeats pre-registration hijacking and revokes attacker sessi
     $authDb->execute('DELETE FROM auth_limits');
 });
 
+test('Registration callback failure rolls back account, application data, token, and queued email', static function () use ($root): void {
+    $app = new Application($root, [
+        'name' => 'Test', 'environment' => 'testing', 'debug' => false, 'secure_cookie' => false,
+        'url' => 'https://example.test', 'database' => ['driver' => 'sqlite', 'database' => ':memory:'],
+        'mail' => ['from' => 'noreply@example.test'],
+    ]);
+    foreach (['20261113150000_create_emails.php', '20261113160000_create_auth.php'] as $file) {
+        (require $root . '/database/migrations/' . $file)->up($app->db->pdo());
+    }
+    $app->db->execute('CREATE TABLE registration_details (user_id INTEGER PRIMARY KEY REFERENCES users(id))');
+    $failure = new PDOException('Application write failed.', 23000);
+    try {
+        $app->auth->register(authData(), '192.0.2.3', static function (int $id, Database $db) use ($app, $failure): void {
+            same($app->db, $db);
+            check($db->pdo()->inTransaction());
+            same($id, (int) $db->execute('SELECT id FROM users WHERE email = ?', ['ada@example.test'])->fetchColumn());
+            same($id, (int) $db->execute('SELECT user_id FROM auth_tokens')->fetchColumn());
+            same('queued', $db->execute('SELECT status FROM emails')->fetchColumn());
+            $db->insert('registration_details', ['user_id' => $id], null);
+            throw $failure;
+        });
+        throw new RuntimeException('Registration did not propagate the callback failure.');
+    } catch (PDOException $error) {
+        same($failure, $error);
+    }
+    foreach (['users', 'registration_details', 'auth_tokens', 'emails'] as $table) {
+        same(0, $app->db->table($table)->count());
+    }
+    $app->auth->register(authData(), '192.0.2.3', static function (int $id, Database $db): void {
+        $db->insert('registration_details', ['user_id' => $id], null);
+    });
+    $app->auth->register(authData(' ADA@example.test '), '192.0.2.3', static function (): never {
+        throw new RuntimeException('Registration invoked the callback for an existing user.');
+    });
+    foreach (['users', 'registration_details', 'auth_tokens', 'emails'] as $table) {
+        same(1, $app->db->table($table)->count());
+    }
+    same($app->db->execute('SELECT id FROM users')->fetchColumn(),
+        $app->db->execute('SELECT user_id FROM registration_details')->fetchColumn());
+});
+
+test('Concurrent registration invokes the callback only for the winning insert', static function () use ($root, $temp): void {
+    $path = $temp . '/registration-race.sqlite';
+    $db = new Database($root, ['driver' => 'sqlite', 'database' => $path]);
+    (new Migrator($db, $root))->migrate();
+    $db->execute('CREATE TABLE registration_details (user_id INTEGER NOT NULL REFERENCES users(id))');
+    $workers = [];
+    try {
+        for ($i = 1; $i <= 2; $i++) {
+            $process = proc_open([PHP_BINARY, __DIR__ . '/fixtures/registration.php', $path, '192.0.2.' . $i],
+                [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['redirect', 1]], $pipes);
+            check(is_resource($process), 'Cannot start a registration worker.');
+            $workers[] = [$process, $pipes];
+        }
+        foreach ($workers as [, $pipes]) {
+            fclose($pipes[0]);
+        }
+        $results = [];
+        foreach ($workers as [$process, $pipes]) {
+            $output = stream_get_contents($pipes[1]);
+            fclose($pipes[1]);
+            check(proc_close($process) === 0, 'Registration worker failed: ' . $output);
+            $results[] = $output;
+        }
+        sort($results);
+        same(['duplicate', 'inserted'], $results);
+    } finally {
+        foreach ($workers as [$process, $pipes]) {
+            foreach ($pipes as $pipe) {
+                if (is_resource($pipe)) {
+                    fclose($pipe);
+                }
+            }
+            if (is_resource($process)) {
+                proc_terminate($process);
+                proc_close($process);
+            }
+        }
+    }
+    foreach (['users', 'registration_details', 'auth_tokens', 'emails'] as $table) {
+        same(1, $db->table($table)->count());
+    }
+});
+
 test('Mail queue failure rolls back registration and unsafe APP_URL is rejected', static function () use ($root): void {
     $config = [
         'name' => 'Test', 'environment' => 'testing', 'debug' => false, 'secure_cookie' => false,

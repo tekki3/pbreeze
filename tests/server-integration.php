@@ -59,7 +59,8 @@ try {
     foreach (['storage', 'database', 'database/migrations', 'database/migrations/' . $integrationDriver, 'app', 'app/views'] as $directory) {
         sqlsrvCheck(mkdir($temporary . '/' . $directory, 0700), 'Cannot create an integration-test directory.');
     }
-    foreach (glob(dirname(__DIR__) . '/database/migrations/*.php') as $file) {
+    $migrationFiles = glob(dirname(__DIR__) . '/database/migrations/*.php');
+    foreach ($migrationFiles as $file) {
         sqlsrvCheck(copy($file, $temporary . '/database/migrations/' . basename($file)), 'Cannot copy migration.');
         $override = dirname($file) . '/' . $integrationDriver . '/' . basename($file);
         if ($integrationDriver !== 'mysql' && is_file($override)) {
@@ -75,7 +76,7 @@ try {
     $db = $app->db;
     $migrator = new Migrator($db, $temporary);
     $ownsSchema = true;
-    sqlsrvCheck(count($migrator->migrate()) === 7, 'Expected all seven migrations.');
+    sqlsrvCheck(count($migrator->migrate()) === count($migrationFiles), 'Expected all migrations.');
     sqlsrvCheck($migrator->migrate() === [], 'Repeated migration must be a no-op.');
     sqlsrvCheck(!in_array(null, $migrator->status(), true), 'Pending migration after migrate.');
     $bucket = hash('sha256', 'integration-limiter');
@@ -131,11 +132,33 @@ try {
     $app->session->start();
     $credentials = ['name' => 'Ada', 'email' => 'ada@example.test',
         'password' => 'A long password 42!', 'password_confirmation' => 'A long password 42!'];
-    $app->auth->register($credentials, '127.0.0.1');
-    $app->auth->register($credentials, '127.0.0.1');
+    $saveDetails = static function (int $id, Database $connection) use ($db): void {
+        sqlsrvCheck($connection === $db && $connection->pdo()->inTransaction(), 'Callback must use the registration transaction.');
+        sqlsrvCheck($connection->table('users')->where('id', $id)->exists(), 'Callback received the wrong user ID.');
+        $connection->table('notes')->insert(['title' => 'Registered user ' . $id]);
+    };
+    $failure = new LogicException('Expected registration callback rollback.');
+    try {
+        $app->auth->register($credentials, '127.0.0.1', static function (int $id, Database $connection) use ($saveDetails, $failure): void {
+            $saveDetails($id, $connection);
+            throw $failure;
+        });
+        throw new RuntimeException('Registration did not propagate the callback failure.');
+    } catch (LogicException $error) {
+        sqlsrvCheck($error === $failure, 'Unexpected registration callback exception.');
+    }
+    sqlsrvCheck($db->table('notes')->count() === $before, 'Callback writes did not roll back.');
+    foreach (['users', 'auth_tokens', 'emails'] as $table) {
+        sqlsrvCheck($db->table($table)->count() === 0, "Registration did not roll back $table.");
+    }
+    $app->auth->register($credentials, '127.0.0.1', $saveDetails);
+    $app->auth->register($credentials, '127.0.0.1', static function (): never {
+        throw new RuntimeException('Registration invoked the callback for an existing user.');
+    });
     sqlsrvCheck($db->table('users')->count() === 1, 'Duplicate registration changed user count.');
     $userId = (int) $db->execute('SELECT id FROM users WHERE email = ?', [$credentials['email']])->fetchColumn();
     sqlsrvCheck($userId > 0, 'Registration failed.');
+    sqlsrvCheck($db->table('notes')->where('title', 'Registered user ' . $userId)->count() === 1, 'Application write did not commit.');
     $tokenFromEmail = static function (string $subject) use ($db): string {
         $body = $db->execute($db->limit('SELECT text_body FROM emails WHERE subject = ? ORDER BY id DESC', 1), [$subject])->fetchColumn();
         sqlsrvCheck(is_string($body) && preg_match('/\?token=([a-f0-9]{64})/', $body, $match) === 1, 'Missing auth email token.');
@@ -230,8 +253,8 @@ try {
         'Queue dispatch committed a caller-owned transaction.');
     $app->worker->registry()->stopped($workerId);
 
-    sqlsrvCheck(count($migrator->rollback()) === 7, 'Rollback did not revert all migrations.');
-    sqlsrvCheck(count($migrator->migrate()) === 7, 'Schema could not be migrated after rollback.');
+    sqlsrvCheck(count($migrator->rollback()) === count($migrationFiles), 'Rollback did not revert all migrations.');
+    sqlsrvCheck(count($migrator->migrate()) === count($migrationFiles), 'Schema could not be migrated after rollback.');
     echo "$label integration passed: schema, seed, Unicode CRUD, ORM, pagination, transactions, database sessions, auth/reset, API tokens, rate limits, mail queue, and durable queue claims/uniqueness/rollback. No SMTP was sent.\n";
 } finally {
     try {

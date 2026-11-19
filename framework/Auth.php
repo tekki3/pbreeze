@@ -69,13 +69,16 @@ final class Auth
         };
     }
 
-    /** @param array<string, mixed> $data */
-    public function register(#[\SensitiveParameter] array $data, string $ip): void
+    /**
+     * @param array<string, mixed> $data
+     * @param (callable(int, Database): void)|null $onCreated Runs before commit, only for a new user.
+     */
+    public function register(#[\SensitiveParameter] array $data, string $ip, ?callable $onCreated = null): void
     {
         $this->limit('register-ip', $ip, 5, 3600);
         $data = $this->credentials($data, true);
         $hash = password_hash($data['password'], PASSWORD_BCRYPT, ['cost' => 12]);
-        $this->db->transaction(function () use ($data, $hash): void {
+        $this->db->transaction(function () use ($data, $hash, $onCreated): void {
             // The unique email index also handles concurrent registrations.
             try {
                 if ($this->db->driver() === 'pgsql') {
@@ -104,6 +107,9 @@ final class Auth
                 throw $error;
             }
             $this->issueToken((int) $id, $data['email'], 'verify');
+            if ($onCreated !== null) {
+                $onCreated((int) $id, $this->db);
+            }
         });
     }
 

@@ -4365,6 +4365,30 @@ Host or proxy headers. If you use a different local port, update `APP_URL`.
 | `POST /account/mfa/confirm` | Confirm enrollment and display recovery codes once |
 | `POST /account/mfa/disable` | Disable MFA with the current password and an unused second-factor code |
 
+**Saving application data at registration:** In your registration controller,
+validate any additional fields before calling `register()` so field errors are
+handled the same way for new and existing email addresses. Pass the validated
+fields to an optional callback and use the provided `Database` instance to
+write to a table created by your application's migrations:
+
+```php
+$app->auth->register(
+    $request->all(),
+    $request->clientIp(),
+    static function (int $userId, \PBreeze\Database $db) use ($validatedProfile): void {
+        $db->insert('user_profiles', ['user_id' => $userId] + $validatedProfile, null);
+    },
+);
+```
+
+The callback runs only for a new user, after verification mail is queued and
+before the transaction commits. If it throws, the exception propagates and the
+account, verification token, queued email, and callback writes roll back.
+Callbacks must not start nested transactions, commit or roll back themselves,
+or perform external side effects such as sending mail or making HTTP requests.
+Two-argument calls still work, and the controller should return the same
+generic success message for new and existing email addresses.
+
 After registration, sign in; unverified accounts are sent to the verification page.
 Open the verification link and **choose and confirm the password to use from
 then on**. The POST confirmation replaces the registration password, increments
