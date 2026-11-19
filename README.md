@@ -4430,6 +4430,62 @@ compatible with authenticator apps that support SHA-1, six digits, and a
 30-second period. Existing accounts keep password-only login until their
 verified owner enables MFA.
 
+#### Enrollment and Emergency Enforcement Policy
+
+Both settings default to `true`, preserving existing behavior. Bootstrap
+reads them through `config/auth.php`:
+
+```ini
+AUTH_MFA_ENROLLMENT_ENABLED=true
+AUTH_MFA_ENFORCEMENT_ENABLED=true
+```
+
+- **Enrollment:** setting `AUTH_MFA_ENROLLMENT_ENABLED=false` rejects both
+  starting and confirming new setup with 403, including setup started
+  before the change. It does not erase enrollment, secrets, or recovery
+  codes. Enrolled users are still challenged when enforcement is enabled
+  and can manage, regenerate recovery codes, or disable MFA with the usual
+  password and second-factor checks.
+- **Emergency enforcement:** setting `AUTH_MFA_ENFORCEMENT_ENABLED=false`
+  bypasses the local MFA challenge for **every new password or OIDC login**.
+  Correct password/provider authentication, rate limits, email-verification
+  guards, and session-version checks still apply. Encrypted secrets,
+  accepted authenticator counters, and recovery-code hashes remain intact.
+  Management actions still require the current password and an unused
+  second factor. Enrollment remains independently controlled.
+
+**Disabling enforcement weakens every enrolled account's login protection.**
+Use it only as a controlled, temporary emergency measure, not normal recovery
+for one user. Restrict access during the incident and restore `true` promptly.
+An attacker who can authenticate with the remaining first factor can obtain
+a full browser session while enforcement is off.
+
+Policy changes do **not** revoke existing authenticated sessions or API
+tokens, increment session versions, or retroactively challenge logged-in
+users. Sessions created during a bypass remain authorized after enforcement
+is restored until normal expiry or explicit revocation. Use a reviewed
+administrative session-version revocation procedure where required.
+Existing pending login challenges are not promoted to full sessions when
+enforcement is disabled: complete the challenge normally, or start a fresh
+password/OIDC login under the new policy. Existing pending enrollment cannot
+be confirmed while enrollment is disabled.
+
+After **every policy change**, restart all application processes on every
+instance, including persistent PHP/web processes and CLI workers. Do not mix
+processes running different policies. Settings are loaded when each
+Application/Auth instance is constructed, not refreshed on each method call.
+Restarting alone does not revoke sessions. Invalid or empty environment values
+abort bootstrap instead of silently bypassing MFA; use `true` or `false`
+(case-insensitive).
+
+Applications constructing `Application` directly can supply actual PHP
+booleans in `$config['auth']['mfa_enrollment_enabled']` and
+`$config['auth']['mfa_enforcement_enabled']`; omitted keys default to `true`.
+Strings, integers, arrays, and explicit `null` values are rejected. Direct
+`Auth` construction has optional trailing `mfaEnrollmentEnabled` and
+`mfaEnforcementEnabled` boolean parameters, both defaulting to `true`.
+Use the configured `$app->auth` for every authentication entry point.
+
 #### Enabling MFA
 
 1. Apply pending migrations with `php breeze migrate`. On an existing
@@ -4454,7 +4510,7 @@ requests. You do not need a QR-code package, browser script, image extension,
 CDN, or separate QR endpoint. Keep the white border around the code intact
 when customizing its appearance.
 
-Enabling or disabling MFA rotates the current session/CSRF token and
+Enabling, disabling, or regenerating MFA recovery codes rotates the current session/CSRF token and
 invalidates other sessions and existing API tokens through the account's
 session version. The current browser stays logged in. Enabling MFA consumes
 the enrollment code, so wait for the next app code before using it again.
@@ -4474,7 +4530,7 @@ Using a recovery code does not disable MFA or replace your authenticator.
 Recovery codes cannot confirm the initial enrollment, which requires an
 app-generated six-digit code.
 
-Password login for an enrolled account creates only a pending challenge,
+With enforcement enabled, password or OIDC login for an enrolled account creates only a pending challenge,
 not an authenticated user. Complete `/login/mfa` within five minutes;
 protected routes remain inaccessible until then. Successful completion
 clears pending state and rotates the session and CSRF token again.
@@ -4487,14 +4543,57 @@ or remember-MFA cookies.
    and select **Manage multi-factor authentication**.
 2. Enter your current password and an unused authenticator or recovery code,
    then select **Disable multi-factor authentication**.
-3. To replace an authenticator or get new recovery codes, select **Set up
+3. To replace an authenticator, select **Set up
    multi-factor authentication** and enroll again. Add the new QR code or key
    to your app and save the new recovery codes.
 
 Disabling deletes the old enrollment and its remaining recovery codes.
 The old authenticator entry no longer works after re-enrollment; remove it
-from your app once the replacement is confirmed. There is no separate
-recovery-code regeneration action.
+from your app once the replacement is confirmed. New enrollment must be
+allowed by policy before you can enroll the replacement.
+
+#### Regenerating Recovery Codes in Application Code
+
+Applications can replace recovery codes without replacing the authenticator:
+
+```php
+$recoveryCodes = $app->auth->regenerateMfaRecoveryCodes(
+    $request->input('password'),
+    $request->input('code'),
+    $request->clientIp(),
+);
+```
+
+Call this service API only from an explicitly registered, verified-owner,
+CSRF-protected **POST** handler using `$app->auth->protect(...)`. There is no
+new built-in route or settings-page action. Prompt for the current password
+and a current authenticator code or an unused recovery code; a pending login,
+guest, unverified user, or unenrolled account cannot regenerate codes.
+OIDC-only users must establish a local password through the existing trusted
+password-reset flow before password-confirmed management.
+
+On success, the method returns ten new random 20-character lowercase
+hexadecimal codes. Render them once for the current user, with
+`Cache-Control: no-store` and `Referrer-Policy: no-referrer`, and require the
+user to save them securely. Never log, email, put them in a URL, or retain
+plaintext codes in session/flash storage. The database stores only SHA-256
+hashes. The plaintext list cannot be retrieved again; a page refresh must
+not trigger another regeneration.
+
+The supplied second factor is consumed, all old recovery codes become invalid,
+and only the new hashes are inserted, in one transaction. Any failure rolls
+back the consumed code/authenticator counter, recovery hashes, and session
+version. The authenticator secret stays unchanged; accepted TOTP counters
+cannot be replayed. Password confirmation shares the existing password limits,
+and second-factor attempts share the login/enrollment/disable limits, even
+across sessions. Invalid factors and failures do not reset rate-limit counters.
+
+Successful regeneration increments the session version, invalidates other
+sessions, pending challenges/setup, and existing API tokens, and rotates the
+current session/CSRF token while keeping its owner logged in. Neither
+policy switch bypasses management factor checks. If delivery of the success
+page fails after commit, the old codes are already invalid: authenticate with
+the still-enrolled authenticator and regenerate again as needed.
 
 #### Security and Recovery Limits
 
@@ -4640,15 +4739,13 @@ return static function (string $purpose, string $actionUrl, int $validForSeconds
 };
 ```
 
-Replace the contents of `config/auth.php` with:
+In `config/auth.php`, keep the policy parsing and validation, and replace
+only the final return statement with:
 
 ```php
-<?php
-declare(strict_types=1);
-
 return [
     'email_composer' => require dirname(__DIR__) . '/app/mail/auth-email.php',
-];
+] + $policy;
 ```
 
 The callable receives purpose **`reset` or `verify`**, the complete action URL
@@ -4720,8 +4817,8 @@ Fixed, database-backed time windows limit attempts, including across sessions:
 | Submit reset | 20 per IP per hour |
 | Resend verification email | 5 per user and 20 per IP per hour |
 | Submit verification token | 30 per IP per 15 minutes |
-| MFA code (login, enrollment, or disabling) | 5 per user and 30 per IP per 5 minutes, shared across those actions |
-| MFA password confirmation (setup or disabling) | 10 per user and 30 per IP per 15 minutes |
+| MFA code (login, enrollment, disabling, or recovery-code regeneration) | 5 per user and 30 per IP per 5 minutes, shared across those actions |
+| MFA password confirmation (setup, disabling, or recovery-code regeneration) | 10 per user and 30 per IP per 15 minutes |
 
 Requests that are invalid in content also count toward the IP limit once the
 CAPTCHA and honeypot have passed. Expired limit records are cleaned up on
@@ -4814,8 +4911,10 @@ configured 1..60-second deadline; redirects are not followed.
 - An email matching an existing local account is **never automatically linked**,
   even when the provider marks the email verified. Use local login and contact
   an administrator for deliberate linking.
-- Enabled local MFA still requires its usual authenticator or recovery code
-  after provider login. SSO does not issue API bearer tokens or bypass account
+- Enrolled local MFA requires its usual authenticator or recovery code after
+  provider login when `AUTH_MFA_ENFORCEMENT_ENABLED=true` (the default).
+  The emergency enforcement bypass applies equally to OIDC and password login.
+  SSO does not issue API bearer tokens or bypass account
   session-version checks. Resetting a local password does not delete the mapping
   or enrolled MFA.
 - A provisioned user can use the existing password-reset email flow to establish

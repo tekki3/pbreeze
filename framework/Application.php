@@ -32,9 +32,18 @@ final class Application
     public readonly \PBreeze\Worker\Worker $worker;
     private bool $backgroundLoaded = false;
 
-    /** @param array{name: string, storage_path?: string, storage?: array<string, mixed>, locale?: string, timezone?: string, url?: string, key?: string, api_docs?: bool, upload_max_bytes?: int, log_retention_days?: int, log_level?: string, environment: string, debug: bool, secure_cookie: bool, session?: array{driver?: 'native'|'database', lifetime?: int, lock_timeout?: int}, database: array<string, string>, auth?: array{email_composer?: (callable('reset'|'verify', string, int): array{subject: string, text: string, html: string})|null}, sso?: array{enabled?: bool, name?: string, issuer?: string, client_id?: string, client_secret?: string, timeout?: int, ca_file?: string}, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}, cache?: array<string, mixed>, scheduler?: array<string, mixed>, queue?: array<string, mixed>, ai?: array{provider?: string, timeout?: int, max_tokens?: int, ca_file?: string, openai?: array{key?: string, model?: string}, anthropic?: array{key?: string, model?: string}}} $config */
+    /** @param array{name: string, storage_path?: string, storage?: array<string, mixed>, locale?: string, timezone?: string, url?: string, key?: string, api_docs?: bool, upload_max_bytes?: int, log_retention_days?: int, log_level?: string, environment: string, debug: bool, secure_cookie: bool, session?: array{driver?: 'native'|'database', lifetime?: int, lock_timeout?: int}, database: array<string, string>, auth?: array{mfa_enrollment_enabled?: bool, mfa_enforcement_enabled?: bool, email_composer?: (callable('reset'|'verify', string, int): array{subject: string, text: string, html: string})|null}, sso?: array{enabled?: bool, name?: string, issuer?: string, client_id?: string, client_secret?: string, timeout?: int, ca_file?: string}, mail?: array{log?: bool, from?: string, smtp?: array<string, string>, imap?: array<string, string>}, cache?: array<string, mixed>, scheduler?: array<string, mixed>, queue?: array<string, mixed>, ai?: array{provider?: string, timeout?: int, max_tokens?: int, ca_file?: string, openai?: array{key?: string, model?: string}, anthropic?: array{key?: string, model?: string}}} $config */
     public function __construct(public readonly string $root, #[\SensitiveParameter] public readonly array $config)
     {
+        $auth = $config['auth'] ?? [];
+        if (!is_array($auth)) {
+            throw new \InvalidArgumentException('Authentication configuration must be an array.');
+        }
+        foreach (['mfa_enrollment_enabled', 'mfa_enforcement_enabled'] as $setting) {
+            if (array_key_exists($setting, $auth) && !is_bool($auth[$setting])) {
+                throw new \InvalidArgumentException("Authentication setting $setting must be a boolean.");
+            }
+        }
         $this->storagePath = Filesystem::databasePath($root, ($config['storage_path'] ?? '') !== '' ? $config['storage_path'] : 'storage');
         $this->router = new Router();
         $this->log = new Logger($root, $config['log_retention_days'] ?? 5, $config['log_level'] ?? 'debug', $this->storagePath);
@@ -60,7 +69,8 @@ final class Application
         $this->db = new Database($root, $config['database'], $this->encryption, $config['environment'] === 'production');
         $this->mail = new \PBreeze\Mail\Mailer($this->db, $config['mail'] ?? []);
         $this->auth = new Auth($this->db, $this->session, $this->mail, $config['url'] ?? 'http://127.0.0.1:8000',
-            $config['environment'] === 'production', $config['auth']['email_composer'] ?? null);
+            $config['environment'] === 'production', $auth['email_composer'] ?? null,
+            $auth['mfa_enrollment_enabled'] ?? true, $auth['mfa_enforcement_enabled'] ?? true);
         $this->sso = new Oidc($this->session, $config['sso'] ?? [], $config['url'] ?? 'http://127.0.0.1:8000');
         $this->api = new Api($this->db, $this->views, $config['name'], $config['api_docs'] ?? $config['environment'] !== 'production', $this->log, $this->exceptions);
         $registry = new \PBreeze\Queue\JobRegistry(function (\PBreeze\Queue\JobRegistry $registry): void {

@@ -31,6 +31,8 @@ final class Auth
         private readonly string $url,
         private readonly bool $production = false,
         ?callable $emailComposer = null,
+        private readonly bool $mfaEnrollmentEnabled = true,
+        private readonly bool $mfaEnforcementEnabled = true,
     ) {
         $this->emailComposer = $emailComposer === null ? null : \Closure::fromCallable($emailComposer);
     }
@@ -193,7 +195,8 @@ final class Auth
 
     private function finishLogin(int $id, int $version): void
     {
-        if ($this->db->execute('SELECT user_id FROM auth_mfa WHERE user_id = ?', [$id])->fetchColumn() !== false) {
+        if ($this->mfaEnforcementEnabled
+            && $this->db->execute('SELECT user_id FROM auth_mfa WHERE user_id = ?', [$id])->fetchColumn() !== false) {
             $this->session->reset();
             $this->session->put('_auth_mfa_pending', [
                 'id' => $id, 'version' => $version, 'issued' => time(),
@@ -251,6 +254,7 @@ final class Auth
     public function beginMfaSetup(#[\SensitiveParameter] mixed $password, string $ip): array
     {
         $user = $this->mfaUser();
+        $this->checkMfaEnrollment();
         $this->checkMfaPassword($user['id'], $password, $ip);
         if ($this->mfaEnabled()) {
             throw new AuthException(['form' => ['Multi-factor authentication is already enabled.']]);
@@ -274,6 +278,7 @@ final class Auth
     public function confirmMfaSetup(#[\SensitiveParameter] mixed $code, string $ip): array
     {
         $user = $this->mfaUser();
+        $this->checkMfaEnrollment();
         $this->limit('mfa-ip', $ip, 30, 300);
         $this->limit('mfa-user', (string) $user['id'], 5, 300);
         $setup = $this->session->get('_auth_mfa_setup');
@@ -292,15 +297,25 @@ final class Auth
             $this->db->execute('INSERT INTO auth_mfa (user_id, secret, last_counter) VALUES (?, ?, ?)', [
                 $user['id'], $setup['secret'], $counter,
             ]);
-            $codes = [];
-            for ($i = 0; $i < 10; $i++) {
-                $code = bin2hex(random_bytes(10));
-                $codes[] = $code;
-                $this->db->execute('INSERT INTO auth_mfa_recovery (user_id, code_hash) VALUES (?, ?)', [
-                    $user['id'], hash('sha256', $code),
-                ]);
-            }
-            return $codes;
+            return $this->createMfaRecoveryCodes($user['id']);
+        });
+        $this->establishSession($user['id'], $state['version'] + 1);
+        return $codes;
+    }
+
+    /** @return list<string> */
+    public function regenerateMfaRecoveryCodes(#[\SensitiveParameter] mixed $password, #[\SensitiveParameter] mixed $code, string $ip): array
+    {
+        $user = $this->mfaUser();
+        $this->checkMfaPassword($user['id'], $password, $ip);
+        $this->limit('mfa-ip', $ip, 30, 300);
+        $this->limit('mfa-user', (string) $user['id'], 5, 300);
+        $state = $this->session->get('_auth');
+        $codes = $this->db->transaction(function () use ($user, $state, $code): array {
+            $this->advanceMfaVersion($user['id'], $state['version']);
+            $this->consumeMfaCode($user['id'], $code);
+            $this->db->execute('DELETE FROM auth_mfa_recovery WHERE user_id = ?', [$user['id']])->closeCursor();
+            return $this->createMfaRecoveryCodes($user['id']);
         });
         $this->establishSession($user['id'], $state['version'] + 1);
         return $codes;
@@ -319,6 +334,27 @@ final class Auth
             $this->db->execute('DELETE FROM auth_mfa WHERE user_id = ?', [$user['id']])->closeCursor();
         });
         $this->establishSession($user['id'], $state['version'] + 1);
+    }
+
+    private function checkMfaEnrollment(): void
+    {
+        if (!$this->mfaEnrollmentEnabled) {
+            throw new AuthException(['form' => ['New multi-factor authentication enrollment is disabled.']], 403);
+        }
+    }
+
+    /** @return list<string> */
+    private function createMfaRecoveryCodes(int $id): array
+    {
+        $codes = [];
+        for ($i = 0; $i < 10; $i++) {
+            $code = bin2hex(random_bytes(10));
+            $codes[] = $code;
+            $this->db->execute('INSERT INTO auth_mfa_recovery (user_id, code_hash) VALUES (?, ?)', [
+                $id, hash('sha256', $code),
+            ]);
+        }
+        return $codes;
     }
 
     /** @return array{id: int, name: string, email: string, email_verified_at: ?int} */

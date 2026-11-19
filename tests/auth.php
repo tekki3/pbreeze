@@ -645,6 +645,65 @@ function authMfaCode(string $secret, int $timestamp): string
     return sprintf('%06d', $number % 1000000);
 }
 
+test('MFA policy rejects invalid environment and programmatic configuration without disabling protection', static function () use ($root): void {
+    foreach (['AUTH_MFA_ENROLLMENT_ENABLED', 'AUTH_MFA_ENFORCEMENT_ENABLED'] as $key) {
+        $previous = getenv($key);
+        try {
+            foreach (['true' => true, 'false' => false] as $value => $expected) {
+                putenv("$key=$value");
+                $settings = require $root . '/config/auth.php';
+                same($expected, $settings[$key === 'AUTH_MFA_ENROLLMENT_ENABLED' ? 'mfa_enrollment_enabled' : 'mfa_enforcement_enabled']);
+            }
+            foreach (['', ' ', 'invalid', '0', '1', 'off', 'no'] as $invalid) {
+                putenv("$key=$invalid");
+                raises(static fn () => require $root . '/config/auth.php', RuntimeException::class);
+            }
+        } finally {
+            putenv($previous === false ? $key : "$key=$previous");
+        }
+    }
+    foreach (['mfa_enrollment_enabled', 'mfa_enforcement_enabled'] as $setting) {
+        foreach (['false', '', null, 0, 1, []] as $invalid) {
+            raises(static fn () => new Application($root, ['auth' => [$setting => $invalid]]), InvalidArgumentException::class);
+        }
+    }
+});
+
+foreach ([
+    'policy' => 'MFA policy independently gates enrollment and password/OIDC challenges without deleting enrollment',
+    'regeneration' => 'MFA recovery regeneration requires both factors, replaces hashes once, and rotates and revokes sessions',
+    'rollback' => 'MFA regeneration rolls back consumed factors, replacement hashes, and session versions on failure',
+    'limits' => 'MFA regeneration shares persistent second-factor and password rate limits',
+] as $scenario => $name) {
+    test($name, static function () use ($root, $temp, $scenario): void {
+        $process = proc_open([PHP_BINARY, __DIR__ . '/fixtures/mfa-management.php', $temp, $scenario],
+            [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $root, null, ['bypass_shell' => true]);
+        check(is_resource($process), 'Cannot start MFA management fixture.');
+        try {
+            fclose($pipes[0]);
+            $output = stream_get_contents($pipes[1]);
+            $error = stream_get_contents($pipes[2]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            $exit = proc_close($process);
+            $process = null;
+            check($exit === 0, 'MFA management fixture failed: ' . $error . $output);
+            same('', $error);
+            same('MFA management checks passed', $output);
+        } finally {
+            if (is_resource($process)) {
+                foreach ($pipes as $pipe) {
+                    if (is_resource($pipe)) {
+                        fclose($pipe);
+                    }
+                }
+                proc_terminate($process);
+                proc_close($process);
+            }
+        }
+    });
+}
+
 test('TOTP matches RFC 6238 SHA-1 vectors, adjacent windows, and strict input boundaries', static function (): void {
     $secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
     foreach ([59 => '287082', 1111111109 => '081804', 1111111111 => '050471', 1234567890 => '005924',
