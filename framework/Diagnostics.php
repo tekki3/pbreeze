@@ -64,6 +64,10 @@ final class Diagnostics
         $add('origin', $validUrl ? 'pass' : 'fail', 'APP_URL must be a trusted HTTPS origin without credentials, path, query, or fragment.');
         $docs = $config['api_docs'] ?? !$production;
         $add('api-docs', $docs ? 'warn' : 'pass', $docs ? 'API docs are enabled; protect them at the edge or disable them.' : 'Public API documentation is disabled.');
+        $enforcement = $this->app->auth->mfaEnforcementEnabled();
+        $add('mfa-enforcement', $enforcement ? 'pass' : 'warn', $enforcement
+            ? 'MFA login enforcement is enabled for enrolled accounts.'
+            : 'EMERGENCY: MFA challenges are bypassed for password and OIDC logins. Restore AUTH_MFA_ENFORCEMENT_ENABLED=true and restart all application processes. Existing bypass sessions remain authorized until expiry or explicit revocation.');
         $add('extensions', array_diff(['PDO', 'session', 'json', 'filter', 'openssl', 'intl', 'mbstring', 'fileinfo'], get_loaded_extensions()) === []
             ? 'pass' : 'fail', 'Bundled services require PDO, session, JSON, filter, OpenSSL, Intl, mbstring, and fileinfo.');
         $add('optional-extensions', extension_loaded('curl') && extension_loaded('zip') && extension_loaded('iconv') ? 'pass' : 'warn',

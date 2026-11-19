@@ -30,13 +30,13 @@ function rejectMfa(callable $work, int $status): void
     throw new RuntimeException('Expected MFA rejection.');
 }
 
-function mfaApp(array $policy = []): Application
+function mfaApp(array $policy = [], string $database = ':memory:'): Application
 {
     $root = dirname(__DIR__, 2);
     $app = new Application($root, [
         'name' => 'MFA fixture', 'environment' => 'testing', 'debug' => false, 'secure_cookie' => false,
         'url' => 'https://app.example.test', 'key' => PBreeze\Encryption::generateKey(),
-        'database' => ['driver' => 'sqlite', 'database' => ':memory:'], 'auth' => $policy,
+        'database' => ['driver' => 'sqlite', 'database' => $database], 'auth' => $policy,
     ]);
     foreach (['20261113160000_create_auth.php', '20261113170000_create_api_tokens.php',
         '20261116220000_create_auth_mfa.php', '20261118000000_create_auth_identities.php'] as $file) {
@@ -224,6 +224,85 @@ try {
         }
         rejectMfa(fn () => $app->auth->regenerateMfaRecoveryCodes($password, $recovery, '192.0.2.2'), 429);
         assertMfa((int) $app->db->execute('SELECT session_version FROM users')->fetchColumn() === 1, 'Rate limiting changed session version.');
+    } elseif (str_starts_with($argv[2], 'race-')) {
+        $operations = match ($argv[2]) {
+            'race-regenerate' => ['regenerate', 'regenerate'],
+            'race-disable' => ['regenerate', 'disable'],
+            'race-login' => ['login', 'login'],
+            default => throw new RuntimeException('Unknown MFA race scenario.'),
+        };
+        for ($round = 0; $round < 3; $round++) {
+            $database = $directory . '/' . $argv[2] . '-' . $round . '.sqlite';
+            $app = mfaApp(database: $database);
+            $workers = [];
+            try {
+                foreach ($operations as $operation) {
+                    $process = proc_open([PHP_BINARY, __DIR__ . '/mfa-race-worker.php', $directory, $database, $operation],
+                        [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['redirect', 1]], $pipes, null, null, ['bypass_shell' => true]);
+                    assertMfa(is_resource($process), 'Cannot start MFA race worker.');
+                    $workers[] = [$process, $pipes];
+                    fwrite($pipes[0], json_encode(['key' => $app->config['key']], JSON_THROW_ON_ERROR) . "\n");
+                }
+                foreach ($workers as [, $pipes]) {
+                    assertMfa(fgets($pipes[1]) === "ready\n", 'MFA race worker did not reach the start barrier.');
+                }
+                foreach ($workers as [, $pipes]) {
+                    fwrite($pipes[0], "go\n");
+                    fclose($pipes[0]);
+                }
+                $results = [];
+                foreach ($workers as [$process, $pipes]) {
+                    $output = stream_get_contents($pipes[1]);
+                    fclose($pipes[1]);
+                    assertMfa(proc_close($process) === 0, 'MFA race worker failed: ' . $output);
+                    $results[] = json_decode($output, true, 16, JSON_THROW_ON_ERROR);
+                }
+                $winners = array_values(array_filter($results, static fn (array $result): bool => $result['status'] === 200));
+                assertMfa(count($winners) === 1, 'Competing MFA operations did not have exactly one winner.');
+                $winner = $winners[0];
+                assertMfa($winner['authenticated'] && $winner['rotated'], 'Winning MFA operation did not rotate and retain identity.');
+                foreach ($results as $result) {
+                    if ($result['status'] !== 200) {
+                        assertMfa(in_array($result['status'], [401, 403, 409, 422], true), 'Unexpected losing MFA operation status.');
+                        if ($result['authenticated']) {
+                            assertMfa($result['version'] === 1, 'Losing operation adopted the winning session version.');
+                        }
+                    }
+                }
+                $version = (int) $app->db->execute('SELECT session_version FROM users WHERE id = 1')->fetchColumn();
+                $hashes = $app->db->execute('SELECT code_hash FROM auth_mfa_recovery')->fetchAll(PDO::FETCH_COLUMN);
+                if ($winner['operation'] === 'login') {
+                    assertMfa($version === 1 && count($hashes) === 2, 'Competing login consumed more than one recovery code.');
+                    assertMfa(!in_array(hash('sha256', $recovery), $hashes, true), 'Successful login retained its recovery code.');
+                    foreach ($results as $result) {
+                        assertMfa($result['authenticated'] === ($result['status'] === 200), 'Losing challenge authenticated a user.');
+                    }
+                } elseif ($winner['operation'] === 'disable') {
+                    assertMfa($version === 2 && $hashes === [] && $app->db->table('auth_mfa')->count() === 0, 'Concurrent disabling left MFA data behind.');
+                } else {
+                    sort($hashes);
+                    sort($winner['hashes']);
+                    assertMfa($version === 2 && count($hashes) === 10 && $hashes === $winner['hashes'], 'Regeneration did not persist exactly the winning hashes.');
+                    assertMfa($app->db->table('auth_mfa')->count() === 1, 'Losing disable removed the enrollment.');
+                }
+            } finally {
+                foreach ($workers as [$process, $pipes]) {
+                    foreach ($pipes as $pipe) {
+                        if (is_resource($pipe)) {
+                            fclose($pipe);
+                        }
+                    }
+                    if (is_resource($process)) {
+                        proc_terminate($process);
+                        proc_close($process);
+                    }
+                }
+                $app = null;
+                if (is_file($database)) {
+                    unlink($database);
+                }
+            }
+        }
     } else {
         throw new RuntimeException('Unknown MFA management fixture scenario.');
     }

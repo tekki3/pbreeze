@@ -4364,6 +4364,7 @@ Host or proxy headers. If you use a different local port, update `APP_URL`.
 | `POST /account/mfa/setup` | Confirm the current password and start authenticator enrollment |
 | `POST /account/mfa/confirm` | Confirm enrollment and display recovery codes once |
 | `POST /account/mfa/disable` | Disable MFA with the current password and an unused second-factor code |
+| `GET/POST /account/mfa/recovery-codes` | Confirm both factors, replace recovery codes, and display the new codes once |
 
 **Saving application data at registration:** In your registration controller,
 validate any additional fields before calling `register()` so field errors are
@@ -4446,6 +4447,8 @@ AUTH_MFA_ENFORCEMENT_ENABLED=true
   codes. Enrolled users are still challenged when enforcement is enabled
   and can manage, regenerate recovery codes, or disable MFA with the usual
   password and second-factor checks.
+  Account pages explain the unavailable state rather than offering new setup;
+  enrolled users retain their management and recovery-code replacement links.
 - **Emergency enforcement:** setting `AUTH_MFA_ENFORCEMENT_ENABLED=false`
   bypasses the local MFA challenge for **every new password or OIDC login**.
   Correct password/provider authentication, rate limits, email-verification
@@ -4552,9 +4555,22 @@ The old authenticator entry no longer works after re-enrollment; remove it
 from your app once the replacement is confirmed. New enrollment must be
 allowed by policy before you can enroll the replacement.
 
-#### Regenerating Recovery Codes in Application Code
+#### Regenerating Recovery Codes
 
-Applications can replace recovery codes without replacing the authenticator:
+On **My account**, choose **Manage multi-factor authentication**, then
+**Regenerate recovery codes without disabling MFA**. Review the warning,
+enter your current password and an unused authenticator or recovery code,
+and choose **Replace my recovery codes**. Save the ten new codes immediately:
+the old codes stop working, but your authenticator stays unchanged. Canceling
+returns to settings without changing anything.
+
+The form at `GET /account/mfa/recovery-codes` never generates or displays saved
+codes. Only its CSRF-protected POST can replace them. The success response shows
+the new codes once, uses `no-store`/`no-referrer`, and never stores plaintext
+codes in session/flash data. The rotated CSRF token rejects resubmission of
+the original form. Revisiting the form does not retrieve the codes.
+
+Custom application handlers can use the same service API:
 
 ```php
 $recoveryCodes = $app->auth->regenerateMfaRecoveryCodes(
@@ -4565,8 +4581,8 @@ $recoveryCodes = $app->auth->regenerateMfaRecoveryCodes(
 ```
 
 Call this service API only from an explicitly registered, verified-owner,
-CSRF-protected **POST** handler using `$app->auth->protect(...)`. There is no
-new built-in route or settings-page action. Prompt for the current password
+CSRF-protected **POST** handler using `$app->auth->protect(...)`, as the
+built-in account route does. Prompt for the current password
 and a current authenticator code or an unused recovery code; a pending login,
 guest, unverified user, or unenrolled account cannot regenerate codes.
 OIDC-only users must establish a local password through the existing trusted
@@ -5979,6 +5995,13 @@ An SMTP configuration warning is not evidence that real mail delivery works.
 It checks the CLI PHP installation; verify the web/FPM installation separately.
 If bootstrap configuration is invalid, the command exits with the normal
 startup error before diagnostics can run.
+
+`WARN mfa-enforcement` is an explicit **EMERGENCY** warning when password and
+OIDC MFA challenges are bypassed. Restore `AUTH_MFA_ENFORCEMENT_ENABLED=true`
+and restart all application processes after the emergency. The warning does
+not revoke sessions: those created during the bypass remain authorized until
+expiry or explicit revocation. A warning alone does not change the command's
+exit code.
 
 - `GET /health`: lightweight process liveness only; a 200 does not prove that
   the database is usable.

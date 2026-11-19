@@ -39,3 +39,5 @@ $router->get('/account/mfa', $app->auth->protect([$auth, 'mfaSettings']));
 $router->post('/account/mfa/setup', $app->auth->protect([$auth, 'mfaSetup']));
 $router->post('/account/mfa/confirm', $app->auth->protect([$auth, 'mfaConfirm']));
 $router->post('/account/mfa/disable', $app->auth->protect([$auth, 'mfaDisable']));
+$router->get('/account/mfa/recovery-codes', $app->auth->protect([$auth, 'mfaRecoveryForm']));
+$router->post('/account/mfa/recovery-codes', $app->auth->protect([$auth, 'mfaRegenerate']));

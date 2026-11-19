@@ -23,6 +23,8 @@ final class AuthController
         'mfa-confirm' => ['Confirm your authenticator', 'Scan the QR code or add the setup key in your authenticator app, then enter its six-digit code. Setup expires after ten minutes.', '/account/mfa/confirm', 'Enable multi-factor authentication'],
         'mfa-recovery' => ['Save your recovery codes', 'Multi-factor authentication is enabled. Store these codes somewhere safe, separate from your password.', '', ''],
         'mfa-disable' => ['Manage multi-factor authentication', 'Multi-factor authentication is enabled. To turn it off, enter your current password and an unused authenticator or recovery code.', '/account/mfa/disable', 'Disable multi-factor authentication'],
+        'mfa-unavailable' => ['Authenticator enrollment is unavailable', 'New multi-factor authentication enrollment is currently disabled by the application administrator. Existing enrollments are not affected.', '', ''],
+        'mfa-regenerate' => ['Regenerate recovery codes', 'Replace all recovery codes without changing your authenticator. Enter your current password and an unused authenticator or recovery code.', '/account/mfa/recovery-codes', 'Replace my recovery codes'],
     ];
 
     public function __construct(private readonly Application $app)
@@ -109,7 +111,19 @@ final class AuthController
 
     public function mfaSettings(Request $request): Response
     {
-        return $this->page($this->app->auth->mfaEnabled() ? 'mfa-disable' : 'mfa-setup');
+        return $this->page($this->app->auth->mfaEnabled() ? 'mfa-disable'
+            : ($this->app->auth->mfaEnrollmentEnabled() ? 'mfa-setup' : 'mfa-unavailable'));
+    }
+
+    public function mfaRecoveryForm(Request $request): Response
+    {
+        return $this->app->auth->mfaEnabled() ? $this->page('mfa-regenerate') : Response::redirect('/account/mfa');
+    }
+
+    public function mfaRegenerate(Request $request): Response
+    {
+        return $this->submit($request, 'mfa-regenerate',
+            fn () => $this->app->auth->regenerateMfaRecoveryCodes($request->input('password'), $request->input('code'), $request->clientIp()));
     }
 
     public function mfaSetup(Request $request): Response
@@ -200,8 +214,8 @@ final class AuthController
         if ($mode === 'mfa-setup') {
             return $this->page('mfa-confirm', ['setup' => $result, 'setupQr' => \PBreeze\QrCode::svg($result['uri'])]);
         }
-        if ($mode === 'mfa-confirm') {
-            return $this->page('mfa-recovery', ['recoveryCodes' => $result]);
+        if (in_array($mode, ['mfa-confirm', 'mfa-regenerate'], true)) {
+            return $this->page('mfa-recovery', ['recoveryCodes' => $result, 'regenerated' => $mode === 'mfa-regenerate']);
         }
         return $redirect !== null ? Response::redirect($redirect) : $this->page($mode, ['message' => $message]);
     }
@@ -214,6 +228,9 @@ final class AuthController
     /** @param array<string, mixed> $data */
     private function page(string $mode, array $data = [], int $status = 200, int $retryAfter = 0): Response
     {
+        if (in_array($mode, ['mfa-setup', 'mfa-confirm'], true) && !$this->app->auth->mfaEnrollmentEnabled()) {
+            $mode = 'mfa-unavailable';
+        }
         [$title, $description, $action, $button] = self::PAGES[$mode];
         $user = $this->app->auth->user();
         $captcha = in_array($mode, ['register', 'login', 'forgot', 'notice'], true) && empty($data['message'])
@@ -225,6 +242,7 @@ final class AuthController
             'errors' => [], 'message' => null, 'oldName' => '', 'oldEmail' => '', 'token' => '',
             'captcha' => $captcha, 'captchaRefreshed' => false,
             'setup' => null, 'setupQr' => null, 'recoveryCodes' => [],
+            'regenerated' => false, 'mfaEnrollmentEnabled' => $this->app->auth->mfaEnrollmentEnabled(),
             'ssoEnabled' => $this->app->sso->enabled(), 'ssoName' => $this->app->sso->name(),
         ]), $status, [
             'Content-Type' => 'text/html; charset=UTF-8',

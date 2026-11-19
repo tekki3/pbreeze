@@ -43,8 +43,18 @@
                 <div><dt>Verification</dt><dd>Verified</dd></div>
                 <div><dt>Multi-factor authentication</dt><dd>{{ $mfaEnabled ? 'Enabled' : 'Not enabled' }}</dd></div>
             </dl>
-            <p class="auth-next"><a href="/account/mfa">{{ $mfaEnabled ? 'Manage multi-factor authentication' : 'Set up multi-factor authentication' }}</a></p>
+            @if($mfaEnabled || $mfaEnrollmentEnabled)
+                <p class="auth-next"><a href="/account/mfa">{{ $mfaEnabled ? 'Manage multi-factor authentication' : 'Set up multi-factor authentication' }}</a></p>
+            @else
+                <p class="auth-next">New authenticator enrollment is currently unavailable. Existing enrollments are not affected.</p>
+            @endif
+        @elseif($mode === 'mfa-unavailable')
+            <p>You cannot start or confirm a new authenticator setup while enrollment is disabled. Contact the account administrator if you need help.</p>
+            <p class="auth-next"><a href="/account">Return to my account</a></p>
         @elseif($mode === 'mfa-recovery')
+            @if($regenerated)
+                <p>Your old recovery codes are no longer valid. Your authenticator is unchanged.</p>
+            @endif
             <p>Each recovery code works once in place of an authenticator code. These codes are shown only now.</p>
             <ul class="mfa-recovery-codes" aria-label="Single-use recovery codes">
                 @foreach($recoveryCodes as $recoveryCode)
@@ -54,6 +64,12 @@
             <p>Password resets do not remove multi-factor authentication. If you lose your authenticator and all recovery codes, contact the account administrator.</p>
             <p class="auth-next"><a href="/account">I saved my codes. Continue to my account.</a></p>
         @else
+            @if($mode === 'mfa-disable')
+                <p class="auth-next"><a href="/account/mfa/recovery-codes">Regenerate recovery codes without disabling MFA</a></p>
+            @elseif($mode === 'mfa-regenerate')
+                <p class="mfa-recovery-warning">All old recovery codes will stop working immediately. Other login sessions and API tokens will be invalidated. Save the new codes when they appear; they cannot be retrieved again.</p>
+                <p class="auth-next"><a href="/account/mfa">Cancel and return to MFA settings</a></p>
+            @endif
             @if($mode === 'notice')
                 <p>Verification email for <strong>{{ $user['email'] }}</strong>. Check your spam folder too.</p>
                 <p class="field-hint">A verification link is valid for 24 hours. Requesting a new link invalidates the previous one.</p>
@@ -80,14 +96,14 @@
                 @if(in_array($mode, ['login', 'register', 'forgot'], true))
                     @include('auth.field', ['field' => 'email', 'label' => 'Email address', 'type' => 'email', 'autocomplete' => 'email', 'value' => $oldEmail, 'minimum' => 1, 'maximum' => 254])
                 @endif
-                @if(in_array($mode, ['login', 'register', 'reset', 'verify', 'mfa-setup', 'mfa-disable'], true))
-                    @include('auth.field', ['field' => 'password', 'label' => in_array($mode, ['mfa-setup', 'mfa-disable'], true) ? 'Current password' : 'Password', 'type' => 'password', 'autocomplete' => in_array($mode, ['login', 'mfa-setup', 'mfa-disable'], true) ? 'current-password' : 'new-password', 'value' => '', 'minimum' => in_array($mode, ['login', 'mfa-setup', 'mfa-disable'], true) ? 1 : 12, 'maximum' => 72])
+                @if(in_array($mode, ['login', 'register', 'reset', 'verify', 'mfa-setup', 'mfa-disable', 'mfa-regenerate'], true))
+                    @include('auth.field', ['field' => 'password', 'label' => in_array($mode, ['mfa-setup', 'mfa-disable', 'mfa-regenerate'], true) ? 'Current password' : 'Password', 'type' => 'password', 'autocomplete' => in_array($mode, ['login', 'mfa-setup', 'mfa-disable', 'mfa-regenerate'], true) ? 'current-password' : 'new-password', 'value' => '', 'minimum' => in_array($mode, ['login', 'mfa-setup', 'mfa-disable', 'mfa-regenerate'], true) ? 1 : 12, 'maximum' => 72])
                     @if(in_array($mode, ['register', 'reset', 'verify'], true))
                         <p class="field-hint" id="password-hint">Use at least 12 characters and no more than 72 bytes. Spaces and passphrases are allowed.</p>
                         @include('auth.field', ['field' => 'password_confirmation', 'label' => 'Confirm your password', 'type' => 'password', 'autocomplete' => 'new-password', 'value' => '', 'minimum' => 12, 'maximum' => 72])
                     @endif
                 @endif
-                @if(in_array($mode, ['mfa', 'mfa-confirm', 'mfa-disable'], true))
+                @if(in_array($mode, ['mfa', 'mfa-confirm', 'mfa-disable', 'mfa-regenerate'], true))
                     <div class="auth-field">
                         <label for="code">{{ $mode === 'mfa-confirm' ? 'Authenticator code' : 'Authenticator or recovery code' }}</label>
                         <input id="code" name="code" type="text" autocomplete="one-time-code" required

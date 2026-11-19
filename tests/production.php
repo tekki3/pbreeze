@@ -129,6 +129,31 @@ test('Doctor reports actionable redacted checks and uses exit codes without sche
     raises(static fn () => (new Console($bad))->run(['storage:prepare', '--force']), InvalidArgumentException::class);
 });
 
+test('Doctor prominently warns about emergency MFA bypass without changing policy or enrollment', static function (): void {
+    foreach ([[], ['mfa_enforcement_enabled' => true], ['mfa_enforcement_enabled' => false]] as $policy) {
+        $app = productionApp(['auth' => $policy]);
+        $checks = array_column((new Diagnostics($app))->check(), null, 'name');
+        $bypass = ($policy['mfa_enforcement_enabled'] ?? true) === false;
+        same($bypass ? 'warn' : 'pass', $checks['mfa-enforcement']['status']);
+        if ($bypass) {
+            check(str_contains($checks['mfa-enforcement']['message'], 'EMERGENCY'));
+            check(str_contains($checks['mfa-enforcement']['message'], 'password and OIDC'));
+            check(str_contains($checks['mfa-enforcement']['message'], 'restart all application processes'));
+            ob_start();
+            try {
+                (new Console($app))->run(['doctor']);
+                $output = ob_get_contents();
+            } finally {
+                ob_end_clean();
+            }
+            check(str_contains($output, 'WARN mfa-enforcement'));
+        }
+        same(!$bypass, $app->auth->mfaEnforcementEnabled());
+        check(!file_exists($app->root . '/storage'));
+        check(!file_exists($app->root . '/database/app.sqlite'));
+    }
+});
+
 test('MySQL TLS and host configuration load from the environment without implicit enforcement', static function () use ($root): void {
     $keys = ['DB_MYSQL_TLS', 'DB_MYSQL_SSL_CA', 'DB_HOST'];
     $previous = [];

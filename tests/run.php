@@ -532,6 +532,8 @@ PHP);
         $environment['DB_DATABASE'] = $temp . '/http.sqlite';
         $environment['APP_URL'] = 'https://auth.example.test';
         $environment['APP_KEY'] = \PBreeze\Encryption::generateKey();
+        $environment['AUTH_MFA_ENROLLMENT_ENABLED'] = 'true';
+        $environment['AUTH_MFA_ENFORCEMENT_ENABLED'] = 'true';
         $environment['MAIL_FROM'] = 'noreply@example.test';
         $environment['MAIL_LOG'] = 'false';
         $environment['STORAGE_PATH'] = $temp . '/storage';

@@ -67,14 +67,14 @@ function authToken(Database $db, string $email, string $purpose): string
     return $match[1];
 }
 
-function authMailApp(?callable $composer = null, array $mail = []): Application
+function authMailApp(?callable $composer = null, array $mail = [], array $auth = []): Application
 {
     global $root;
     $app = new Application($root, [
         'name' => 'Test', 'environment' => 'testing', 'debug' => false, 'secure_cookie' => false,
         'url' => 'https://auth.example.test', 'database' => ['driver' => 'sqlite', 'database' => ':memory:'],
         'mail' => $mail + ['from' => 'noreply@example.test', 'log' => false],
-        'auth' => ['email_composer' => $composer],
+        'auth' => $auth + ['email_composer' => $composer],
     ]);
     foreach (['20261113150000_create_emails.php', '20261113160000_create_auth.php'] as $file) {
         (require $root . '/database/migrations/' . $file)->up($app->db->pdo());
@@ -225,7 +225,7 @@ test('Registration validates input and does not store invalid accounts', static 
 
 test('All authentication actions require CSRF, including verification and logout', static function () use ($base): void {
     foreach (['/register', '/login', '/logout', '/forgot-password', '/reset-password', '/verify-email', '/email/verification-notification',
-        '/login/mfa', '/account/mfa/setup', '/account/mfa/confirm', '/account/mfa/disable', '/sso/login'] as $path) {
+        '/login/mfa', '/account/mfa/setup', '/account/mfa/confirm', '/account/mfa/disable', '/account/mfa/recovery-codes', '/sso/login'] as $path) {
         same(419, http($base, $path, 'POST')['status']);
     }
 });
@@ -674,6 +674,9 @@ foreach ([
     'regeneration' => 'MFA recovery regeneration requires both factors, replaces hashes once, and rotates and revokes sessions',
     'rollback' => 'MFA regeneration rolls back consumed factors, replacement hashes, and session versions on failure',
     'limits' => 'MFA regeneration shares persistent second-factor and password rate limits',
+    'race-regenerate' => 'Independent processes cannot regenerate MFA recovery codes twice from the same session version',
+    'race-disable' => 'Concurrent MFA regeneration and disabling commit only one complete state transition',
+    'race-login' => 'Concurrent login challenges cannot consume the same recovery code twice',
 ] as $scenario => $name) {
     test($name, static function () use ($root, $temp, $scenario): void {
         $process = proc_open([PHP_BINARY, __DIR__ . '/fixtures/mfa-management.php', $temp, $scenario],
@@ -703,6 +706,52 @@ foreach ([
         }
     });
 }
+
+test('Account pages respect enrollment policy and keep enrolled-user management available', static function () use ($root): void {
+    require_once $root . '/app/controllers/AuthController.php';
+    $previous = $_SESSION;
+    try {
+        foreach ([true, false] as $enabled) {
+            $app = authMailApp(auth: ['mfa_enrollment_enabled' => $enabled]);
+            (require $root . '/database/migrations/20261116220000_create_auth_mfa.php')->up($app->db->pdo());
+            $app->db->insert('users', [
+                'name' => '<Account>', 'email' => 'account@example.test', 'created_at' => time(),
+                'email_verified_at' => time(), 'password_hash' => 'not-used-by-page-rendering',
+            ]);
+            $_SESSION = ['_auth' => ['id' => 1, 'version' => 1, 'issued' => time(), 'seen' => time()]];
+            $controller = new App\Controllers\AuthController($app);
+            $request = new PBreeze\Request('GET', '/account/mfa');
+            $account = $controller->account($request);
+            check(str_contains($account->body, '&lt;Account&gt;'));
+            same($enabled, str_contains($account->body, 'Set up multi-factor authentication'));
+            $settings = $controller->mfaSettings($request);
+            same($enabled, str_contains($settings->body, 'action="/account/mfa/setup"'));
+            if (!$enabled) {
+                check(str_contains($settings->body, 'Authenticator enrollment is unavailable'));
+                check(!str_contains($settings->body, 'name="password"'));
+                check(!str_contains($settings->body, 'name="code"'));
+                foreach (['mfaSetup', 'mfaConfirm'] as $action) {
+                    $denied = $controller->$action(new PBreeze\Request('POST', '/account/mfa/setup'));
+                    same(403, $denied->status);
+                    check(!str_contains($denied->body, 'name="password"'));
+                    check(!str_contains($denied->body, 'name="code"'));
+                }
+            }
+            same(303, $controller->mfaRecoveryForm($request)->status);
+            $app->db->insert('auth_mfa', ['user_id' => 1, 'secret' => 'not-read-by-page-rendering', 'last_counter' => -1], null);
+            $settings = $controller->mfaSettings($request);
+            check(str_contains($settings->body, 'action="/account/mfa/disable"'));
+            check(str_contains($settings->body, 'href="/account/mfa/recovery-codes"'));
+            $recovery = $controller->mfaRecoveryForm($request);
+            same(200, $recovery->status);
+            check(str_contains($recovery->body, 'action="/account/mfa/recovery-codes"'));
+            check(str_contains($recovery->body, 'All old recovery codes will stop working immediately.'));
+            same('no-store', $recovery->headers['Cache-Control']);
+        }
+    } finally {
+        $_SESSION = $previous;
+    }
+});
 
 test('TOTP matches RFC 6238 SHA-1 vectors, adjacent windows, and strict input boundaries', static function (): void {
     $secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
@@ -935,6 +984,78 @@ test('Password reset preserves MFA and disabling requires both factors and revok
     $authDb->execute('DELETE FROM users WHERE id = ?', [$id]);
     $authDb->execute('DELETE FROM auth_limits');
     $mfaFixture = null;
+});
+
+test('Browser recovery regeneration displays codes once, rejects invalid factors, and revokes older sessions', static function () use ($base, $authDb, $temp): void {
+    $authDb->execute('DELETE FROM auth_limits');
+    $client = new AuthBrowser($base);
+    $guest = new AuthBrowser($base);
+    same(303, $guest->request('/account/mfa/recovery-codes')['status']);
+    same(303, $guest->request('/account/mfa/recovery-codes', 'POST')['status']);
+    $data = authData('regenerate@example.test');
+    $id = (int) $authDb->insert('users', [
+        'name' => $data['name'], 'email' => $data['email'], 'created_at' => time(), 'email_verified_at' => null,
+        'password_hash' => password_hash($data['password'], PASSWORD_BCRYPT, ['cost' => 12]),
+    ]);
+    same(303, $client->request('/login', 'POST', $data)['status']);
+    same(303, $client->request('/account/mfa/recovery-codes')['status']);
+    same(200, $client->request('/email/verify')['status']);
+    same(303, $client->request('/account/mfa/recovery-codes', 'POST')['status']);
+    $authDb->execute('UPDATE users SET email_verified_at = ? WHERE id = ?', [time(), $id]);
+    $form = $client->request('/account/mfa/recovery-codes');
+    same(303, $form['status']);
+    check(in_array('Location: /account/mfa', $form['headers'], true));
+    $setup = $client->request('/account/mfa/setup', 'POST', ['password' => $data['password']]);
+    check(preg_match('/<code>([A-Z2-7]{32})<\/code>/', $setup['body'], $match) === 1);
+    $enrolled = $client->request('/account/mfa/confirm', 'POST', ['code' => authMfaCode($match[1], time())]);
+    same(200, $enrolled['status']);
+    check(preg_match_all('/<code>([a-f0-9]{20})<\/code>/', $enrolled['body'], $old) === 10);
+    $other = new AuthBrowser($base);
+    same(303, $other->request('/login', 'POST', $data)['status']);
+    same(200, $other->request('/login/mfa')['status']);
+    same(303, $other->request('/login/mfa', 'POST', ['code' => $old[1][1]])['status']);
+    $token = (new PBreeze\ApiTokens($authDb))->create($id);
+    $form = $client->request('/account/mfa/recovery-codes');
+    same(200, $form['status']);
+    $cookie = $client->cookie;
+    $csrf = $client->csrf;
+    foreach ([
+        ['password' => 'wrong', 'code' => $old[1][0]],
+        ['password' => $data['password'], 'code' => 'invalid'],
+    ] as $invalid) {
+        $error = $client->request('/account/mfa/recovery-codes', 'POST', $invalid);
+        same(422, $error['status']);
+        check(str_contains($error['body'], 'role="alert"'));
+        check(!str_contains($error['body'], 'value="' . $invalid['password'] . '"'));
+        check(!str_contains($error['body'], 'value="' . $invalid['code'] . '"'));
+    }
+    $result = $client->request('/account/mfa/recovery-codes', 'POST', ['password' => $data['password'], 'code' => $old[1][0]]);
+    same(200, $result['status']);
+    check(str_contains($result['body'], 'Your old recovery codes are no longer valid.'));
+    check(preg_match_all('/<code>([a-f0-9]{20})<\/code>/', $result['body'], $new) === 10);
+    check($cookie !== $client->cookie);
+    check(in_array('Cache-Control: no-store', $result['headers'], true));
+    check(in_array('Referrer-Policy: no-referrer', $result['headers'], true));
+    $sessionFile = $temp . '/http-sessions/sess_' . substr($client->cookie, strlen('pbreeze_session='));
+    $session = file_get_contents($sessionFile);
+    $page = $client->request('/account/mfa/recovery-codes');
+    same(200, $page['status']);
+    $head = $client->request('/account/mfa/recovery-codes', 'HEAD');
+    same(200, $head['status']);
+    same('', $head['body']);
+    foreach ($new[1] as $code) {
+        check(!str_contains($session, $code));
+        check(!str_contains($page['body'], $code));
+        same(1, (int) $authDb->execute('SELECT COUNT(*) FROM auth_mfa_recovery WHERE user_id = ? AND code_hash = ?', [$id, hash('sha256', $code)])->fetchColumn());
+    }
+    check($csrf !== $client->csrf);
+    same(419, $client->request('/account/mfa/recovery-codes', 'POST', ['_token' => $csrf, 'password' => $data['password'], 'code' => $old[1][0]])['status']);
+    same(422, $client->request('/account/mfa/recovery-codes', 'POST', ['password' => $data['password'], 'code' => $old[1][2]])['status']);
+    same(303, $other->request('/account')['status']);
+    same(401, http($base, '/api/me', 'GET', '', ['Authorization: Bearer ' . $token['token']])['status']);
+    same(10, (int) $authDb->execute('SELECT COUNT(*) FROM auth_mfa_recovery WHERE user_id = ?', [$id])->fetchColumn());
+    $authDb->execute('DELETE FROM users WHERE id = ?', [$id]);
+    $authDb->execute('DELETE FROM auth_limits');
 });
 
 $authDb = null;

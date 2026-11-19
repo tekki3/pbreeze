@@ -250,6 +250,16 @@ final class Auth
         return $this->db->execute('SELECT user_id FROM auth_mfa WHERE user_id = ?', [$user['id']])->fetchColumn() !== false;
     }
 
+    public function mfaEnrollmentEnabled(): bool
+    {
+        return $this->mfaEnrollmentEnabled;
+    }
+
+    public function mfaEnforcementEnabled(): bool
+    {
+        return $this->mfaEnforcementEnabled;
+    }
+
     /** @return array{secret: string, uri: string} */
     public function beginMfaSetup(#[\SensitiveParameter] mixed $password, string $ip): array
     {

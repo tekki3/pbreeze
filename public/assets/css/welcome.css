@@ -129,6 +129,7 @@ code { font-size: .9em; }
 .mfa-qr svg { display: block; max-width: 100%; height: auto; }
 .mfa-recovery-codes { padding-left: 24px; margin-block: 24px; }
 .mfa-recovery-codes li { margin-block: 8px; }
+.feedback + .mfa-recovery-warning { margin-top: 20px; }
 .button-secondary { color: var(--green); background: transparent; border-color: var(--green); }
 .button-secondary:hover { color: #fff; }
 .form-trap { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
