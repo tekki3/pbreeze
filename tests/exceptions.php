@@ -85,6 +85,32 @@ test('Central handler retains expected status, validation details, authenticatio
     same('application/json; charset=UTF-8', $handler->render(new \PBreeze\HttpException(400, 'Invalid JSON body.'), $request)->headers['Content-Type']);
 });
 
+test('Custom browser error views receive public data and broken views fall back without leaking output', static function (): void {
+    global $temp;
+    $directory = $temp . '/error-pages';
+    mkdir($directory . '/views/errors', 0700, true);
+    file_put_contents($directory . '/views/errors/http-404.breeze.php', '<h1>{{ $status }}: {{ $title }}</h1><p>{{ $message }}</p>');
+    file_put_contents($directory . '/views/errors/http-404.php', '<?php echo "lower precedence";');
+    file_put_contents($directory . '/views/errors/http-503.php', '<?php echo "partial-secret"; throw new RuntimeException("template-secret");');
+    $handler = new ExceptionHandler(logger: new \PBreeze\Logger($directory),
+        views: new \PBreeze\View($directory . '/views', $directory . '/cache'));
+    $error = new \PBreeze\HttpException(404, '<script>not found</script>');
+    $response = $handler->render($error);
+    same(404, $response->status);
+    same('<h1>404: Page Not Found</h1><p>&lt;script&gt;not found&lt;/script&gt;</p>', $response->body);
+
+    $response = $handler->render($error, new \PBreeze\Request('GET', '/api/missing'));
+    same(['error' => ['code' => 'HTTP_404', 'message' => '<script>not found</script>', 'status' => 404]],
+        json_decode($response->body, true, 32, JSON_THROW_ON_ERROR));
+
+    $response = $handler->render(new \PBreeze\HttpException(503, 'server-secret', ['Retry-After' => '60']));
+    same(503, $response->status);
+    same('60', $response->headers['Retry-After']);
+    check(str_contains($response->body, '<h1>503 Service Unavailable</h1>'));
+    check(!str_contains($response->body, '-secret'));
+    same(2, count(file($directory . '/storage/logs/app-' . gmdate('Y-m-d') . '.jsonl')));
+});
+
 test('Application API dispatch shares configured local diagnostics and production privacy', static function (): void {
     global $temp, $config;
     foreach (['local', 'production'] as $environment) {

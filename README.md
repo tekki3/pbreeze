@@ -2309,31 +2309,52 @@ never expose local debug mode to untrusted users.
 
 **Production and all non-local environments** suppress diagnostic details,
 even if `APP_DEBUG=true` is mistakenly configured. With local debug disabled,
-the same privacy behavior applies. Unexpected web errors return:
-
-```json
-{
-  "error": {
-    "code": "INTERNAL_ERROR",
-    "message": "An unexpected error occurred."
-  }
-}
-```
-
-JSON/API requests retain the existing `error.status` integer in addition to
-this code/message. No exception class, private message, file, line, stack trace,
+the same privacy behavior applies. Browser requests get an HTML error page.
+JSON/API requests retain `error.code` (`INTERNAL_ERROR`), the generic message
+`An unexpected error occurred.`, and `error.status`. No exception class,
+private message, file, line, stack trace,
 request payload or previous exception is returned. Every server-error status,
 including an explicitly thrown `HttpException(503, ...)`, uses the generic
 message; `Retry-After` can be retained, while arbitrary server-error headers
 are discarded. Server failures are reported once through the existing logger;
 its safe report omits exception messages, traces, arguments and request data.
 
-Expected **4xx** failures remain usable: browser HTTP errors use safe plain-text
-messages, validation returns 422, missing records return generic 404, and
+Expected **4xx** failures use HTML pages for browser requests, validation
+returns 422, missing records return generic 404, and
 `Allow`/`Retry-After` survive. API/JSON errors include `code: "HTTP_422"` (or
 the relevant status), `status`, `message`, and existing validation `details`.
 Only put deliberately public text in HTTP exceptions and custom validation
 messages; they are not automatically sanitized for secrets.
+
+#### Custom error pages
+
+To customize a status, add `app/views/errors/http-404.breeze.php` (or
+`http-404.php`). Use the same naming pattern for `500`, `403`, or any other
+4xx/5xx status. The template receives `$status`, `$title`, and `$message`;
+for 5xx errors the message is always generic. For example:
+
+```html
+<!doctype html>
+<html lang="en-US">
+<head><meta charset="utf-8"><title>{{ $status }} {{ $title }}</title></head>
+<body>
+    <main>
+        <h1>{{ $title }}</h1>
+        <p>{{ $message }}</p>
+        <p><a href="/">Go to the home page</a></p>
+    </main>
+</body>
+</html>
+```
+
+In plain PHP templates, escape text with `e()`. Keep error templates independent
+of session and database services so they can render when those services fail.
+If the view is missing or throws, PBreeze uses its built-in HTML page and
+keeps the original status and protocol headers. An exception from the view is
+logged. These pages apply to exceptions handled by the application, not
+responses returned explicitly by routes, server-generated errors, or startup
+failures before the application runs. `/api` requests, requests with
+`Content-Type: application/json`, and local debug diagnostics bypass HTML views.
 
 For independent usage:
 
@@ -2347,9 +2368,9 @@ $response = $handler->render($exception); // Request context is optional.
 `Application::errorResponse()` and `Api::errorResponse()` remain compatibility
 adapters. Prefer `$app->exceptions` for environment-aware handling; the static
 web adapter's explicit `debug=true` opts into local diagnostics without reading
-environment configuration. This intentionally replaces the old generic
-plain-text web 500 message with the JSON contract above. Local API server
-failures also become diagnostic plain text when debug is explicitly enabled.
+environment configuration. Without a `View`, the standalone handler and static web adapter
+retain plain text for 4xx and generic JSON for 5xx. Local API server failures
+also become diagnostic plain text when debug is explicitly enabled.
 
 Use the native `$app->log` service for structured application logs. No Composer,
 PSR interface, database migration, or external logging package is required.

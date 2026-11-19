@@ -644,7 +644,10 @@ PHP);
         test('HTTP validates JSON and supports the CSRF header', static function () use ($base, &$cookie, &$token): void {
             $headers = ['Content-Type: application/json', 'Cookie: ' . $cookie, 'X-CSRF-Token: ' . $token];
             same(400, http($base, '/greet', 'POST', '{', $headers)['status']);
-            same(400, http($base, '/greet', 'POST', '[]', $headers)['status']);
+            $invalidJson = http($base, '/greet', 'POST', '[]', $headers);
+            same(400, $invalidJson['status']);
+            same(['error' => ['code' => 'HTTP_400', 'message' => 'The JSON body must be an object.', 'status' => 400]],
+                json_decode($invalidJson['body'], true, 32, JSON_THROW_ON_ERROR));
             $exact = '{"name":"' . str_repeat('x', 1048576 - 11) . '"}';
             same(1048576, strlen($exact));
             same(422, http($base, '/greet', 'POST', $exact, $headers)['status']);
@@ -682,7 +685,10 @@ PHP);
         test('HTTP HEAD is empty and private files are inaccessible', static function () use ($base, &$cookie, &$token): void {
             same('', http($base, '/', 'HEAD')['body']);
             same(419, http($base, '/', 'DELETE', '', ['X-CSRF-Token: invalid'])['status']);
-            same(405, http($base, '/', 'DELETE', '', ['Cookie: ' . $cookie, 'X-CSRF-Token: ' . $token])['status']);
+            $methodError = http($base, '/', 'DELETE', '', ['Cookie: ' . $cookie, 'X-CSRF-Token: ' . $token]);
+            same(405, $methodError['status']);
+            check(in_array('Allow: GET, HEAD', $methodError['headers'], true));
+            check(str_contains($methodError['body'], '<h1>405 Method Not Allowed</h1>'));
             $asset = http($base, '/fixture.css');
             same(200, $asset['status']);
             same('body { color: black; }', $asset['body']);
@@ -692,7 +698,13 @@ PHP);
             }
             same(419, http($base, '/health', 'POST')['status']);
             same(405, http($base, '/health', 'POST', '', ['Cookie: ' . $cookie, 'X-CSRF-Token: ' . $token])['status']);
-            same(404, http($base, '/onbekend')['status']);
+            $missing = http($base, '/onbekend');
+            same(404, $missing['status']);
+            check(in_array('Content-Type: text/html; charset=UTF-8', $missing['headers'], true));
+            check(str_contains($missing['body'], '<h1>404 Page Not Found</h1>'));
+            $head = http($base, '/onbekend', 'HEAD');
+            same(404, $head['status']);
+            same('', $head['body']);
         });
 
         require __DIR__ . '/auth.php';

@@ -38,7 +38,6 @@ final class Application
         $this->storagePath = Filesystem::databasePath($root, ($config['storage_path'] ?? '') !== '' ? $config['storage_path'] : 'storage');
         $this->router = new Router();
         $this->log = new Logger($root, $config['log_retention_days'] ?? 5, $config['log_level'] ?? 'debug', $this->storagePath);
-        $this->exceptions = new ExceptionHandler($config['environment'], $config['debug'], $this->log);
         $this->storage = new Storage($root, $config['storage'] ?? [], $this->storagePath);
         $this->uploads = new Uploads($root, $config['upload_max_bytes'] ?? 2097152, $this->storagePath);
         $this->format = new Formatter($config['locale'] ?? 'en-US', $config['timezone'] ?? 'UTC');
@@ -47,6 +46,7 @@ final class Application
         $this->cache = new Cache($config['cache'] ?? []);
         $this->views = new View($root . '/app/views', $this->storagePath . '/views', formatter: $this->format, strings: $this->strings,
             storageRoot: $root, storagePath: $this->storagePath);
+        $this->exceptions = new ExceptionHandler($config['environment'], $config['debug'], $this->log, $this->views);
         $session = $config['session'] ?? [];
         if (!in_array($session['driver'] ?? 'native', ['native', 'database'], true)) {
             throw new \InvalidArgumentException('SESSION_DRIVER must be native or database.');
@@ -160,7 +160,8 @@ final class Application
             $request = Request::capture();
             $response = $this->handle($request);
         } catch (Throwable $error) {
-            $response = $this->exceptions->render($error, $request, $apiRequest);
+            $contentType = strtolower(trim(explode(';', $_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '')[0]));
+            $response = $this->exceptions->render($error, $request, $apiRequest || ($request === null && $contentType === 'application/json'));
         }
         try {
             $this->session->close();

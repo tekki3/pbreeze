@@ -26,10 +26,15 @@ final class View
         return (new TemplateContext($this))->render($name, $data);
     }
 
+    public function exists(string $name): bool
+    {
+        return $this->resolve($name) !== null;
+    }
+
     /** @internal @param array<string, mixed> $data */
     public function evaluate(string $name, array $data, TemplateContext $engine): string
     {
-        $file = $this->resolve($name);
+        $file = $this->resolve($name) ?? throw new RuntimeException("View does not exist: $name");
         if (str_ends_with($file, '.breeze.php')) {
             $file = $this->compiled($file, $name);
         }
@@ -81,7 +86,7 @@ final class View
         return $count;
     }
 
-    private function resolve(string $name): string
+    private function resolve(string $name): ?string
     {
         Filesystem::portableName($name);
         if (!preg_match('/^[a-zA-Z][a-zA-Z0-9_-]*(?:\.[a-zA-Z][a-zA-Z0-9_-]*)*$/D', $name)) {
@@ -93,7 +98,7 @@ final class View
                 return $base . $extension;
             }
         }
-        throw new RuntimeException("View does not exist: $name");
+        return null;
     }
 
     private function compiled(string $file, string $name): string

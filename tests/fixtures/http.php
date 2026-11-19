@@ -4,7 +4,7 @@ declare(strict_types=1);
 use PBreeze\Request;
 use PBreeze\Response;
 
-require dirname(__DIR__, 2) . '/bootstrap.php';
+$app = require dirname(__DIR__, 2) . '/bootstrap.php';
 
 try {
     $request = Request::capture();
@@ -32,6 +32,6 @@ try {
     $response->send($request->method() === 'HEAD');
 } catch (Throwable $error) {
     $debug = isset($request) && $request->path === '/__http/debug';
-    (new \PBreeze\ExceptionHandler($debug ? 'local' : 'production', $debug))
+    (new \PBreeze\ExceptionHandler($debug ? 'local' : 'production', $debug, views: $app->views))
         ->render($error, $request ?? null)->send(($_SERVER['REQUEST_METHOD'] ?? '') === 'HEAD');
 }

@@ -159,8 +159,8 @@ test('Application maps pre-output file delivery failures to a logged error respo
     same('', $errors);
     $result = json_decode($output, true, 32, JSON_THROW_ON_ERROR);
     same(500, $result['status']);
-    same(['error' => ['code' => 'INTERNAL_ERROR', 'message' => 'An unexpected error occurred.']],
-        json_decode($result['body'], true, 32, JSON_THROW_ON_ERROR));
+    check(str_contains($result['body'], '<h1>500 Internal Server Error</h1>'));
+    check(!str_contains($result['body'], $path));
     $logs = glob($directory . '/storage/logs/app-*.jsonl');
     check($logs !== false && count($logs) > 0);
     $entry = json_decode(trim(file_get_contents($logs[0])), true, 32, JSON_THROW_ON_ERROR);
@@ -172,13 +172,14 @@ test('Application maps pre-output file delivery failures to a logged error respo
 
 function requestResponseHttp(string $base): void
 {
-    test('HTTP exception handler delivers safe production JSON and opt-in plain-text diagnostics', static function () use ($base): void {
+    test('HTTP exception handler delivers safe HTML error pages and opt-in plain-text diagnostics', static function () use ($base): void {
         foreach (['error' => 500, 'unavailable' => 503] as $route => $status) {
             $response = http($base, '/__http/' . $route);
             same($status, $response['status']);
-            same(['error' => ['code' => 'INTERNAL_ERROR', 'message' => 'An unexpected error occurred.']],
-                json_decode($response['body'], true, 32, JSON_THROW_ON_ERROR));
-            check(in_array('Content-Type: application/json; charset=UTF-8', $response['headers'], true));
+            check(str_contains($response['body'], "<h1>$status "));
+            check(str_contains($response['body'], 'An unexpected error occurred.'));
+            check(!str_contains($response['body'], 'http-private-secret'));
+            check(in_array('Content-Type: text/html; charset=UTF-8', $response['headers'], true));
             check(in_array('Cache-Control: no-store', $response['headers'], true));
             if ($status === 503) {
                 check(in_array('Retry-After: 60', $response['headers'], true));

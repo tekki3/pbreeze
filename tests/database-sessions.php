@@ -194,11 +194,11 @@ PHP);
     $initial = sessionResult(sessionProcess($app->root, 'increment'));
     $error = sessionResult(sessionProcess($app->root, 'response-state-error', $initial['id']));
     same(422, $error['status']);
-    same('Expected validation error.', $error['body']);
+    check(str_contains($error['body'], '<p>Expected validation error.</p>'));
     $read = sessionResult(sessionProcess($app->root, 'read', $initial['id']));
     same(9, $read['count']);
     $failure = sessionResult(sessionProcess($app->root, 'response-write-error', $initial['id']));
     same(500, $failure['status']);
-    same(['error' => ['code' => 'INTERNAL_ERROR', 'message' => 'An unexpected error occurred.']],
-        json_decode($failure['body'], true, 32, JSON_THROW_ON_ERROR));
+    check(str_contains($failure['body'], '<h1>500 Internal Server Error</h1>'));
+    check(!str_contains($failure['body'], 'This must not be sent.'));
 });
