@@ -11,13 +11,15 @@ final class View
     private readonly string $cacheDirectory;
     public readonly Formatter $format;
     public readonly Strings $strings;
+    public readonly Translator $translator;
 
     public function __construct(private readonly string $directory, ?string $cacheDirectory = null, ?Formatter $formatter = null, ?Strings $strings = null,
-        private readonly ?string $storageRoot = null, private readonly ?string $storagePath = null)
+        private readonly ?string $storageRoot = null, private readonly ?string $storagePath = null, ?Translator $translator = null)
     {
         $this->cacheDirectory = $cacheDirectory ?? dirname($directory, 2) . '/storage/views';
         $this->format = $formatter ?? new Formatter();
         $this->strings = $strings ?? new Strings();
+        $this->translator = $translator ?? new Translator(dirname($directory) . '/lang');
     }
 
     /** @param array<string, mixed> $data */
@@ -38,7 +40,7 @@ final class View
         if (str_ends_with($file, '.breeze.php')) {
             $file = $this->compiled($file, $name);
         }
-        return (static function (string $__file, array $__data, TemplateContext $__engine, Formatter $format, Strings $strings): string {
+        return (static function (string $__file, array $__data, TemplateContext $__engine, Formatter $format, Strings $strings, Translator $translator): string {
             extract(array_filter(
                 $__data,
                 static fn (mixed $key): bool => is_string($key) && !str_starts_with($key, '__')
@@ -48,7 +50,7 @@ final class View
             ob_start();
             require $__file;
             return (string) ob_get_clean();
-        })($file, $data, $engine, $this->format, $this->strings);
+        })($file, $data, $engine, $this->format, $this->strings, $this->translator);
     }
 
     public static function text(mixed $value): string

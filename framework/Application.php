@@ -10,6 +10,7 @@ final class Application
     public readonly Router $router;
     public readonly View $views;
     public readonly Formatter $format;
+    public readonly Translator $translator;
     public readonly Strings $strings;
     public readonly Ai $ai;
     public readonly Cache $cache;
@@ -50,11 +51,12 @@ final class Application
         $this->storage = new Storage($root, $config['storage'] ?? [], $this->storagePath);
         $this->uploads = new Uploads($root, $config['upload_max_bytes'] ?? 2097152, $this->storagePath);
         $this->format = new Formatter($config['locale'] ?? 'en-US', $config['timezone'] ?? 'UTC');
+        $this->translator = new Translator($root . '/app/lang', $config['locale'] ?? 'en-US');
         $this->strings = new Strings();
         $this->ai = new Ai($config['ai'] ?? []);
         $this->cache = new Cache($config['cache'] ?? []);
         $this->views = new View($root . '/app/views', $this->storagePath . '/views', formatter: $this->format, strings: $this->strings,
-            storageRoot: $root, storagePath: $this->storagePath);
+            storageRoot: $root, storagePath: $this->storagePath, translator: $this->translator);
         $this->exceptions = new ExceptionHandler($config['environment'], $config['debug'], $this->log, $this->views);
         $session = $config['session'] ?? [];
         if (!in_array($session['driver'] ?? 'native', ['native', 'database'], true)) {

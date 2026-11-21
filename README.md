@@ -26,7 +26,8 @@ Includes a stateless JSON API with bearer tokens, OpenAPI 3, and CLI scaffolding
 Creates PDF, Excel (`.xlsx`), Word (`.docx`), JSON, CSV, and XML files through
 a native PHP API, with local saving and HTTP downloads.
 Provides localized date/time, money, decimal, and percentage formatting through
-native Intl, with exact decimal-string rounding.
+native Intl, with exact decimal-string rounding, and simple application text
+translations from local JSON catalogs.
 Supports validated multipart uploads with explicit allowed types, a 2 MiB
 default file limit, random storage keys, and private storage.
 Includes UTF-8 string manipulation, grapheme-safe slicing/truncation,
@@ -50,6 +51,7 @@ outgoing-email queue.
 | Handle failures safely | [Central exception handling](#central-exception-handling) |
 | Validate arrays, forms, imports and API payloads | [Validation Component](#validation-component) |
 | Build escaped HTML | [HTML Helpers](#html-helpers) |
+| Translate application text | [Application Text Translations](#application-text-translations) |
 | Parse dates, add calendar days and show relative time | [Date/Time Utility](#datetime-utility) |
 | Enable authenticator MFA, scan a setup QR code, and use recovery codes | [Optional Authenticator MFA](#optional-authenticator-mfa) |
 
@@ -2859,8 +2861,56 @@ largest whole elapsed-time unit: `"2 minutes ago"`, `"in 1 hour"`, or `"just now
 for differences below a second. Days are 86400 seconds, months are approximated
 as 30 days, and years as 365 days; it is not a calendar-month or financial-age
 calculation. Fractions are truncated, not rounded. The output is concise
-US English; no translation system is introduced. Providing an explicit
+US English; it is not translated by the application translation service. Providing an explicit
 reference date makes examples/tests deterministic.
+
+## Application Text Translations
+
+Use `$app->translator` for application-owned text. Create an `app/lang`
+directory and add one UTF-8 JSON object per locale, using the exact locale
+spelling in the filename. Keys are flat strings, including dots if desired.
+For example, create `app/lang/en-US.json`:
+
+```json
+{"welcome": "Hello, {name}!", "nav.home": "Home"}
+```
+
+Create `app/lang/nl-NL.json`:
+
+```json
+{"welcome": "Hallo, {name}!"}
+```
+
+In a controller, choose a locale from an application-maintained allowlist
+before passing it to the service:
+
+```php
+$message = $app->translator->get('welcome', ['name' => 'Ada'], 'nl-NL');
+// Hallo, Ada!
+```
+
+When omitted, the locale is `APP_LOCALE` (default `en-US`), also used by
+the formatter. A missing catalog or key falls back to `en-US`; a missing key
+there throws. Invalid catalogs and invalid locale tags throw rather than
+falling back. A standalone `new \PBreeze\Translator($directory, 'nl-NL',
+'en-US')` can use a different fallback. Tags have the same syntactic form as
+formatting locales; filenames are case-sensitive on some systems. Catalogs
+must be trusted application files, not user uploads.
+
+The same service is reserved as `$translator` in PHP and Breeze views,
+including layouts and includes. For example, in a Breeze view:
+
+```php
+{{ $translator->get('welcome', ['name' => $name], $locale) }}
+```
+
+Breeze escapes the result; use `e()` in plain PHP views. Replacements use
+literal `{name}` placeholders and are not themselves escaped. Translation
+does not select or persist a visitor's language, change the formatter's
+locale, translate existing framework messages, or implement plural rules.
+Pass the chosen locale explicitly to both translation and formatting calls;
+set the page's HTML `lang` attribute to match. Supply localized validator
+messages explicitly as described in the validation section.
 
 ## Date, Time, Money, and Decimal Formatting
 
@@ -3770,9 +3820,8 @@ global `rule`, then the default English message. Attribute labels accept exact
 fields or the declared wildcard pattern. Supported placeholders are
 `:attribute`, `:field`, `:rule`, `:min`, `:max`, and `:length`.
 `get()`/`first(field)`/`has()` use exact concrete paths, not wildcard queries.
-The framework has locale-aware number/date formatting but no translation
-service; supplied message/label maps provide the localization seam without
-introducing a new translation subsystem.
+The application translation service can supply these message and label maps;
+validator defaults remain in US English.
 
 Errors never automatically include submitted values. Messages are still plain,
 untrusted output: escape them in HTML, including application-provided labels.

@@ -139,6 +139,7 @@ try {
     require __DIR__ . '/documents.php';
     require __DIR__ . '/file-readers.php';
     require __DIR__ . '/formatting.php';
+    require __DIR__ . '/translations.php';
     require __DIR__ . '/dates.php';
     require __DIR__ . '/http.php';
     require __DIR__ . '/exceptions.php';
